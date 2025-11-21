@@ -1,0 +1,1731 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IFRS 17 BBA 新业务初始确认计量逻辑说明书</title>
+<link rel="stylesheet" href="tailwind.min.css">
+<script defer src="corejs-polyfill.min.js"></script>
+<script id="MathJax-script" async src="mathjax/es5/tex-mml-chtml.js"></script>
+<style>
+body { background-color: #f8fafc; font-family: 'Segoe UI', sans-serif; color: #334155; }
+.spec-page { width: 210mm; min-height: 297mm; background: white; margin: 20px auto; padding: 20mm; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); }
+.logic-block { border-left: 4px solid #3b82f6; background: #f1f5f9; padding: 15px; margin-bottom: 20px; border-radius: 0 8px 8px 0; }
+.variable { font-family: 'Consolas', 'Monaco', monospace; color: #c026d3; background: #fae8ff; padding: 2px 4px; border-radius: 4px; font-size: 0.9em; }
+.formula { background: white; padding: 10px; border: 1px dashed #cbd5e1; margin: 10px 0; text-align: center; }
+h2 { color: #1e40af; font-weight: bold; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px; margin-top: 30px; margin-bottom: 15px; font-size: 1.25rem; }
+h3 { color: #475569; font-weight: 600; margin-top: 20px; margin-bottom: 10px; font-size: 1.1rem; display: flex; align-items: center; }
+.step-badge { background: #3b82f6; color: white; width: 24px; height: 24px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; margin-right: 8px; font-size: 0.8rem; }
+canvas { border: 1px solid #e2e8f0; margin: 20px auto; display: block; background: #fff; }
+</style>
+</head>
+<body>
+
+<div class="spec-page">
+<div class="text-center mb-8">
+<h1 class="text-3xl font-bold text-gray-900">IFRS 17 BBA 新业务初始确认</h1>
+<p class="text-gray-500 mt-2">核心计量逻辑与算法规范 (IT Implementation Guide)</p>
+</div>
+
+<!-- 0. 合同类型判定 -->
+<h2>0. 合同类型判定 (Contract Type Switch)</h2>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">0.1 判定规则</p>
+<ul class="list-disc list-inside text-sm space-y-1">
+<li>若 <span class="variable">签单日期</span> 与评估基准日同年，认定为 <b>新业务</b>，直接执行下文 1-3 步的现有逻辑。</li>
+<li>若 <span class="variable">签单日期</span> 早于当前年度，认定为 <b>存量合同</b>，跳过重新测算，直接读取上一年年末结果表。</li>
+</ul>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">0.2 老合同读取指标</p>
+<p class="text-sm text-gray-600">从“上年年末结果表”一次性取回：</p>
+<ul class="list-disc list-inside text-sm space-y-1">
+<li>锁定利率下的 <span class="variable">BEL</span>、<span class="variable">RA</span>、<span class="variable">CSM</span></li>
+<li>上年底当前利率下的 <span class="variable">BEL</span>、<span class="variable">RA</span>（用于披露/敏感性）</li>
+</ul>
+<p class="text-xs text-gray-500 mt-2">存量合同仍需执行第 4 部分的经验调整，以反映当期实际经验。</p>
+</div>
+
+<!-- 1. 输入数据要求 -->
+<h2>1. 输入数据要求 (Data Requirements)</h2>
+<div class="overflow-x-auto">
+<table class="min-w-full text-sm border-collapse border border-gray-200">
+<thead class="bg-gray-50">
+<tr>
+<th class="border p-2 text-left">数据类别</th>
+<th class="border p-2 text-left">变量名 (Variable)</th>
+<th class="border p-2 text-left">描述与来源</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="border p-2">保单基础信息</td>
+<td class="border p-2 font-mono text-pink-600">Pol_Info</td>
+<td class="border p-2">包含：签单日期、起保日期、终保日期、签单保费、真实获取费用。</td>
+</tr>
+<tr>
+<td class="border p-2">评估参数</td>
+<td class="border p-2 font-mono text-pink-600">Val_Params</td>
+<td class="border p-2">包含：评估基准日 (Valuation Date)。</td>
+</tr>
+<tr>
+<td class="border p-2">精算假设</td>
+<td class="border p-2 font-mono text-pink-600">Assumptions</td>
+<td class="border p-2">包含：赔付率 (Loss Ratio)、间接理赔费用率 (ULAE Ratio)、维持费用率 (Maint Exp Ratio)。</td>
+</tr>
+<tr>
+<td class="border p-2">利率曲线</td>
+<td class="border p-2 font-mono text-pink-600">Rate_Curve[]</td>
+<td class="border p-2">当前评估月的利率曲线，需提供<b>月化远期利率</b>。</td>
+</tr>
+</tbody>
+</table>
+</div>
+
+<!-- 1.5 初始加权利率曲线 -->
+<h2>1.5 初始加权利率曲线 (Weighted Average Locked-in Rate)</h2>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">1.5.1 适用范围与说明</p>
+<ul class="list-disc list-inside text-sm space-y-1">
+<li>合同组锁定利率采用加权平均法，按签单保费作为权重进行递归更新。</li>
+<li>新单初始确认时使用即期利率（Spot Rate）计算现值，计算完成后其权重并入加权锁定利率。</li>
+<li>后续计量（计息、IFIE_P&C等）统一使用加权初始确认利率。</li>
+</ul>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">1.5.2 递归更新公式</p>
+<div class="formula">
+$$ R_{new} = \frac{R_{old} \times W_{old} + R_{spot} \times W_{new}}{W_{old} + W_{new}} $$
+</div>
+<p class="text-xs text-gray-500 mb-2">其中：</p>
+<ul class="list-disc list-inside text-xs space-y-1 text-gray-500">
+<li><span class="variable">R_{new}</span>：更新后的加权初始确认利率</li>
+<li><span class="variable">R_{old}</span>：期初存量保单的加权初始确认利率</li>
+<li><span class="variable">R_{spot}</span>：本月新单的即期利率（Spot Rate）</li>
+<li><span class="variable">W_{old}</span>：期初存量保单的签单保费累计</li>
+<li><span class="variable">W_{new}</span>：本月新单的签单保费累计</li>
+</ul>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">1.5.3 权重定义</p>
+<p class="text-sm text-gray-600 mb-2">权重统一使用签单保费（Written Premium）：</p>
+<ul class="list-disc list-inside text-xs space-y-1 text-gray-500">
+<li><span class="variable">W_{old}</span> = <span class="variable">\sum_{i \in IF} Written\_Premium_i</span>：期初有效合同组内所有保单的签单保费之和</li>
+<li><span class="variable">W_{new}</span> = <span class="variable">\sum_{j \in NB} Written\_Premium_j</span>：当月新增合同组内所有保单的签单保费之和</li>
+</ul>
+<p class="text-xs text-gray-500 mt-2"><b>说明：</b>权重基于签单保费，确保大额保单对锁定利率的影响更大，符合业务实际。</p>
+</div>
+
+<!-- 2. 详细计算过程 -->
+<h2>2. 逐步计算逻辑 (Step-by-Step Logic)</h2>
+
+<h3><span class="step-badge">1</span> 第一步：时间与未满期保费计算 (Time & UPR Calculation)</h3>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">1.1 期间计算 (按月简化)</p>
+<p class="text-sm mb-2 text-gray-600">不精确到天，按月计算保单总期限及已过期限。</p>
+<div class="mb-3 border-b pb-2">
+<p class="text-sm font-semibold">A. 保单总月数 (Total Months)</p>
+<div class="formula text-sm">
+$$ T_{total} = (Year_{End} - Year_{Start}) \times 12 + (Month_{End} - Month_{Start}) $$
+</div>
+<p class="text-xs text-gray-500">例：2021/05/18 - 2026/05/17。T_total = (2026-2021)*12 + (5-5) = 60 个月。</p>
+</div>
+
+<div class="mb-3 border-b pb-2">
+<p class="text-sm font-semibold">B. 已过月数 (Passed Months)</p>
+<div class="formula text-sm">
+$$ T_{passed} = (Year_{Val} - Year_{Start}) \times 12 + (Month_{Val} - Month_{Start}) + 1 $$
+</div>
+<p class="text-xs text-gray-500">例：评估日 2021/07/31。T_passed = (2021-2021)*12 + (7-5) + 1 = 3 个月 (5月, 6月, 7月)。</p>
+</div>
+
+<div>
+<p class="text-sm font-semibold">C. 剩余月数 (Remaining Months)</p>
+<div class="formula text-sm">
+$$ T_{remaining} = T_{total} - T_{passed} $$
+</div>
+<p class="text-xs text-gray-500">例：60 - 3 = 57 个月。</p>
+</div>
+</div>
+
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">1.2 未满期保费计算 (UPR)</p>
+<p class="text-sm mb-2">基于剩余月数计算当前时点的未满期保费，作为未来流出的基础。</p>
+<div class="formula">
+$$ \text{UPR} = \text{Written Premium} \times \frac{T_{remaining}}{T_{total}} $$
+</div>
+</div>
+
+<h3><span class="step-badge">2</span> 第二步：现金流展开与折现 (Projection & Discounting)</h3>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">2.0 折现利率说明</p>
+<ul class="list-disc list-inside text-sm space-y-1">
+<li><b>新单初始确认：</b>新增合同在初始确认时，使用<b>即期利率（Spot Rate）</b>计算现值。</li>
+<li><b>后续计量：</b>初始确认完成后，新单权重并入加权初始确认利率，后续计量（计息、IFIE_P&C等）统一使用<b>加权初始确认利率</b>。</li>
+<li><b>存量合同：</b>期初有效合同使用<b>加权初始确认利率</b>（锁定利率）进行折现。</li>
+</ul>
+</div>
+
+<!-- 2.1 保费与费用 -->
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">2.1 确定性现金流 (Premiums & IACF)</p>
+<ul class="list-disc list-inside text-sm space-y-1">
+<li><b>保费现值 (PV_Prem):</b> 发生在 T=0，现值 = <span class="variable">Written Premium</span>。</li>
+<li><b>获取费用现值 (PV_IACF):</b> 发生在 T=0，现值 = <span class="variable">Actual Acquisition Cost</span>。</li>
+</ul>
+</div>
+
+<!-- 2.2 赔付现金流 -->
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">2.2 赔付现金流 (Claims)</p>
+<p class="text-sm mb-2">将 UPR 在剩余月份内均匀释放，生成未来现金流向量。</p>
+<p class="text-sm font-semibold mt-2">Step A: 月度满期保费 (Monthly Earned Premium)</p>
+<div class="formula text-sm">
+$$ \text{Earned_Prem}_{monthly} = \frac{\text{UPR}}{T_{remaining}} \quad (\text{即 } \frac{\text{Written Premium}}{T_{total}}) $$
+</div>
+<p class="text-sm font-semibold mt-2">Step B: 生成月度赔付流出向量</p>
+<p class="text-xs text-gray-500 mb-1">对未来 \( k = 1 \) 到 \( T_{remaining} \) 的每个月：</p>
+<div class="formula text-sm">
+$$ CF_{Claims}(k) = \text{Earned_Prem}_{monthly} \times \text{Loss_Ratio} \times (1 + \text{ULAE_Ratio}) $$
+</div>
+<p class="text-sm font-semibold mt-2">Step C: 折现 (PV Calculation)</p>
+<div class="formula text-sm">
+$$ PV_{Claims} = \sum_{k=1}^{T_{remaining}} \frac{CF_{Claims}(k)}{\prod_{j=1}^{k} (1 + r_{fwd}(j))} $$
+</div>
+<p class="text-xs text-gray-500">* 新单初始确认：\( r_{fwd}(j) \) 为即期利率（Spot Rate）对应的月化远期利率；存量合同：\( r_{fwd}(j) \) 为加权初始确认利率对应的月化远期利率。</p>
+</div>
+
+<!-- 2.3 维持费用 -->
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">2.3 维持费用现金流 (Maintenance Expenses)</p>
+<div class="formula text-sm">
+$$ CF_{Maint}(k) = \text{Earned_Prem}_{monthly} \times \text{Maint_Exp_Ratio} $$
+</div>
+<p class="text-sm mt-1"><b>折现逻辑：</b> 同样对未来 \( T_{remaining} \) 个月进行折现求和得到 \( PV_{Maint} \)。</p>
+</div>
+
+<h3><span class="step-badge">3</span> 第三步：BEL, RA, CSM 计算</h3>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">3.1 最佳估计负债 (BEL)</p>
+<div class="formula">
+$$ BEL = (PV_{Claims} + PV_{Maint} + PV_{IACF}) - PV_{Prem} $$
+</div>
+<p class="text-xs text-gray-600">* 若保费已收且费用已付，则 PV_Prem 和 PV_IACF 仅用于初始确认利润分析，期末 BEL 余额主要由未付赔款现值构成。</p>
+</div>
+
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">3.2 风险调整 (RA)</p>
+<div class="formula">
+$$ RA = (PV_{Claims} + PV_{Maint}) \times RA\_Factor $$
+</div>
+</div>
+
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">3.3 CSM / LC 判定（初始确认）</p>
+<p class="text-sm text-gray-600 mb-2"><b>注意：</b>此为初始确认时的逐单判定，后续需进行合同组聚合判定（见第8.5节）。</p>
+<div class="formula text-sm">
+$$ \text{Net_Inflow} = PV_{Prem} - (PV_{Claims} + PV_{Maint} + PV_{IACF}) $$
+$$ \text{Margin} = \text{Net_Inflow} - RA $$
+</div>
+<pre class="bg-gray-800 text-gray-100 p-3 rounded text-xs overflow-x-auto mt-2">
+// 逐单判定（初始确认时）
+if (Margin > 0) {
+Initial_CSM = Margin;
+Initial_LC = 0;
+// 状态：盈利 (Profitable)
+} else {
+Initial_CSM = 0;
+Initial_LC = abs(Margin);
+// 状态：亏损 (Onerous) - 立即确认亏损
+}
+</pre>
+<p class="text-xs text-gray-500 mt-2"><b>说明：</b>初始确认时逐单计算 CSM/LC，但最终状态需在合同组层面聚合判定（见第8.5节合同组状态判定）。</p>
+</div>
+
+<!-- 4. 当期经验调整 -->
+<h2>4. 当期经验调整 (Experience Adjustment)</h2>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">4.1 适用范围与说明</p>
+<ul class="list-disc list-inside text-sm space-y-1">
+<li>新业务与存量合同在期末均需对保费现金流与 IACF 做经验调整。</li>
+<li>财险场景下彻底剔除“过责合同”相关项目，仅保留“期初有效合同 (Eff) + 当年新增合同 (New)”的数据来源。</li>
+<li>经验调整时需先判定合同类型：若当前记录为新增合同，仅取 <span class="variable">New.*</span> 相关项；若为存量合同，则仅取 <span class="variable">Eff.*</span> 相关项。</li>
+</ul>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">4.2 记号定义</p>
+<p class="text-sm text-gray-600 mb-2">以下记号在保费与 IACF 公式中共用：</p>
+<ul class="list-disc list-inside text-xs space-y-1 text-gray-600">
+<li><span class="variable">Eff</span> = 年初有效合同，<span class="variable">New</span> = 当年新增合同。</li>
+<li><span class="variable">F_{end}</span>：期末预期-预期未来-期末现值（加权初始确认利率）。</li>
+<li><span class="variable">F_{beg}</span>：年初预期-预期未来-期末现值（加权初始确认利率）。</li>
+<li><span class="variable">F_{init}</span>：新增合同-初始确认-预期未来-期末现值（加权初始确认利率）。</li>
+<li><span class="variable">C_{actual}</span>：当年实际现金流；<span class="variable">C_{year}</span>：年初预期-预期当年-期末现值；<span class="variable">C_{init}</span>：新增合同-初始确认-预期当期-期末现值。</li>
+<li><span class="variable">EA_{ratio}</span>：保费现金流与过去/当前服务相关的经验调整占比。</li>
+</ul>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">4.3 保费现金流经验调整</p>
+<p class="text-sm text-gray-600 mb-2">按合同来源拆分计算，再合并：</p>
+<div class="formula text-xs">
+$$ Adj_{Prem}^{Eff} = (Eff.F_{end} + Eff.C_{actual}) - (Eff.F_{beg} + Eff.C_{year}) $$
+$$ Adj_{Prem}^{New} = (New.F_{end} + New.C_{actual}) - (New.F_{init} + New.C_{init}) $$
+</div>
+<p class="text-xs text-gray-500 mb-2">实施时：若当前合同是存量合同，仅取 <span class="variable">Adj_{Prem}^{Eff}</span>；若为新增合同，仅取 <span class="variable">Adj_{Prem}^{New}</span>。</p>
+<p class="text-xs text-gray-500">所有 "F"/"C" 项需保持同一加权初始确认利率。</p>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">4.4 IACF 经验调整</p>
+<p class="text-sm text-gray-600 mb-2">IACF 使用相同拆分思路，变量全部换成 IACF 对应值（记作上标 <span class="variable">I</span>）：</p>
+<div class="formula text-xs">
+$$ Adj_{IACF}^{Eff} = (Eff.F_{end}^{I} + Eff.C_{actual}^{I}) - (Eff.F_{beg}^{I} + Eff.C_{year}^{I}) $$
+$$ Adj_{IACF}^{New} = (New.F_{end}^{I} + New.C_{actual}^{I}) - (New.F_{init}^{I} + New.C_{init}^{I}) $$
+</div>
+<p class="text-xs text-gray-500 mb-2">实施时同样按合同类型二选一。</p>
+<p class="text-xs text-gray-500">无实际 IACF 现金流的项可置 0 处理。所有 "F"/"C" 项需保持同一初始确认利率。</p>
+</div>
+
+<!-- 5. 被CSM/LC吸收的变化 -->
+<h2>5. 被CSM/LC吸收的变化 (CSM/LC Absorption)</h2>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">5.1 适用范围与说明</p>
+<ul class="list-disc list-inside text-sm space-y-1">
+<li>计算当期各类现金流变化对 CSM/LC 的影响，需区分有效合同与新增合同。</li>
+<li>所有现值计算均使用加权初始确认利率进行折现。</li>
+<li>保费现金流变化与 IACF 变化需扣除对应的经验调整项。</li>
+</ul>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">5.2 保费现金流变化</p>
+<div class="formula text-xs">
+$$ \Delta_{Prem} = (Eff.F_{end}^{Prem} + New.F_{end}^{Prem}) - (Eff.F_{beg}^{Prem} + New.F_{init}^{Prem}) + (Eff.C_{actual}^{Prem} + New.C_{actual}^{Prem}) - (Eff.C_{year}^{Prem} + New.C_{init}^{Prem}) - Adj_{Prem} $$
+</div>
+<p class="text-xs text-gray-500 mb-2">其中 <span class="variable">Adj_{Prem}</span> 为经验调整中的保费现金流（见第4.3节）。</p>
+<p class="text-xs text-gray-500">实施时按合同类型：存量合同仅取 <span class="variable">Eff.*</span> 项，新增合同仅取 <span class="variable">New.*</span> 项。</p>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">5.3 IACF 变化</p>
+<div class="formula text-xs">
+$$ \Delta_{IACF} = (Eff.F_{end}^{IACF} + New.F_{end}^{IACF}) - (Eff.F_{beg}^{IACF} + New.F_{init}^{IACF}) + (Eff.C_{actual}^{IACF} + New.C_{actual}^{IACF}) - (Eff.C_{year}^{IACF} + New.C_{init}^{IACF}) - Adj_{IACF} $$
+</div>
+<p class="text-xs text-gray-500 mb-2">其中 <span class="variable">Adj_{IACF}</span> 为经验调整中的 IACF（见第4.4节）。</p>
+<p class="text-xs text-gray-500">实施时同样按合同类型二选一。</p>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">5.4 赔付现金流变化</p>
+<div class="formula text-xs">
+$$ \Delta_{Claims} = (Eff.F_{end}^{Claims} + New.F_{end}^{Claims}) - (Eff.F_{beg}^{Claims} + New.F_{init}^{Claims}) $$
+</div>
+<p class="text-xs text-gray-500">所有现值均使用加权初始确认利率折现。</p>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">5.5 维持费用现金流变化</p>
+<div class="formula text-xs">
+$$ \Delta_{Maint} = (Eff.F_{end}^{Maint} + New.F_{end}^{Maint}) - (Eff.F_{beg}^{Maint} + New.F_{init}^{Maint}) $$
+</div>
+<p class="text-xs text-gray-500">所有现值均使用加权初始确认利率折现。</p>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">5.6 预期现金流变化合计</p>
+<div class="formula text-xs">
+$$ \Delta_{CF\_Total} = \Delta_{Prem} + \Delta_{IACF} + \Delta_{Claims} + \Delta_{Maint} $$
+</div>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">5.7 非金融风险调整变化</p>
+<div class="formula text-xs">
+$$ \Delta_{RA} = (Eff.F_{end}^{RA} + New.F_{end}^{RA}) - (Eff.F_{beg}^{RA} + New.F_{init}^{RA}) $$
+</div>
+<p class="text-xs text-gray-500">所有现值均使用加权初始确认利率折现。</p>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">5.8 被CSM/LC吸收的变化合计</p>
+<div class="formula">
+$$ \Delta_{CSM/LC} = \Delta_{CF\_Total} + \Delta_{RA} $$
+</div>
+<p class="text-xs text-gray-500">该合计值反映当期各类现金流与风险调整变化对合同服务边际或亏损合同的影响。</p>
+</div>
+
+<!-- 6. CSM计息 -->
+<h2>6. CSM计息 (CSM Interest Accretion)</h2>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">6.1 适用范围与说明</p>
+<ul class="list-disc list-inside text-sm space-y-1">
+<li>CSM 计息需区分期初有效合同 (IF) 与当年新增合同 (NB)。</li>
+<li>计息利率使用当月计息利率，按复利方式计算。</li>
+<li>新增合同需根据初始确认时点（月末）进行计息调整。</li>
+<li>若合同止期早于当前评估月月初，则合同已失效，不再计算新利息，直接继承上月累计计息余额。</li>
+</ul>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">6.2 IF_年初CSM余额</p>
+<div class="formula text-xs">
+$$ IF_{CSM\_beg} = \text{年初CSM余额（直接取数）} $$
+</div>
+<p class="text-xs text-gray-500">从年初结果表中直接读取期初有效合同的 CSM 余额。</p>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">6.3 当年新增合同CSM</p>
+<div class="formula text-xs">
+$$ NB_{CSM\_new} = \sum_{m=1}^{12} \max(CSM_m, 0) $$
+</div>
+<p class="text-sm text-gray-600 mb-2">其中各月 CSM 数据来源：</p>
+<ul class="list-disc list-inside text-xs space-y-1 text-gray-600">
+<li>各月新增合同初始确认现值（保费、IACF、维持费用、赔付、非金融风险调整）现金流</li>
+<li>折现到初始确认时点（即月末），利率统一为初始确认时点折现因子</li>
+<li>仅汇总 CSM/LC 中 ≥ 0 的部分（即 CSM 部分，排除亏损合同）</li>
+</ul>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">6.4 期初有效合同CSM计息</p>
+<p class="text-sm text-gray-600 mb-2">按评估月份区分：</p>
+<div class="mb-3 border-b pb-2">
+<p class="text-sm font-semibold">A. 一月（评估日期月份 = 01）</p>
+<div class="formula text-xs">
+$$ IF_{Interest\_Jan} = IF_{CSM\_beg} \times r_{month} $$
+</div>
+<p class="text-xs text-gray-500">其中 <span class="variable">r_{month}</span> 为当月计息利率。</p>
+</div>
+<div>
+<p class="text-sm font-semibold">B. 其他月份</p>
+<pre class="bg-gray-800 text-gray-100 p-3 rounded text-xs overflow-x-auto mt-2">
+// 判断合同是否已失效
+if (合同止期 < 当前评估月月初日期) {
+    // 合同已失效，不再计息，锁定上月累计计息余额
+    IF_Interest = 上月累计CSM计息_YTD;
+} else {
+    // 合同仍有效，继续计息
+    IF_Interest = 上月累计CSM计息_YTD + (年初余额 + 上月累计CSM计息_YTD) × 当月计息利率;
+}
+</pre>
+<p class="text-xs text-gray-500 mt-2"><b>逻辑变更说明：</b>使用合同止期判断合同是否失效，比依赖摊销比例更稳健。若合同止期早于当前评估月月初，则合同已满期，不再产生新利息，直接继承上月累计计息余额（<span class="variable">上月累计CSM计息_YTD</span> 表示截止上期末的年初至今累计利息）。</p>
+</div>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">6.5 新增合同CSM计息</p>
+<p class="text-sm text-gray-600 mb-2">按评估月份区分：</p>
+<div class="mb-3 border-b pb-2">
+<p class="text-sm font-semibold">A. 一月（评估日期月份 = 01）</p>
+<div class="formula text-xs">
+$$ NB_{Interest\_Jan} = NB_{CSM\_new} \times \big((1 + r_{month})^{t_{init}} - 1\big) $$
+</div>
+<p class="text-xs text-gray-500">其中 <span class="variable">t_{init}</span> 为初始确认时点（月末，通常为 1 个月）。</p>
+</div>
+<div>
+<p class="text-sm font-semibold">B. 其他月份</p>
+<pre class="bg-gray-800 text-gray-100 p-3 rounded text-xs overflow-x-auto mt-2">
+// 判断合同是否已失效
+if (合同止期 < 当前评估月月初日期) {
+    // 合同已失效，不再计息，锁定上月累计计息余额
+    NB_Interest = 上月累计CSM计息_YTD;
+} else {
+    // 合同仍有效，继续计息
+    // 当月新增部分（满足月份=当期评估月 且 CSM/LC > 0）
+    当月新增计息 = SUMPRODUCT(月份==当期评估月, CSM/LC>0, CSM/LC值) 
+                   × ((1+当月计息利率)^初始确认时点 - 1);
+    
+    // 当年新增（扣除当月新增）的累计计息
+    当年新增累计计息 = (新增CSM - SUMPRODUCT(月份==当期评估月, CSM/LC>0, CSM/LC值) 
+                        + 上月累计CSM计息_YTD) × 当月计息利率;
+    
+    NB_Interest = 当月新增计息 + 上月累计CSM计息_YTD + 当年新增累计计息;
+}
+</pre>
+<p class="text-xs text-gray-500 mt-2"><b>逻辑变更说明：</b>使用合同止期判断合同是否失效，比依赖摊销比例更稳健。若合同止期早于当前评估月月初，则合同已满期，不再产生新利息，直接继承上月累计计息余额（<span class="variable">上月累计CSM计息_YTD</span> 表示截止上期末的年初至今累计利息）。当月新增部分按初始确认时点（月末）计息；当年已新增部分（扣除当月）按整月计息。</p>
+</div>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">6.6 IF_计息后CSM</p>
+<div class="formula">
+$$ IF_{CSM\_after} = IF_{CSM\_beg} + IF_{Interest} $$
+</div>
+<p class="text-xs text-gray-500">期初有效合同 CSM 余额加上当期计息。</p>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">6.7 NB_计息后CSM</p>
+<div class="formula">
+$$ NB_{CSM\_after} = NB_{CSM\_new} + NB_{Interest} $$
+</div>
+<p class="text-xs text-gray-500">当年新增合同 CSM 加上当期计息。</p>
+</div>
+
+<!-- 7. LC分摊IFIE -->
+<h2>7. LC分摊IFIE (Loss Component IFIE Allocation)</h2>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">7.1 适用范围与说明</p>
+<ul class="list-disc list-inside text-sm space-y-1">
+<li>IFIE（利率变化对预期现金流的影响）需按比例分摊至亏损合同（LC）。</li>
+<li>需区分期初有效合同 (IF) 与当年新增合同 (NB)。</li>
+<li>IFIE 包括两部分：计息影响和利率变化影响。</li>
+<li>所有现值计算使用加权初始确认利率进行折现。</li>
+</ul>
+</div>
+
+<!-- IF部分 -->
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">7.2 期初有效合同 (IF) LC分摊IFIE</p>
+<div class="mb-3 border-b pb-2">
+<p class="text-sm font-semibold">7.2.1 IF_年初LC</p>
+<div class="formula text-xs">
+$$ IF_{LC\_beg} = \text{年初LC余额（直接取数）} $$
+</div>
+<p class="text-xs text-gray-500">从年初结果表中直接读取期初有效合同的 LC 余额。</p>
+</div>
+<div class="mb-3 border-b pb-2">
+<p class="text-sm font-semibold">7.2.2 IF_LC IFIE分摊比例</p>
+<div class="formula text-xs">
+$$ IF_{LC\_Ratio} = \begin{cases} 
+\frac{IF_{LC\_beg}}{IF_{PV\_Claims} + IF_{PV\_Maint} + IF_{PV\_RA}} & \text{if } IF_{LC\_beg} < 0 \\
+0 & \text{otherwise}
+\end{cases} $$
+</div>
+<p class="text-xs text-gray-500">其中分母为：预期赔付现金流初始确认现值 + 预期维持费用现金流初始确认现值 + 预期非金融风险调整初始确认现值。</p>
+</div>
+<div class="mb-3 border-b pb-2">
+<p class="text-sm font-semibold">7.2.3 IF_待分摊IFIE_计息_赔付与费用</p>
+<div class="formula text-xs">
+$$ IF_{IFIE\_Interest}^{CF} = (Eff.F_{end}^{Claims} + Eff.F_{end}^{Maint} + Eff.C_{year}^{Claims} + Eff.C_{year}^{Maint}) - (Eff.F_{beg\_prev}^{Claims} + Eff.F_{beg\_prev}^{Maint}) $$
+</div>
+<p class="text-xs text-gray-500">期末现值（初始确认利率）与年初现值（上年初始确认利率）的差异，加上预期当年部分。</p>
+</div>
+<div class="mb-3 border-b pb-2">
+<p class="text-sm font-semibold">7.2.4 IF_待分摊IFIE_计息_非金融风险调整</p>
+<div class="formula text-xs">
+$$ IF_{IFIE\_Interest}^{RA} = (Eff.F_{end}^{RA} - Eff.F_{beg\_prev}^{RA}) + Eff.C_{year}^{RA} $$
+</div>
+<p class="text-xs text-gray-500">非金融风险调整的计息影响。</p>
+</div>
+<div class="mb-3 border-b pb-2">
+<p class="text-sm font-semibold">7.2.5 IF_待分摊IFIE_利率变化的影响_赔付与费用</p>
+<div class="formula text-xs">
+$$ IF_{IFIE\_Rate}^{CF} = (Eff.F_{end\_curr}^{Claims} - Eff.F_{end}^{Claims}) - (Eff.F_{beg\_prev\_curr}^{Claims} - Eff.F_{beg\_prev}^{Claims}) + (Eff.F_{end\_curr}^{Maint} - Eff.F_{end}^{Maint}) - (Eff.F_{beg\_prev\_curr}^{Maint} - Eff.F_{beg\_prev}^{Maint}) $$
+</div>
+<p class="text-xs text-gray-500">期末利率与初始确认利率的差异影响，扣除年初的利率差异影响。</p>
+</div>
+<div class="mb-3 border-b pb-2">
+<p class="text-sm font-semibold">7.2.6 IF_待分摊IFIE_利率变化的影响_非金融风险调整</p>
+<div class="formula text-xs">
+$$ IF_{IFIE\_Rate}^{RA} = (Eff.F_{end\_curr}^{RA} - Eff.F_{end}^{RA}) - (Eff.F_{beg\_prev\_curr}^{RA} - Eff.F_{beg\_prev}^{RA}) $$
+</div>
+<p class="text-xs text-gray-500">非金融风险调整的利率变化影响。</p>
+</div>
+<div class="mb-3 border-b pb-2">
+<p class="text-sm font-semibold">7.2.7 IF_LC分摊IFIE_赔付与费用</p>
+<div class="formula text-xs">
+$$ IF_{LC\_IFIE}^{CF} = (IF_{IFIE\_Interest}^{CF} + IF_{IFIE\_Rate}^{CF}) \times IF_{LC\_Ratio} $$
+</div>
+</div>
+<div class="mb-3 border-b pb-2">
+<p class="text-sm font-semibold">7.2.8 IF_LC分摊IFIE_非金融风险调整</p>
+<div class="formula text-xs">
+$$ IF_{LC\_IFIE}^{RA} = (IF_{IFIE\_Interest}^{RA} + IF_{IFIE\_Rate}^{RA}) \times IF_{LC\_Ratio} $$
+</div>
+</div>
+<div class="mb-3 border-b pb-2">
+<p class="text-sm font-semibold">7.2.9 IF_LC分摊IFIE</p>
+<div class="formula text-xs">
+$$ IF_{LC\_IFIE} = IF_{LC\_IFIE}^{CF} + IF_{LC\_IFIE}^{RA} $$
+</div>
+</div>
+<div>
+<p class="text-sm font-semibold">7.2.10 IF_分摊后IFIE后LC</p>
+<div class="formula">
+$$ IF_{LC\_after} = IF_{LC\_beg} + IF_{LC\_IFIE} $$
+</div>
+<p class="text-xs text-gray-500">年初 LC 加上当期分摊的 IFIE。</p>
+</div>
+</div>
+
+<!-- NB部分 -->
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">7.3 当年新增合同 (NB) LC分摊IFIE</p>
+<div class="mb-3 border-b pb-2">
+<p class="text-sm font-semibold">7.3.1 NB_新增LC</p>
+<div class="formula text-xs">
+$$ NB_{LC\_new} = \sum_{m=1}^{12} \min(CSM/LC_m, 0) $$
+</div>
+<p class="text-xs text-gray-500">汇总当年各月新增合同 CSM/LC 中 < 0 的值（即亏损合同部分）。</p>
+</div>
+<div class="mb-3 border-b pb-2">
+<p class="text-sm font-semibold">7.3.2 NB_LC IFIE分摊比例</p>
+<div class="formula text-xs">
+$$ NB_{LC\_Ratio} = \begin{cases} 
+\frac{NB_{LC\_new}}{\sum_{m}(PV_{Claims\_m} + PV_{Maint\_m} + PV_{RA\_m})} & \text{if } NB_{LC\_new} < 0 \\
+0 & \text{otherwise}
+\end{cases} $$
+</div>
+<p class="text-xs text-gray-500">分母为汇总当年各新增年月的预期赔付现金流、维持费用现金流、非金融风险调整的初始确认现值。</p>
+</div>
+<div class="mb-3 border-b pb-2">
+<p class="text-sm font-semibold">7.3.3 NB_待分摊IFIE_计息_赔付与费用</p>
+<div class="formula text-xs">
+$$ NB_{IFIE\_Interest}^{CF} = (New.F_{end}^{Claims} + New.F_{end}^{Maint}) - (New.F_{init\_month}^{Claims} + New.F_{init\_month}^{Maint}) + (New.C_{init}^{Claims} + New.C_{init}^{Maint}) $$
+</div>
+<p class="text-xs text-gray-500">期末现值（初始确认利率）与初始确认现值（当月初始利率）的差异，加上预期当期部分。</p>
+</div>
+<div class="mb-3 border-b pb-2">
+<p class="text-sm font-semibold">7.3.4 NB_待分摊IFIE_计息_非金融风险调整</p>
+<div class="formula text-xs">
+$$ NB_{IFIE\_Interest}^{RA} = (New.F_{end}^{RA} - New.F_{init\_month}^{RA}) + New.C_{init}^{RA} $$
+</div>
+<p class="text-xs text-gray-500">非金融风险调整的计息影响。</p>
+</div>
+<div class="mb-3 border-b pb-2">
+<p class="text-sm font-semibold">7.3.5 NB_待分摊IFIE_利率变化的影响_赔付与费用</p>
+<div class="formula text-xs">
+$$ NB_{IFIE\_Rate}^{CF} = (New.F_{end\_curr}^{Claims} - New.F_{end}^{Claims}) + (New.F_{end\_curr}^{Maint} - New.F_{end}^{Maint}) $$
+</div>
+<p class="text-xs text-gray-500">期末利率与初始确认利率的差异影响。</p>
+</div>
+<div class="mb-3 border-b pb-2">
+<p class="text-sm font-semibold">7.3.6 NB_待分摊IFIE_利率变化的影响_非金融风险调整</p>
+<div class="formula text-xs">
+$$ NB_{IFIE\_Rate}^{RA} = New.F_{end\_curr}^{RA} - New.F_{end}^{RA} $$
+</div>
+<p class="text-xs text-gray-500">非金融风险调整的利率变化影响。</p>
+</div>
+<div class="mb-3 border-b pb-2">
+<p class="text-sm font-semibold">7.3.7 NB_LC分摊IFIE_赔付与费用</p>
+<div class="formula text-xs">
+$$ NB_{LC\_IFIE}^{CF} = (NB_{IFIE\_Interest}^{CF} + NB_{IFIE\_Rate}^{CF}) \times NB_{LC\_Ratio} $$
+</div>
+</div>
+<div class="mb-3 border-b pb-2">
+<p class="text-sm font-semibold">7.3.8 NB_LC分摊IFIE_非金融风险调整</p>
+<div class="formula text-xs">
+$$ NB_{LC\_IFIE}^{RA} = (NB_{IFIE\_Interest}^{RA} + NB_{IFIE\_Rate}^{RA}) \times NB_{LC\_Ratio} $$
+</div>
+</div>
+<div class="mb-3 border-b pb-2">
+<p class="text-sm font-semibold">7.3.9 NB_LC分摊IFIE</p>
+<div class="formula text-xs">
+$$ NB_{LC\_IFIE} = NB_{LC\_IFIE}^{CF} + NB_{LC\_IFIE}^{RA} $$
+</div>
+</div>
+<div>
+<p class="text-sm font-semibold">7.3.10 NB_分摊后IFIE后LC</p>
+<div class="formula">
+$$ NB_{LC\_after} = NB_{LC\_new} + NB_{LC\_IFIE} $$
+</div>
+<p class="text-xs text-gray-500">新增 LC 加上当期分摊的 IFIE。</p>
+</div>
+</div>
+
+<!-- 8. CSM计量 -->
+<h2>8. CSM计量 (CSM Measurement)</h2>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">8.1 适用范围与说明</p>
+<ul class="list-disc list-inside text-sm space-y-1">
+<li>CSM 计量包括计息、吸收变化、摊销等环节，最终得到期末 CSM 余额。</li>
+<li><b>计量粒度：</b>采用<b>合同组（Unit of Account）计量</b>模式。现金流计算保留逐单计算（因保单起止期不同），但 CSM/LC 状态判定必须在合同组层面聚合。</li>
+<li>被 CSM 吸收的变化需根据合同组状态（CSM/LC）进行条件判断。</li>
+<li>CSM 摊销按摊销比例进行，摊销后的 CSM 计入当期损益。</li>
+<li><b>覆盖单元模式：</b>使用覆盖单元动态比例法（Coverage Units Dynamic Ratio），逐月动态计算以反映合同组内保单的新增、退保和期限差异。</li>
+</ul>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">8.2 CSM摊销比例计算（覆盖单元动态比例法）</p>
+<p class="text-sm text-gray-600 mb-2">基于覆盖单元（Coverage Units）的动态计算，适用于合同组计量模式：</p>
+<div class="formula">
+$$ Ratio_{Amort} = \frac{CU_{released}}{CU_{released} + CU_{remaining}} $$
+</div>
+<p class="text-xs text-gray-500 mb-2">其中：</p>
+<ul class="list-disc list-inside text-xs space-y-1 text-gray-500">
+<li><span class="variable">CU_{released}</span>：本期（当月）该合同组内所有有效保单释放的覆盖单元之和</li>
+<li><span class="variable">CU_{remaining}</span>：期末时点，该合同组内所有有效保单剩余服务期的覆盖单元之和</li>
+</ul>
+<p class="text-sm text-gray-600 mb-2 mt-3">覆盖单元定义：</p>
+<div class="formula text-xs">
+$$ CU = \text{保额} \times \text{服务天数} \quad \text{或} \quad CU = \text{签单保费} \times \text{服务天数} $$
+</div>
+<p class="text-xs text-gray-500">优先使用保额，若缺乏保额数据则使用签单保费作为替代。</p>
+<p class="text-sm text-gray-600 mb-2 mt-3">详细计算逻辑（合同组层面）：</p>
+<pre class="bg-gray-800 text-gray-100 p-3 rounded text-xs overflow-x-auto mt-2">
+// 计算本期释放的覆盖单元（分子）
+CU_released = 0;
+for (each 有效保单 in 合同组) {
+    if (保单在评估期内有效) {
+        服务天数 = Min(评估日, 保单止期) - Max(年初日期, 保单起期) + 1;
+        覆盖单元 = 保额（或签单保费） × 服务天数;
+        CU_released += 覆盖单元;
+    }
+}
+
+// 计算剩余服务期的覆盖单元（分母）
+CU_remaining = 0;
+for (each 有效保单 in 合同组) {
+    if (保单在期末仍有效) {
+        剩余服务天数 = 保单止期 - 评估日;
+        覆盖单元 = 保额（或签单保费） × 剩余服务天数;
+        CU_remaining += 覆盖单元;
+    }
+}
+
+// 计算摊销比例
+if (CU_released + CU_remaining > 0) {
+    CSM摊销比例 = CU_released / (CU_released + CU_remaining);
+} else {
+    CSM摊销比例 = 0;
+}
+</pre>
+<p class="text-xs text-gray-500 mt-2"><b>关键特性：</b></p>
+<ul class="list-disc list-inside text-xs space-y-1 text-gray-500">
+<li><b>逐月动态计算：</b>每月重新计算，反映合同组内保单的新增、退保和期限差异</li>
+<li><b>合同组聚合：</b>在合同组层面汇总所有有效保单的覆盖单元</li>
+<li><b>自动适应：</b>新单加入时自动增加权重，退保时自动减少权重</li>
+</ul>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">8.3 年初CSM余额</p>
+<div class="formula text-xs">
+$$ CSM_{beg} = IF_{CSM\_beg} $$
+</div>
+<p class="text-xs text-gray-500">期初有效合同的年初 CSM 余额（见第6.2节）。</p>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">8.4 当年新增CSM</p>
+<div class="formula text-xs">
+$$ CSM_{new} = NB_{CSM\_new} $$
+</div>
+<p class="text-xs text-gray-500">当年新增合同的 CSM（见第6.3节）。</p>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">8.5 CSM计息</p>
+<div class="formula text-xs">
+$$ CSM_{Interest} = IF_{Interest} + NB_{Interest} $$
+</div>
+<p class="text-xs text-gray-500">期初有效合同 CSM 计息与新增合同 CSM 计息之和（见第6.4、6.5节）。</p>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">8.5.5 合同组状态判定（关键步骤）</p>
+<p class="text-sm text-gray-600 mb-2"><b>核心逻辑：</b>在计算被CSM吸收的变化之前，必须先进行合同组层面的聚合判定，确定合同组的最终状态（盈利或亏损）。</p>
+<p class="text-sm text-gray-600 mb-2">步骤 1：计算合同组净余额试算值</p>
+<div class="formula text-xs">
+$$ Net_{trial} = \sum (IF_{CSM\_post} + NB_{CSM\_post} + IF_{LC\_post} + NB_{LC\_post}) $$
+</div>
+<p class="text-xs text-gray-500 mb-2">其中：</p>
+<ul class="list-disc list-inside text-xs space-y-1 text-gray-500">
+<li><span class="variable">IF_{CSM\_post}</span>：IF_计息后CSM（见第6.6节）</li>
+<li><span class="variable">NB_{CSM\_post}</span>：NB_计息后CSM（见第6.7节）</li>
+<li><span class="variable">IF_{LC\_post}</span>：IF_分摊后IFIE后LC（见第7.2.10节）</li>
+<li><span class="variable">NB_{LC\_post}</span>：NB_分摊后IFIE后LC（见第7.3.10节）</li>
+</ul>
+<p class="text-sm text-gray-600 mb-2 mt-3">步骤 2：确定合同组最终状态</p>
+<div class="formula text-xs">
+$$ \text{合同组 CSM} = \text{IF}(Net_{trial} \ge 0, Net_{trial}, 0) $$
+$$ \text{合同组 LC} = \text{IF}(Net_{trial} < 0, Net_{trial}, 0) $$
+</div>
+<p class="text-xs text-gray-500">若净余额试算值 ≥ 0，合同组为盈利状态，CSM = 试算值，LC = 0；否则为亏损状态，CSM = 0，LC = 试算值（负值）。</p>
+<p class="text-sm text-gray-600 mb-2 mt-3">步骤 3：状态回写（Re-apportionment）</p>
+<pre class="bg-gray-800 text-gray-100 p-3 rounded text-xs overflow-x-auto mt-2">
+if (合同组 CSM > 0) {
+    // 合同组为盈利状态
+    for (each 保单 in 合同组) {
+        保单.CSM = 保单.IF_CSM_post（或NB_CSM_post）;
+        保单.LC = 0;  // 强制清零所有 LC
+    }
+} else {
+    // 合同组为亏损状态
+    for (each 保单 in 合同组) {
+        保单.CSM = 0;  // 强制清零所有 CSM
+        保单.LC = 保单.IF_LC_post（或NB_LC_post）;
+    }
+}
+</pre>
+<p class="text-xs text-gray-500 mt-2"><b>说明：</b>状态回写确保合同组内所有保单的 CSM/LC 标记与合同组状态一致。若组为盈利，所有 LC 清零；若组为亏损，所有 CSM 清零。</p>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">8.6 被CSM吸收的变化</p>
+<p class="text-sm text-gray-600 mb-2">根据合同组状态进行条件判断：</p>
+<pre class="bg-gray-800 text-gray-100 p-3 rounded text-xs overflow-x-auto mt-2">
+if (OR(
+    AND(合同组CSM > 0, SUM(合同组CSM, 被CSM/LC吸收的变化合计) >= 0),
+    AND(合同组CSM == 0, SUM(合同组LC, 分摊的LC, 被CSM/LC吸收的变化合计) >= 0)
+)) {
+    // 合同组转为盈利或保持盈利状态
+    被CSM吸收的变化 = SUM(
+        被CSM/LC吸收的变化合计,
+        年初LC余额_合计,
+        当年新增LC_合计,
+        LC分摊IFIE_合计,
+        分摊的LC_合计
+    );
+} else {
+    // 合同组转为亏损或保持亏损状态
+    被CSM吸收的变化 = -SUM(
+        年初CSM余额,
+        当年新增CSM,
+        CSM计息
+    );
+}
+</pre>
+<p class="text-xs text-gray-500 mt-2"><b>逻辑说明：</b>若合同组 CSM > 0 且变化后仍 ≥ 0，或合同组 CSM = 0 但变化后转为盈利（≥ 0），则吸收所有变化（包括 LC 相关项）；否则，CSM 被完全吸收，变化为负的 CSM 余额。</p>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">8.7 被CSM吸收的现金流变化</p>
+<div class="formula text-xs">
+$$ \Delta_{CSM}^{CF} = \Delta_{CF\_Total} - \Delta_{LC}^{CF} $$
+</div>
+<p class="text-xs text-gray-500">预期现金流变化合计（见第5.6节）减去被 LC 吸收的现金流变化。</p>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">8.8 被CSM吸收的非金融风险调整变化</p>
+<div class="formula text-xs">
+$$ \Delta_{CSM}^{RA} = \Delta_{RA} - \Delta_{LC}^{RA} $$
+</div>
+<p class="text-xs text-gray-500">非金融风险调整变化（见第5.7节）减去被 LC 吸收的非金融风险调整变化。</p>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">8.9 摊销的CSM</p>
+<div class="formula text-xs">
+$$ CSM_{Amort} = -(CSM_{beg} + CSM_{new} + CSM_{Interest} + \Delta_{CSM}) \times CSM_{Amort\_Ratio} $$
+</div>
+<p class="text-xs text-gray-500">负号表示摊销减少 CSM 余额，摊销金额计入当期损益。</p>
+<p class="text-xs text-gray-500 mt-2"><b>特殊说明：</b>当 <span class="variable">CSM_{Amort\_Ratio} = 100\%</span> 时，表示合同期满或终止，所有 CSM 将在当期完全摊销，期末 CSM 余额为 0（不考虑其他变化）。</p>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">8.10 期末CSM余额</p>
+<div class="formula">
+$$ CSM_{end} = CSM_{beg} + CSM_{new} + CSM_{Interest} + \Delta_{CSM} + CSM_{Amort} $$
+</div>
+<p class="text-xs text-gray-500">年初余额 + 新增 + 计息 + 被吸收的变化 + 摊销 = 期末余额。</p>
+</div>
+
+<!-- 9. 当年新增合同总IACF期末现值 -->
+<h2>9. 当年新增合同总IACF期末现值 (New Business IACF Present Value)</h2>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">9.1 适用范围与说明</p>
+<p class="text-sm text-gray-600 mb-2"><b>注意：</b>根据业务规则，IACF 不计息（不考虑货币时间价值），因此本章节的辅助计算（用于倒挤利息）已不适用。</p>
+<p class="text-xs text-gray-500">原逻辑用于计算当年新增合同的 IACF 期末现值以倒挤计息，但由于 IACF 不计息，此计算已无意义。相关逻辑已简化至第10章 IACF 摊销部分。</p>
+</div>
+
+<!-- 10. IACF摊销 -->
+<h2>10. IACF摊销 (IACF Amortization)</h2>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">10.1 适用范围与说明</p>
+<ul class="list-disc list-inside text-sm space-y-1">
+<li><b>核心规则：</b>IACF 不计息（不考虑货币时间价值），所有计算使用不折现的名义金额。</li>
+<li>IACF 摊销按摊销比例进行，摊销后的 IACF 计入当期损益。</li>
+<li>所有计息相关项均设为 0，简化计算逻辑。</li>
+</ul>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">10.2 IACF摊销比例</p>
+<div class="formula text-xs">
+$$ IACF_{Amort\_Ratio} = \text{IACF摊销比例（直接取数）} $$
+</div>
+<p class="text-xs text-gray-500">从参数表中直接读取 IACF 摊销比例。</p>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">10.3 年初待摊IACF余额</p>
+<div class="formula text-xs">
+$$ IACF_{beg} = \text{年初待摊IACF余额（直接取数）} $$
+</div>
+<p class="text-xs text-gray-500">从年初结果表中直接读取年初待摊 IACF 余额。</p>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">10.4 年初待摊IACF计息</p>
+<div class="formula text-xs">
+$$ IACF_{Interest\_beg} = 0 $$
+</div>
+<p class="text-xs text-gray-500">IACF 不计息，年初待摊 IACF 计息为 0。</p>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">10.5 当年新增IACF</p>
+<div class="formula text-xs">
+$$ IACF_{new} = -\sum_{m=1}^{12} \text{新增合同各月预期IACF\_名义金额}_m $$
+</div>
+<p class="text-xs text-gray-500">汇总当年新增合同各月的预期 IACF 名义金额（不折现），负号表示流出。</p>
+<p class="text-xs text-gray-500 mt-1">等价于：<span class="variable">-新增合同-初始确认-预期未来IACF（不折现）</span></p>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">10.6 当年新增IACF计息</p>
+<div class="formula text-xs">
+$$ IACF_{Interest\_new} = 0 $$
+</div>
+<p class="text-xs text-gray-500">IACF 不计息，当年新增 IACF 计息为 0。</p>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">10.7 IACF变化</p>
+<div class="formula text-xs">
+$$ \Delta_{IACF} = -\big[(Eff.C_{actual}^{IACF\_noPV} + New.C_{actual}^{IACF\_noPV}) - (Eff.C_{beg}^{IACF\_noPV} + New.C_{init}^{IACF\_noPV})\big] - Adj_{IACF} $$
+</div>
+<p class="text-xs text-gray-500">实际 IACF（不折现）与预期 IACF（不折现）的差异，再减去经验调整中的 IACF（见第4.4节）。所有金额均使用不折现的名义金额，负号表示流出。</p>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">10.8 IACF经验调整</p>
+<div class="formula text-xs">
+$$ Adj_{IACF\_EA} = -Adj_{IACF} $$
+</div>
+<p class="text-xs text-gray-500">经验调整中的 IACF（见第4.4节），负号表示流出。</p>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">10.9 摊销的IACF</p>
+<div class="formula text-xs">
+$$ IACF_{Amort} = -\big[(IACF_{beg} + IACF_{new} + \Delta_{IACF}) \times IACF_{Amort\_Ratio} + Adj_{IACF\_EA}\big] $$
+</div>
+<p class="text-xs text-gray-500">负号表示摊销减少 IACF 余额，摊销金额计入当期损益。摊销基数包括年初余额、新增、变化（所有计息项为 0），乘以摊销比例，再加上经验调整。</p>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">10.10 期末待摊IACF余额</p>
+<div class="formula">
+$$ IACF_{end} = IACF_{beg} + IACF_{new} + \Delta_{IACF} + Adj_{IACF\_EA} + IACF_{Amort} $$
+</div>
+<p class="text-xs text-gray-500">年初余额 + 新增 + 变化 + 经验调整 + 摊销 = 期末余额（所有计息项为 0，已从公式中移除）。</p>
+</div>
+
+<!-- 11. 保险合同收入 -->
+<h2>11. 保险合同收入 (Insurance Contract Revenue)</h2>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">11.1 适用范围与说明</p>
+<ul class="list-disc list-inside text-sm space-y-1">
+<li>保险合同收入反映当期向保单持有人提供的保险服务所产生的收入。</li>
+<li>包括预期赔付与费用、非金融风险调整释放、CSM摊销、IACF摊销、经验调整等组成部分。</li>
+<li>需区分含亏损部分和亏损分摊部分，以准确反映亏损合同的影响。</li>
+<li>所有现值计算使用加权初始确认利率进行折现。</li>
+</ul>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">11.2 保险合同收入_预期赔付与费用_含亏损</p>
+<div class="formula text-xs">
+$$ Revenue_{CF\_withLC} = (Eff.C_{year}^{Claims} + New.C_{init}^{Claims}) + (Eff.C_{year}^{Maint} + New.C_{init}^{Maint}) $$
+</div>
+<p class="text-xs text-gray-500">有效合同-年初预期-预期当年-赔付现金流-期末现值（加权初始确认利率）+ 新增合同-初始确认-预期当期-赔付现金流-期末现值（加权初始确认利率）+ 有效合同-年初预期-预期当年-维持费用现金流-期末现值（加权初始确认利率）+ 新增合同-初始确认-预期当期-维持费用现金流-期末现值（加权初始确认利率）。</p>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">11.3 保险合同收入_预期赔付与费用_亏损分摊</p>
+<div class="formula text-xs">
+$$ Revenue_{CF\_LC} = LC_{Alloc\_CF} + LC_{Adj\_CF} $$
+</div>
+<p class="text-xs text-gray-500">分摊的LC_预期现金流 + LC调整_预期现金流。反映亏损合同对预期赔付与费用的影响。</p>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">11.4 保险合同收入_预期释放的非金融风险调整_含亏损</p>
+<div class="formula text-xs">
+$$ Revenue_{RA\_withLC} = Eff.C_{year}^{RA} + New.C_{init}^{RA} $$
+</div>
+<p class="text-xs text-gray-500">有效合同-年初预期-预期当年-非金融风险调整-期末现值（加权初始确认利率）+ 新增合同-初始确认-预期当期-非金融风险调整-期末现值（加权初始确认利率）。</p>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">11.5 保险合同收入_预期释放的非金融风险调整_亏损分摊</p>
+<div class="formula text-xs">
+$$ Revenue_{RA\_LC} = LC_{Alloc\_RA} + LC_{Adj\_RA} $$
+</div>
+<p class="text-xs text-gray-500">分摊的LC_非金融风险调整 + LC调整_非金融风险调整。反映亏损合同对非金融风险调整释放的影响。</p>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">11.6 保险合同收入_摊销的CSM</p>
+<div class="formula text-xs">
+$$ Revenue_{CSM} = -CSM_{Amort} $$
+</div>
+<p class="text-xs text-gray-500">摊销的CSM（见第8.9节），负号转正号表示收入。CSM摊销反映当期提供的保险服务。</p>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">11.7 保险合同收入_摊销的IACF</p>
+<div class="formula text-xs">
+$$ Revenue_{IACF} = -IACF_{Amort} $$
+</div>
+<p class="text-xs text-gray-500">摊销的IACF（见第10.9节），负号转正号表示收入。IACF摊销反映当期获取成本的分摊。</p>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">11.8 保险合同收入_经验调整</p>
+<div class="formula text-xs">
+$$ Revenue_{EA} = -Adj_{Total} $$
+</div>
+<p class="text-xs text-gray-500">经验调整合计（见第4章），负号转正号表示收入。反映实际经验与预期差异对收入的影响。</p>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">11.9 保险合同收入</p>
+<div class="formula">
+$$ Revenue_{Total} = Revenue_{CF\_withLC} + Revenue_{CF\_LC} + Revenue_{RA\_withLC} + Revenue_{RA\_LC} + Revenue_{CSM} + Revenue_{IACF} + Revenue_{EA} $$
+</div>
+<p class="text-xs text-gray-500">所有组成部分之和，构成当期保险合同总收入。注意：不考虑投资成分。</p>
+</div>
+
+<!-- 12. 未到期责任负债 -->
+<h2>12. 未到期责任负债 (Insurance Contract Liability)</h2>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">12.1 适用范围与说明</p>
+<ul class="list-disc list-inside text-sm space-y-1">
+<li>未到期责任负债反映期末时点对未来保险服务的负债余额。</li>
+<li>包括预期现金流现值、预期非金融风险调整和 CSM。</li>
+<li>需区分年初有效合同 (IF) 与当年新增合同 (NB)。</li>
+<li>所有现值计算使用期末利率进行折现。</li>
+</ul>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">12.2 预期保费现金流现值</p>
+<div class="formula text-xs">
+$$ PV_{Prem} = -(Eff.F_{end\_curr}^{Prem} + New.F_{end\_curr}^{Prem}) $$
+</div>
+<p class="text-xs text-gray-500 mb-2">其中：</p>
+<ul class="list-disc list-inside text-xs space-y-1 text-gray-500">
+<li><span class="variable">Eff.F_{end\_curr}^{Prem}</span>：有效合同-期末预期-预期未来-保费现金流-期末现值（期末利率）</li>
+<li><span class="variable">New.F_{end\_curr}^{Prem}</span>：新增合同-期末预期-预期未来-保费现金流-期末现值（期末利率）</li>
+</ul>
+<p class="text-xs text-gray-500 mt-2">负号表示保费为流入，在负债中体现为负值（减少负债）。</p>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">12.3 预期IACF现值</p>
+<div class="formula text-xs">
+$$ PV_{IACF} = -(Eff.F_{end\_curr}^{IACF} + New.F_{end\_curr}^{IACF}) $$
+</div>
+<p class="text-xs text-gray-500 mb-2">其中：</p>
+<ul class="list-disc list-inside text-xs space-y-1 text-gray-500">
+<li><span class="variable">Eff.F_{end\_curr}^{IACF}</span>：有效合同-期末预期-预期未来-IACF-期末现值（期末利率）</li>
+<li><span class="variable">New.F_{end\_curr}^{IACF}</span>：新增合同-期末预期-预期未来-IACF-期末现值（期末利率）</li>
+</ul>
+<p class="text-xs text-gray-500 mt-2">负号表示 IACF 为流出，在负债中体现为负值（减少负债）。</p>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">12.4 预期赔付与费用现金流现值</p>
+<div class="formula text-xs">
+$$ PV_{Claims\_Maint} = -(Eff.F_{end\_curr}^{Claims} + New.F_{end\_curr}^{Claims} + Eff.F_{end\_curr}^{Maint} + New.F_{end\_curr}^{Maint}) $$
+</div>
+<p class="text-xs text-gray-500 mb-2">其中：</p>
+<ul class="list-disc list-inside text-xs space-y-1 text-gray-500">
+<li><span class="variable">Eff.F_{end\_curr}^{Claims}</span>：有效合同-期末预期-预期未来-赔付现金流-期末现值（期末利率）</li>
+<li><span class="variable">New.F_{end\_curr}^{Claims}</span>：新增合同-期末预期-预期未来-赔付现金流-期末现值（期末利率）</li>
+<li><span class="variable">Eff.F_{end\_curr}^{Maint}</span>：有效合同-期末预期-预期未来-维持费用现金流-期末现值（期末利率）</li>
+<li><span class="variable">New.F_{end\_curr}^{Maint}</span>：新增合同-期末预期-预期未来-维持费用现金流-期末现值（期末利率）</li>
+</ul>
+<p class="text-xs text-gray-500 mt-2">负号表示赔付与费用为流出，在负债中体现为正值（增加负债）。</p>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">12.5 预期现金流现值</p>
+<div class="formula text-xs">
+$$ PV_{CF} = PV_{Prem} + PV_{IACF} + PV_{Claims\_Maint} $$
+</div>
+<p class="text-xs text-gray-500">预期保费现金流现值 + 预期IACF现值 + 预期赔付与费用现金流现值。</p>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">12.6 预期非金融风险调整</p>
+<div class="formula text-xs">
+$$ RA = -(Eff.F_{end\_curr}^{RA} + New.F_{end\_curr}^{RA}) $$
+</div>
+<p class="text-xs text-gray-500 mb-2">其中：</p>
+<ul class="list-disc list-inside text-xs space-y-1 text-gray-500">
+<li><span class="variable">Eff.F_{end\_curr}^{RA}</span>：有效合同-期末预期-预期未来-非金融风险调整-期末现值（期末利率）</li>
+<li><span class="variable">New.F_{end\_curr}^{RA}</span>：新增合同-期末预期-预期未来-非金融风险调整-期末现值（期末利率）</li>
+</ul>
+<p class="text-xs text-gray-500 mt-2">负号表示风险调整为负债组成部分，在负债中体现为正值（增加负债）。</p>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">12.7 CSM</p>
+<div class="formula text-xs">
+$$ CSM = CSM_{end} $$
+</div>
+<p class="text-xs text-gray-500">期末CSM余额（见第8.10节）。</p>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">12.8 期末未到期责任负债余额</p>
+<div class="formula">
+$$ Liability_{end} = PV_{CF} + RA + CSM $$
+</div>
+<p class="text-xs text-gray-500">预期现金流现值 + 预期非金融风险调整 + CSM = 期末未到期责任负债余额。</p>
+</div>
+
+<!-- 13. IFIE（利率变化对预期现金流的影响） -->
+<h2>13. IFIE（利率变化对预期现金流的影响）(IFIE - Interest Rate Changes Effect)</h2>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">14.1 适用范围与说明</p>
+<ul class="list-disc list-inside text-sm space-y-1">
+<li>IFIE 反映利率变化对预期现金流和非金融风险调整的影响，需计入其他综合收益（OCI）。</li>
+<li><b>OCI选择权：</b>本实施方案采用 <b>OCI=1（拆分）</b>模式，IFIE 需区分计入损益（P&C）和计入OCI两部分。</li>
+<li>本章节仅描述 IFIE_P&C（计入损益）部分，仅包含计息影响，不包含利率变化影响（利率变化影响计入 IFIE_OCI）。</li>
+<li>需区分年初有效合同 (IF) 与当年新增合同 (NB)。</li>
+<li>所有现值计算使用加权初始确认利率（锁定利率）进行折现。</li>
+</ul>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">14.2 年初有效合同_预期现金流</p>
+<div class="formula text-xs">
+$$ IFIE_{IF}^{CF} = (Eff.F_{end}^{CF} + Eff.C_{year}^{CF}) - Eff.F_{beg\_prev}^{CF} $$
+</div>
+<p class="text-xs text-gray-500 mb-2">其中：</p>
+<ul class="list-disc list-inside text-xs space-y-1 text-gray-500">
+<li><span class="variable">Eff.F_{end}^{CF}</span>：有效合同-年初预期-预期未来-预期现金流-期末现值（加权初始确认利率）</li>
+<li><span class="variable">Eff.C_{year}^{CF}</span>：有效合同-年初预期-预期当年-（保费现金流+IACF+赔付现金流+维持费用现金流）-期末现值（加权初始确认利率）</li>
+<li><span class="variable">Eff.F_{beg\_prev}^{CF}</span>：有效合同-年初预期-预期未来-预期现金流-年初现值（上年加权初始确认利率）</li>
+</ul>
+<p class="text-xs text-gray-500 mt-2"><b>注意：</b>由于采用 OCI=1（拆分）模式，此计算仅包含计息影响部分（使用加权初始确认利率（锁定利率）：期末现值 - 年初现值），不包含利率变化影响（利率变化影响计入 IFIE_OCI）。</p>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">14.3 当年新增合同_预期现金流</p>
+<div class="formula text-xs">
+$$ IFIE_{NB}^{CF} = (New.F_{end}^{CF} + New.C_{init\_end}^{CF}) - (New.F_{init\_month}^{CF} + New.C_{init\_month}^{CF}) $$
+</div>
+<p class="text-xs text-gray-500 mb-2">其中：</p>
+<ul class="list-disc list-inside text-xs space-y-1 text-gray-500">
+<li><span class="variable">New.F_{end}^{CF}</span>：新增合同-初始确认-预期未来-预期现金流-期末现值（加权初始确认利率）</li>
+<li><span class="variable">New.C_{init\_end}^{CF}</span>：新增合同-初始确认-预期当期-（保费现金流+IACF+赔付现金流+维持费用现金流）-期末现值（加权初始确认利率）</li>
+<li><span class="variable">New.F_{init\_month}^{CF}</span>：新增合同-初始确认-预期未来-预期现金流-初始确认现值（当月初始利率）</li>
+<li><span class="variable">New.C_{init\_month}^{CF}</span>：新增合同-初始确认-预期当期-（保费现金流+IACF+赔付现金流+维持费用现金流）-初始确认现值（当月初始利率）</li>
+</ul>
+<p class="text-xs text-gray-500 mt-2"><b>重要修正：</b>必须减去"预期当期"的初始现值，否则结果会包含本金。公式为：期末现值（预期未来+预期当期）- 初始现值（预期未来+预期当期）。</p>
+<p class="text-xs text-gray-500"><b>注意：</b>由于采用 OCI=1（拆分）模式，此计算仅包含计息影响部分（使用锁定利率），不包含利率变化影响。</p>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">13.4 IFIE_预期现金流</p>
+<div class="formula text-xs">
+$$ IFIE_{CF} = IFIE_{IF}^{CF} + IFIE_{NB}^{CF} $$
+</div>
+<p class="text-xs text-gray-500">年初有效合同预期现金流 IFIE 与当年新增合同预期现金流 IFIE 之和。</p>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">14.5 年初有效合同_非金融风险调整</p>
+<div class="formula text-xs">
+$$ IFIE_{IF}^{RA} = (Eff.F_{end}^{RA} + Eff.C_{year}^{RA}) - Eff.F_{beg\_prev}^{RA} $$
+</div>
+<p class="text-xs text-gray-500 mb-2">其中：</p>
+<ul class="list-disc list-inside text-xs space-y-1 text-gray-500">
+<li><span class="variable">Eff.F_{end}^{RA}</span>：有效合同-年初预期-预期未来-预期非金融风险调整-期末现值（加权初始确认利率）</li>
+<li><span class="variable">Eff.C_{year}^{RA}</span>：有效合同-年初预期-预期当年-预期非金融风险调整-期末现值（加权初始确认利率）</li>
+<li><span class="variable">Eff.F_{beg\_prev}^{RA}</span>：有效合同-年初预期-预期未来-预期非金融风险调整-年初现值（上年加权初始确认利率）</li>
+</ul>
+<p class="text-xs text-gray-500 mt-2"><b>注意：</b>由于采用 OCI=1（拆分）模式，此计算仅包含计息影响部分（使用加权初始确认利率（锁定利率）：期末现值 - 年初现值），不包含利率变化影响（利率变化影响计入 IFIE_OCI）。</p>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">14.6 当年新增合同_非金融风险调整</p>
+<div class="formula text-xs">
+$$ IFIE_{NB}^{RA} = (New.F_{end}^{RA} + New.C_{init\_end}^{RA}) - (New.F_{init\_month}^{RA} + New.C_{init\_month}^{RA}) $$
+</div>
+<p class="text-xs text-gray-500 mb-2">其中：</p>
+<ul class="list-disc list-inside text-xs space-y-1 text-gray-500">
+<li><span class="variable">New.F_{end}^{RA}</span>：新增合同-初始确认-预期未来-预期非金融风险调整-期末现值（加权初始确认利率）</li>
+<li><span class="variable">New.C_{init\_end}^{RA}</span>：新增合同-初始确认-预期当期-预期非金融风险调整-期末现值（加权初始确认利率）</li>
+<li><span class="variable">New.F_{init\_month}^{RA}</span>：新增合同-初始确认-预期未来-预期非金融风险调整-初始确认现值（当月初始利率）</li>
+<li><span class="variable">New.C_{init\_month}^{RA}</span>：新增合同-初始确认-预期当期-预期非金融风险调整-初始确认现值（当月初始利率）</li>
+</ul>
+<p class="text-xs text-gray-500 mt-2"><b>重要修正：</b>必须减去"预期当期"的初始现值，否则结果会包含本金。公式为：期末现值（预期未来+预期当期）- 初始现值（预期未来+预期当期）。</p>
+<p class="text-xs text-gray-500"><b>注意：</b>由于采用 OCI=1（拆分）模式，此计算仅包含计息影响部分（使用锁定利率），不包含利率变化影响。</p>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">13.7 IFIE_非金融风险调整</p>
+<div class="formula text-xs">
+$$ IFIE_{RA} = IFIE_{IF}^{RA} + IFIE_{NB}^{RA} $$
+</div>
+<p class="text-xs text-gray-500">年初有效合同非金融风险调整 IFIE 与当年新增合同非金融风险调整 IFIE 之和。</p>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">13.8 IFIE_CSM</p>
+<div class="formula text-xs">
+$$ IFIE_{CSM} = -CSM_{Interest} $$
+</div>
+<p class="text-xs text-gray-500">CSM计息（见第6章）的负值，反映 CSM 计息对 IFIE 的影响。</p>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">13.9 IFIE</p>
+<div class="formula">
+$$ IFIE_{Total} = IFIE_{CF} + IFIE_{RA} + IFIE_{CSM} $$
+</div>
+<p class="text-xs text-gray-500">预期现金流 IFIE + 非金融风险调整 IFIE + CSM IFIE = IFIE 合计。</p>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">13.10 IFIE_预期现金流_亏损</p>
+<div class="formula text-xs">
+$$ IFIE_{CF\_LC} = \frac{IFIE_{CF}}{IFIE_{CF} + IFIE_{OCI\_CF}} \times LC_{IFIE\_CF} $$
+</div>
+<p class="text-xs text-gray-500">按 OCI=1（拆分）模式的比例分摊至亏损合同。其中 <span class="variable">LC_{IFIE\_CF}</span> 为 LC分摊IFIE_预期现金流（见第7章），<span class="variable">IFIE_{OCI\_CF}</span> 为计入 OCI 的 IFIE_预期现金流。</p>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">13.11 IFIE_预期现金流_非亏损</p>
+<div class="formula text-xs">
+$$ IFIE_{CF\_nonLC} = IFIE_{CF} - IFIE_{CF\_LC} $$
+</div>
+<p class="text-xs text-gray-500">IFIE_预期现金流减去亏损部分，得到非亏损部分。</p>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">13.12 IFIE_非金融风险调整_亏损</p>
+<div class="formula text-xs">
+$$ IFIE_{RA\_LC} = \frac{IFIE_{RA}}{IFIE_{RA} + IFIE_{OCI\_RA}} \times LC_{IFIE\_RA} $$
+</div>
+<p class="text-xs text-gray-500">按 OCI=1（拆分）模式的比例分摊至亏损合同。其中 <span class="variable">LC_{IFIE\_RA}</span> 为 LC分摊IFIE_非金融风险调整（见第7章），<span class="variable">IFIE_{OCI\_RA}</span> 为计入 OCI 的 IFIE_非金融风险调整。</p>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">13.13 IFIE_非金融风险调整_非亏损</p>
+<div class="formula text-xs">
+$$ IFIE_{RA\_nonLC} = IFIE_{RA} - IFIE_{RA\_LC} $$
+</div>
+<p class="text-xs text-gray-500">IFIE_非金融风险调整减去亏损部分，得到非亏损部分。</p>
+</div>
+
+<!-- 14. IFIE_OCI（计入其他综合收益的 IFIE） -->
+<h2>14. IFIE_OCI（计入其他综合收益的 IFIE）(IFIE_OCI - Other Comprehensive Income)</h2>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">14.1 适用范围与说明</p>
+<ul class="list-disc list-inside text-sm space-y-1">
+<li>IFIE_OCI 反映利率变化对预期现金流和非金融风险调整的影响，计入其他综合收益（OCI）。</li>
+<li><b>OCI选择权：</b>本实施方案采用 <b>OCI=1（拆分）</b>模式，IFIE 需区分计入损益（P&C）和计入 OCI 两部分。</li>
+<li>IFIE_OCI 仅包含利率变化影响，不包含计息影响（计息影响计入 IFIE_P&C）。</li>
+<li>需区分年初有效合同 (IF) 与当年新增合同 (NB)。</li>
+<li>所有现值计算需使用期末利率和初始确认利率进行对比。</li>
+</ul>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">14.2 年初有效合同_预期现金流</p>
+<div class="formula text-xs">
+$$ IFIE_{OCI\_IF}^{CF} = (Eff.F_{end\_curr}^{CF} - Eff.F_{end}^{CF}) - (Eff.F_{beg\_prev\_curr}^{CF} - Eff.F_{beg\_prev}^{CF}) $$
+</div>
+<p class="text-xs text-gray-500 mb-2">其中：</p>
+<ul class="list-disc list-inside text-xs space-y-1 text-gray-500">
+<li><span class="variable">Eff.F_{end\_curr}^{CF}</span>：有效合同-期末预期-预期未来-预期现金流-期末现值（期末利率）</li>
+<li><span class="variable">Eff.F_{end}^{CF}</span>：有效合同-期末预期-预期未来-预期现金流-期末现值（加权初始确认利率）</li>
+<li><span class="variable">Eff.F_{beg\_prev\_curr}^{CF}</span>：有效合同-年初预期-预期未来-预期现金流-年初现值（上年期末利率）</li>
+<li><span class="variable">Eff.F_{beg\_prev}^{CF}</span>：有效合同-年初预期-预期未来-预期现金流-年初现值（上年加权初始确认利率）</li>
+</ul>
+<p class="text-xs text-gray-500 mt-2"><b>逻辑说明：</b>期末利率与加权初始确认利率的差异影响，扣除年初的利率差异影响，得到当期利率变化对预期现金流的影响。</p>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">14.3 当年新增合同_预期现金流</p>
+<div class="formula text-xs">
+$$ IFIE_{OCI\_NB}^{CF} = New.F_{end\_curr}^{CF} - New.F_{end}^{CF} $$
+</div>
+<p class="text-xs text-gray-500 mb-2">其中：</p>
+<ul class="list-disc list-inside text-xs space-y-1 text-gray-500">
+<li><span class="variable">New.F_{end\_curr}^{CF}</span>：新增合同-期末预期-预期未来-预期现金流-期末现值（期末利率）</li>
+<li><span class="variable">New.F_{end}^{CF}</span>：新增合同-期末预期-预期未来-预期现金流-期末现值（加权初始确认利率）</li>
+</ul>
+<p class="text-xs text-gray-500 mt-2"><b>逻辑说明：</b>新增合同在期末时点，期末利率与加权初始确认利率的差异影响。</p>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">14.4 IFIE_OCI_预期现金流</p>
+<div class="formula text-xs">
+$$ IFIE_{OCI\_CF} = IFIE_{OCI\_IF}^{CF} + IFIE_{OCI\_NB}^{CF} $$
+</div>
+<p class="text-xs text-gray-500">年初有效合同预期现金流 IFIE_OCI 与当年新增合同预期现金流 IFIE_OCI 之和。</p>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">14.5 年初有效合同_非金融风险调整</p>
+<div class="formula text-xs">
+$$ IFIE_{OCI\_IF}^{RA} = (Eff.F_{end\_curr}^{RA} - Eff.F_{end}^{RA}) - (Eff.F_{beg\_prev\_curr}^{RA} - Eff.F_{beg\_prev}^{RA}) $$
+</div>
+<p class="text-xs text-gray-500 mb-2">其中：</p>
+<ul class="list-disc list-inside text-xs space-y-1 text-gray-500">
+<li><span class="variable">Eff.F_{end\_curr}^{RA}</span>：有效合同-期末预期-预期未来-预期非金融风险调整-期末现值（期末利率）</li>
+<li><span class="variable">Eff.F_{end}^{RA}</span>：有效合同-期末预期-预期未来-预期非金融风险调整-期末现值（加权初始确认利率）</li>
+<li><span class="variable">Eff.F_{beg\_prev\_curr}^{RA}</span>：有效合同-年初预期-预期未来-预期非金融风险调整-年初现值（上年期末利率）</li>
+<li><span class="variable">Eff.F_{beg\_prev}^{RA}</span>：有效合同-年初预期-预期未来-预期非金融风险调整-年初现值（上年加权初始确认利率）</li>
+</ul>
+<p class="text-xs text-gray-500 mt-2"><b>逻辑说明：</b>期末利率与加权初始确认利率的差异影响，扣除年初的利率差异影响，得到当期利率变化对非金融风险调整的影响。</p>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">14.6 当年新增合同_非金融风险调整</p>
+<div class="formula text-xs">
+$$ IFIE_{OCI\_NB}^{RA} = New.F_{end\_curr}^{RA} - New.F_{end}^{RA} $$
+</div>
+<p class="text-xs text-gray-500 mb-2">其中：</p>
+<ul class="list-disc list-inside text-xs space-y-1 text-gray-500">
+<li><span class="variable">New.F_{end\_curr}^{RA}</span>：新增合同-期末预期-预期未来-预期非金融风险调整-期末现值（期末利率）</li>
+<li><span class="variable">New.F_{end}^{RA}</span>：新增合同-期末预期-预期未来-预期非金融风险调整-期末现值（加权初始确认利率）</li>
+</ul>
+<p class="text-xs text-gray-500 mt-2"><b>逻辑说明：</b>新增合同在期末时点，期末利率与加权初始确认利率的差异影响。</p>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">14.7 IFIE_OCI_非金融风险调整</p>
+<div class="formula text-xs">
+$$ IFIE_{OCI\_RA} = IFIE_{OCI\_IF}^{RA} + IFIE_{OCI\_NB}^{RA} $$
+</div>
+<p class="text-xs text-gray-500">年初有效合同非金融风险调整 IFIE_OCI 与当年新增合同非金融风险调整 IFIE_OCI 之和。</p>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">14.8 IFIE_OCI</p>
+<div class="formula">
+$$ IFIE_{OCI\_Total} = IFIE_{OCI\_CF} + IFIE_{OCI\_RA} $$
+</div>
+<p class="text-xs text-gray-500">预期现金流 IFIE_OCI + 非金融风险调整 IFIE_OCI = IFIE_OCI 合计。</p>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">14.9 IFIE_OCI_预期现金流_亏损</p>
+<div class="formula text-xs">
+$$ IFIE_{OCI\_CF\_LC} = LC_{IFIE\_CF} - IFIE_{CF\_LC} $$
+</div>
+<p class="text-xs text-gray-500">LC分摊IFIE_预期现金流（见第7章）减去 IFIE_P&C_预期现金流_亏损（见第13.10节），得到 IFIE_OCI_预期现金流_亏损部分。</p>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">14.10 IFIE_OCI_预期现金流_非亏损</p>
+<div class="formula text-xs">
+$$ IFIE_{OCI\_CF\_nonLC} = IFIE_{OCI\_CF} - IFIE_{OCI\_CF\_LC} $$
+</div>
+<p class="text-xs text-gray-500">IFIE_OCI_预期现金流减去亏损部分，得到非亏损部分。</p>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">14.11 IFIE_OCI_非金融风险调整_亏损</p>
+<div class="formula text-xs">
+$$ IFIE_{OCI\_RA\_LC} = LC_{IFIE\_RA} - IFIE_{RA\_LC} $$
+</div>
+<p class="text-xs text-gray-500">LC分摊IFIE_非金融风险调整（见第7章）减去 IFIE_P&C_非金融风险调整_亏损（见第13.12节），得到 IFIE_OCI_非金融风险调整_亏损部分。</p>
+</div>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">14.12 IFIE_OCI_非金融风险调整_非亏损</p>
+<div class="formula text-xs">
+$$ IFIE_{OCI\_RA\_nonLC} = IFIE_{OCI\_RA} - IFIE_{OCI\_RA\_LC} $$
+</div>
+<p class="text-xs text-gray-500">IFIE_OCI_非金融风险调整减去亏损部分，得到非亏损部分。</p>
+</div>
+
+<!-- 15. 计量结果与数据输出 -->
+<h2>15. 计量结果与数据输出 (Measurement Results & Data Output)</h2>
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">15.1 适用范围与说明</p>
+<ul class="list-disc list-inside text-sm space-y-1">
+<li>本章节汇总所有计量结果，用于报表输出和披露。</li>
+<li>输出指标包括保险合同收入、赔付与费用、亏损合同损益、IFIE、未到期责任负债等。</li>
+<li>所有输出值均为负号转正号后的结果，用于报表展示。</li>
+</ul>
+</div>
+
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">15.2 保险合同收入输出</p>
+<div class="overflow-x-auto">
+<table class="min-w-full text-sm border-collapse border border-gray-200 mt-2">
+<thead class="bg-gray-50">
+<tr>
+<th class="border p-2 text-left">输出指标</th>
+<th class="border p-2 text-left">计算公式</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="border p-2">保险合同收入_预期赔付与费用_含亏损</td>
+<td class="border p-2 font-mono text-xs">-保险合同收入_预期赔付与费用_含亏损（见第11.2节）</td>
+</tr>
+<tr>
+<td class="border p-2">保险合同收入_预期赔付与费用_亏损分摊</td>
+<td class="border p-2 font-mono text-xs">-保险合同收入_预期赔付与费用_亏损分摊（见第11.3节）</td>
+</tr>
+<tr>
+<td class="border p-2">保险合同收入_预期释放的非金融风险调整_含亏损</td>
+<td class="border p-2 font-mono text-xs">-保险合同收入_预期释放的非金融风险调整_含亏损（见第11.4节）</td>
+</tr>
+<tr>
+<td class="border p-2">保险合同收入_预期释放的非金融风险调整_亏损分摊</td>
+<td class="border p-2 font-mono text-xs">-保险合同收入_预期释放的非金融风险调整_亏损分摊（见第11.5节）</td>
+</tr>
+<tr>
+<td class="border p-2">保险合同收入_摊销的CSM</td>
+<td class="border p-2 font-mono text-xs">-保险合同收入_摊销的CSM（见第11.6节）</td>
+</tr>
+<tr>
+<td class="border p-2">保险合同收入_摊销的IACF</td>
+<td class="border p-2 font-mono text-xs">-保险合同收入_摊销的IACF（见第11.7节）</td>
+</tr>
+<tr>
+<td class="border p-2">保险合同收入_经验调整</td>
+<td class="border p-2 font-mono text-xs">-保险合同收入_经验调整（见第11.8节）</td>
+</tr>
+<tr>
+<td class="border p-2">保险合同收入_分解的投资成分</td>
+<td class="border p-2 font-mono text-xs">-保险合同收入_分解的投资成分（不考虑，设为0）</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">15.3 赔付与费用输出</p>
+<div class="overflow-x-auto">
+<table class="min-w-full text-sm border-collapse border border-gray-200 mt-2">
+<thead class="bg-gray-50">
+<tr>
+<th class="border p-2 text-left">输出指标</th>
+<th class="border p-2 text-left">计算公式</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="border p-2">赔付与费用_亏损分摊_预期现金流</td>
+<td class="border p-2 font-mono text-xs">分摊的LC_预期现金流（见第7章）</td>
+</tr>
+<tr>
+<td class="border p-2">赔付与费用_亏损分摊_非金融风险调整</td>
+<td class="border p-2 font-mono text-xs">分摊的LC_非金融风险调整（见第7章）</td>
+</tr>
+<tr>
+<td class="border p-2">赔付与费用_摊销的IACF</td>
+<td class="border p-2 font-mono text-xs">保险合同收入_摊销的IACF（见第11.7节）</td>
+</tr>
+<tr>
+<td class="border p-2">赔付与费用_分解的投资成分</td>
+<td class="border p-2 font-mono text-xs">-当年分解的投资成分（不考虑，设为0）</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">15.4 亏损合同损益输出</p>
+<div class="overflow-x-auto">
+<table class="min-w-full text-sm border-collapse border border-gray-200 mt-2">
+<thead class="bg-gray-50">
+<tr>
+<th class="border p-2 text-left">输出指标</th>
+<th class="border p-2 text-left">计算公式</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="border p-2">亏损合同损益_新增合同预期现金流_赔付与费用现金流_亏损</td>
+<td class="border p-2 font-mono text-xs">当年新增LC_预期现金流</td>
+</tr>
+<tr>
+<td class="border p-2">亏损合同损益_新增合同非金融风险调整_亏损</td>
+<td class="border p-2 font-mono text-xs">当年新增LC_非金融风险调整</td>
+</tr>
+<tr>
+<td class="border p-2">亏损合同损益_不调整CSM的预期现金流变动</td>
+<td class="border p-2 font-mono text-xs">被LC吸收的变化_预期现金流（见第5章）</td>
+</tr>
+<tr>
+<td class="border p-2">亏损合同损益_不调整CSM的非金融风险调整变动</td>
+<td class="border p-2 font-mono text-xs">被LC吸收的变化_非金融风险调整（见第5章）</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">15.5 IFIE_P&L（计入损益）输出</p>
+<div class="overflow-x-auto">
+<table class="min-w-full text-sm border-collapse border border-gray-200 mt-2">
+<thead class="bg-gray-50">
+<tr>
+<th class="border p-2 text-left">输出指标</th>
+<th class="border p-2 text-left">计算公式</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="border p-2">IFIE_P&L_未到期_预期现金流_非亏损</td>
+<td class="border p-2 font-mono text-xs">IFIE_预期现金流_非亏损（见第13.11节）</td>
+</tr>
+<tr>
+<td class="border p-2">IFIE_P&L_未到期_预期现金流_亏损</td>
+<td class="border p-2 font-mono text-xs">IFIE_预期现金流_亏损（见第13.10节）</td>
+</tr>
+<tr>
+<td class="border p-2">IFIE_P&L_未到期_非金融风险调整_非亏损</td>
+<td class="border p-2 font-mono text-xs">IFIE_P&C_非金融风险调整_非亏损（见第13.13节）</td>
+</tr>
+<tr>
+<td class="border p-2">IFIE_P&L_未到期_非金融风险调整_亏损</td>
+<td class="border p-2 font-mono text-xs">IFIE_P&C_非金融风险调整_亏损（见第13.12节）</td>
+</tr>
+<tr>
+<td class="border p-2">IFIE_P&L_未到期_CSM</td>
+<td class="border p-2 font-mono text-xs">IFIE_CSM（见第13.8节）</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">15.6 IFIE_OCI（计入其他综合收益）输出</p>
+<div class="overflow-x-auto">
+<table class="min-w-full text-sm border-collapse border border-gray-200 mt-2">
+<thead class="bg-gray-50">
+<tr>
+<th class="border p-2 text-left">输出指标</th>
+<th class="border p-2 text-left">计算公式</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="border p-2">IFIE_OCI_未到期_预期现金流_非亏损</td>
+<td class="border p-2 font-mono text-xs">IFIE_OCI_预期现金流_非亏损（见第14.10节）</td>
+</tr>
+<tr>
+<td class="border p-2">IFIE_OCI_未到期_预期现金流_亏损</td>
+<td class="border p-2 font-mono text-xs">IFIE_OCI_预期现金流_亏损（见第14.9节）</td>
+</tr>
+<tr>
+<td class="border p-2">IFIE_OCI_未到期_非金融风险调整_非亏损</td>
+<td class="border p-2 font-mono text-xs">IFIE_OCI_非金融风险调整_非亏损（见第14.12节）</td>
+</tr>
+<tr>
+<td class="border p-2">IFIE_OCI_未到期_非金融风险调整_亏损</td>
+<td class="border p-2 font-mono text-xs">IFIE_OCI_非金融风险调整_亏损（见第14.11节）</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">15.7 未到期责任负债输出</p>
+<div class="overflow-x-auto">
+<table class="min-w-full text-sm border-collapse border border-gray-200 mt-2">
+<thead class="bg-gray-50">
+<tr>
+<th class="border p-2 text-left">输出指标</th>
+<th class="border p-2 text-left">计算公式</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="border p-2">未到期责任负债_预期现金流_非亏损</td>
+<td class="border p-2 font-mono text-xs">期末LC余额_预期现金流 + 预期现金流现值（见第12.5节）</td>
+</tr>
+<tr>
+<td class="border p-2">未到期责任负债_预期现金流_亏损</td>
+<td class="border p-2 font-mono text-xs">-期末LC余额_预期现金流</td>
+</tr>
+<tr>
+<td class="border p-2">未到期责任负债_非金融风险调整_非亏损</td>
+<td class="border p-2 font-mono text-xs">预期非金融风险调整（见第12.6节）+ 期末LC余额_非金融风险调整</td>
+</tr>
+<tr>
+<td class="border p-2">未到期责任负债_非金融风险调整_亏损</td>
+<td class="border p-2 font-mono text-xs">-期末LC余额_非金融风险调整</td>
+</tr>
+<tr>
+<td class="border p-2">未到期责任负债_CSM</td>
+<td class="border p-2 font-mono text-xs">CSM（见第12.7节，即期末CSM余额）</td>
+</tr>
+<tr>
+<td class="border p-2">未到期_调整CSM的预期现金流变动</td>
+<td class="border p-2 font-mono text-xs">被CSM吸收的现金流变化（见第8.7节）</td>
+</tr>
+<tr>
+<td class="border p-2">未到期_调整CSM的非金融风险调整变动</td>
+<td class="border p-2 font-mono text-xs">被CSM吸收的非金融风险调整变化（见第8.8节）</td>
+</tr>
+<tr>
+<td class="border p-2">未到期_调整CSM的估计变更</td>
+<td class="border p-2 font-mono text-xs">-被CSM吸收的变化（见第8.6节）</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">15.8 新增合同输出（盈利合同）</p>
+<div class="overflow-x-auto">
+<table class="min-w-full text-sm border-collapse border border-gray-200 mt-2">
+<thead class="bg-gray-50">
+<tr>
+<th class="border p-2 text-left">输出指标</th>
+<th class="border p-2 text-left">计算公式</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="border p-2">新增合同预期现金流_保费现金流_盈利合同</td>
+<td class="border p-2 font-mono text-xs">汇总当CSM/LC ≥ 0时的预期保费现金流</td>
+</tr>
+<tr>
+<td class="border p-2">新增合同预期现金流_IACF_盈利合同</td>
+<td class="border p-2 font-mono text-xs">汇总当CSM/LC ≥ 0时的预期IACF</td>
+</tr>
+<tr>
+<td class="border p-2">新增合同预期现金流_赔付与费用现金流_盈利合同</td>
+<td class="border p-2 font-mono text-xs">汇总当CSM/LC ≥ 0时的预期赔付现金流 + 汇总当CSM/LC ≥ 0时的预期维持费用现金流</td>
+</tr>
+<tr>
+<td class="border p-2">新增合同非金融风险调整_盈利合同</td>
+<td class="border p-2 font-mono text-xs">汇总当CSM/LC ≥ 0时的预期非金融风险调整</td>
+</tr>
+<tr>
+<td class="border p-2">新增合同CSM_盈利合同</td>
+<td class="border p-2 font-mono text-xs">-当年新增合同新增CSM（见第6.3节）</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">15.9 新增合同输出（亏损合同）</p>
+<div class="overflow-x-auto">
+<table class="min-w-full text-sm border-collapse border border-gray-200 mt-2">
+<thead class="bg-gray-50">
+<tr>
+<th class="border p-2 text-left">输出指标</th>
+<th class="border p-2 text-left">计算公式</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="border p-2">新增合同预期现金流_保费现金流_亏损合同</td>
+<td class="border p-2 font-mono text-xs">汇总当CSM/LC < 0时的预期保费现金流</td>
+</tr>
+<tr>
+<td class="border p-2">新增合同预期现金流_IACF_亏损合同</td>
+<td class="border p-2 font-mono text-xs">汇总当CSM/LC < 0时的预期IACF</td>
+</tr>
+<tr>
+<td class="border p-2">新增合同预期现金流_赔付与费用现金流_亏损合同_非亏损</td>
+<td class="border p-2 font-mono text-xs">汇总当CSM/LC < 0时的预期赔付现金流 + 汇总当CSM/LC < 0时的预期维持费用现金流 - 当年新增LC_预期现金流</td>
+</tr>
+<tr>
+<td class="border p-2">新增合同非金融风险调整_亏损合同_非亏损</td>
+<td class="border p-2 font-mono text-xs">汇总当CSM/LC < 0时的预期非金融风险调整 - 当年新增LC_非金融风险调整</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+
+<div class="logic-block">
+<p class="font-bold text-blue-800 mb-2">15.10 现金流输出</p>
+<div class="overflow-x-auto">
+<table class="min-w-full text-sm border-collapse border border-gray-200 mt-2">
+<thead class="bg-gray-50">
+<tr>
+<th class="border p-2 text-left">输出指标</th>
+<th class="border p-2 text-left">计算公式</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="border p-2">现金流_收到的保费</td>
+<td class="border p-2 font-mono text-xs">IF_保费现金流_期末实际 + NB_保费现金流_期末实际</td>
+</tr>
+<tr>
+<td class="border p-2">现金流_支付的获取费用</td>
+<td class="border p-2 font-mono text-xs">IF_IACF_期末实际 + NB_IACF_期末实际</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+
+<!-- 16. 可视化逻辑 -->
+<h2>16. 逻辑可视化 (Logic Visualization)</h2>
+<p class="text-sm text-gray-600 mb-4">演示：时间轴上的未满期保费释放与折现。</p>
+<canvas id="logicCanvas" width="750" height="400"></canvas>
+<div class="text-center mt-4">
+<button onclick="drawTimeLine()" class="bg-blue-600 text-white px-6 py-2 rounded shadow hover:bg-blue-500 transition font-bold">
+▶ 生成时间轴与现金流模拟
+</button>
+</div>
+
+</div>
+
+<script>
+const canvas = document.getElementById('logicCanvas');
+const ctx = canvas.getContext('2d');
+
+function drawArrow(fromX, fromY, toX, toY, color) {
+ctx.beginPath();
+ctx.moveTo(fromX, fromY);
+ctx.lineTo(toX, toY);
+ctx.strokeStyle = color;
+ctx.lineWidth = 2;
+ctx.stroke();
+ctx.beginPath();
+ctx.moveTo(toX, toY);
+ctx.lineTo(toX - 5, toY - 5);
+ctx.lineTo(toX + 5, toY + 5); // fix arrow direction
+ctx.lineTo(toX, toY);
+ctx.fillStyle = color;
+ctx.fill();
+}
+
+function drawTimeLine() {
+ctx.clearRect(0, 0, canvas.width, canvas.height);
+const startX = 50;
+const endX = 700;
+const y = 100;
+// 1. Draw Timeline
+ctx.beginPath();
+ctx.moveTo(startX, y);
+ctx.lineTo(endX, y);
+ctx.strokeStyle = "#334155";
+ctx.lineWidth = 2;
+ctx.stroke();
+// Points
+const points = [
+{x: startX, label: "起期 (Start)", sub: "T=0"},
+{x: startX + 100, label: "评估日 (Val)", sub: "已过 3月"},
+{x: endX, label: "终期 (End)", sub: "T=60"}
+];
+points.forEach(p => {
+ctx.beginPath();
+ctx.arc(p.x, y, 4, 0, Math.PI*2);
+ctx.fillStyle = "#1e40af";
+ctx.fill();
+ctx.fillStyle = "#334155";
+ctx.font = "12px Arial";
+ctx.textAlign = "center";
+ctx.fillText(p.label, p.x, y - 15);
+ctx.fillStyle = "#64748b";
+ctx.font = "10px Arial";
+ctx.fillText(p.sub, p.x, y - 30);
+});
+
+// Sections
+// Passed
+ctx.fillStyle = "#cbd5e1";
+ctx.fillRect(startX, y+2, 100, 10);
+ctx.fillStyle = "#64748b";
+ctx.fillText("已赚保费 (Earned)", startX + 50, y + 25);
+// Remaining (UPR)
+ctx.fillStyle = "#93c5fd";
+ctx.fillRect(startX + 100, y+2, endX - (startX+100), 10);
+ctx.fillStyle = "#1d4ed8";
+ctx.fillText("未满期保费 (UPR) -> 未来释放", (startX+100+endX)/2, y + 25);
+
+// Cash Flow Projection
+const cfY = 200;
+ctx.fillStyle = "#333";
+ctx.font = "bold 14px Arial";
+ctx.textAlign = "left";
+ctx.fillText("未来现金流展开 (Future Cash Flows)", 50, 180);
+const barW = 8;
+const gap = 12;
+let count = 0;
+// Draw bars for future months
+for(let bx = startX + 110; bx < endX; bx += gap) {
+if(count > 30) break; // limit drawing
+// Claims Bar
+const h = 40;
+ctx.fillStyle = "#ef4444";
+ctx.fillRect(bx, cfY, barW, h);
+// Discount Curve
+if (count === 0) {
+ctx.beginPath();
+ctx.moveTo(bx + barW/2, cfY + h);
+} else {
+ctx.lineTo(bx + barW/2, cfY + h + (count * 1.5)); // simulating discount curve
+}
+count++;
+}
+ctx.strokeStyle = "#f59e0b";
+ctx.setLineDash([4, 2]);
+ctx.stroke();
+ctx.setLineDash([]);
+ctx.fillStyle = "#f59e0b";
+ctx.fillText("折现 (PV)", 200, cfY + 80);
+// Annotation
+ctx.fillStyle = "#ef4444";
+ctx.fillText("赔付流出 = UPR/剩余月数 * 赔付率", 50, cfY + 20);
+
+// Summary Box
+const sumX = 500;
+const sumY = 180;
+ctx.strokeStyle = "#333";
+ctx.strokeRect(sumX, sumY, 200, 100);
+ctx.fillStyle = "#f8fafc";
+ctx.fillRect(sumX+1, sumY+1, 198, 98);
+ctx.fillStyle = "#333";
+ctx.textAlign = "left";
+ctx.font = "bold 12px Arial";
+ctx.fillText("计算核心:", sumX + 10, sumY + 20);
+ctx.font = "12px Arial";
+ctx.fillText("1. 剩余月数 = 57", sumX + 10, sumY + 40);
+ctx.fillText("2. UPR = 总保费 * (57/60)", sumX + 10, sumY + 60);
+ctx.fillText("3. 月流出 = UPR/57 * LR", sumX + 10, sumY + 80);
+}
+
+// 初始绘制
+drawTimeLine();
+
+</script>
+</body>
+</html>
