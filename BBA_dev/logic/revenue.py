@@ -22,7 +22,7 @@ def run(context, logger):
         )
     
     # 7.1 预期赔付与费用释放（从PV原材料数据读取现值）
-    # 根据文档要求：使用加权初始确认利率（Wlk），只包含预期当期（Cca），区分有效合同和新增合同
+    # 根据文档要求：使用加权初始确认利率（Wlk），只包含预期当期（Cca），同时包含有效合同和新增合同
     eop_month_str = context.eop_date.strftime('%Y%m')
     pv_data_eop = context.pv_source_data.get_data(eop_month_str)
     if pv_data_eop is None:
@@ -50,184 +50,169 @@ def run(context, logger):
     
     from BBA_dev.utils.pv_field_desc import describe_field, format_pv_field_in_formula
     
-    # 判断是否为新业务
-    is_new_business = getattr(context, 'is_new_business', None)
-    if is_new_business is None:
-        is_new_business = (context.year == getattr(context, 'under_write_date', None).year if hasattr(context, 'under_write_date') else False)
+    # 获取年初月份的PV数据（用于有效合同）
+    # 注意：对于签单年，年初时保单还不存在，所以没有年初PV数据，有效合同值为0
+    bop_month_str = date_class(context.year, 1, 1).strftime('%Y%m')
+    pv_data_bop = context.pv_source_data.get_data(bop_month_str)
+    
+    # 判断是否为签单年
+    is_new_business_year = False
+    if hasattr(context, 'under_write_date') and context.under_write_date:
+        is_new_business_year = (context.year == context.under_write_date.year)
+    
+    if pv_data_bop is None:
+        if is_new_business_year:
+            # 签单年：年初没有数据是正常的，因为保单还不存在
+            logger.log_text(f"ℹ️  签单年年初（{bop_month_str}）无PV数据，有效合同相关值为0")
+        else:
+            # 非签单年：年初必须有数据
+            raise ValueError(f"❌ 错误: 找不到年初月份 {bop_month_str} 的PV原材料数据！")
+    
+    # 获取签单月份的PV数据（用于新增合同）
+    uw_month_str = None
+    pv_data_init = None
+    if hasattr(context, 'under_write_date') and context.under_write_date:
+        uw_month_str = context.under_write_date.strftime('%Y%m')
+        pv_data_init = context.pv_source_data.get_data(uw_month_str)
     
     # 从PV原材料数据读取预期赔付与费用现值（加权初始确认利率，预期当期）
-    if is_new_business:
-        # 新增合同：初始确认-预期当期-赔付/维费现金流-期末现值（加权初始确认利率）
+    # 同时包含有效合同和新增合同
+    # 有效合同：年初预期-预期当期-赔付/维费现金流-期末现值（加权初始确认利率）
+    pv_field_claims_if = 'Pvfl_If_Bop_Cca_Rep_Wlk_Cla_Amt'
+    pv_field_maint_if = 'Pvfl_If_Bop_Cca_Rep_Wlk_Mtn_Amt'
+    pv_claims_if = pv_data_bop.get_field(pv_field_claims_if) if pv_data_bop else Decimal('0')
+    pv_maint_if = pv_data_bop.get_field(pv_field_maint_if) if pv_data_bop else Decimal('0')
+    
+    # 新增合同：初始确认-预期当期-赔付/维费现金流-期末现值（加权初始确认利率）
+    pv_claims_nb = Decimal('0')
+    pv_maint_nb = Decimal('0')
+    if pv_data_init is not None:
         pv_field_claims_nb = 'Pvfl_Nb_Ini_Cca_Rep_Wlk_Cla_Amt'
         pv_field_maint_nb = 'Pvfl_Nb_Ini_Cca_Rep_Wlk_Mtn_Amt'
-        pv_claims_nb = pv_data_eop.get_field(pv_field_claims_nb)
-        pv_maint_nb = pv_data_eop.get_field(pv_field_maint_nb)
-        revenue_claims_expenses_gross = pv_claims_nb + pv_maint_nb
-        contract_type_desc = "新增合同"
-        pv_field_claims_desc = pv_field_claims_nb
-        pv_field_maint_desc = pv_field_maint_nb
-    else:
-        # 有效合同：年初预期-预期当期-赔付/维费现金流-期末现值（加权初始确认利率）
-        # 需要获取年初月份的PV数据
-        bop_month_str = date_class(context.year, 1, 1).strftime('%Y%m')
-        pv_data_bop = context.pv_source_data.get_data(bop_month_str)
-        if pv_data_bop is None:
-            raise ValueError(f"❌ 错误: 找不到年初月份 {bop_month_str} 的PV原材料数据！")
-        pv_field_claims_if = 'Pvfl_If_Bop_Cca_Rep_Wlk_Cla_Amt'
-        pv_field_maint_if = 'Pvfl_If_Bop_Cca_Rep_Wlk_Mtn_Amt'
-        pv_claims_if = pv_data_bop.get_field(pv_field_claims_if)
-        pv_maint_if = pv_data_bop.get_field(pv_field_maint_if)
-        revenue_claims_expenses_gross = pv_claims_if + pv_maint_if
-        contract_type_desc = "有效合同"
-        pv_field_claims_desc = pv_field_claims_if
-        pv_field_maint_desc = pv_field_maint_if
+        pv_claims_nb = pv_data_init.get_field(pv_field_claims_nb)
+        pv_maint_nb = pv_data_init.get_field(pv_field_maint_nb)
     
-    # 亏损分摊：分摊的LC_预期现金流
-    # 根据文档：分摊的LC_预期现金流+LC调整_预期现金流
-    # 简化实现：使用LC_Ratio分摊
-    revenue_claims_expenses_lc_alloc = revenue_claims_expenses_gross * context.nb_lc_ratio
-    context.revenue_claims_expenses_net = revenue_claims_expenses_gross - revenue_claims_expenses_lc_alloc
+    # 合计：有效合同 + 新增合同
+    revenue_claims_expenses_gross = pv_claims_if + pv_maint_if + pv_claims_nb + pv_maint_nb
+    
+    # 亏损分摊：分摊的LC_预期现金流 + LC调整_预期现金流
+    # 分摊的LC_预期现金流 = 预期赔付与费用_含亏损 × LC_Ratio
+    revenue_claims_expenses_lc_alloc_base = revenue_claims_expenses_gross * (getattr(context, 'nb_lc_ratio', Decimal('0')) or Decimal('0'))
+    
+    # LC调整_预期现金流：从csm_lc_measurement模块获取
+    # 注意：如果csm_lc_measurement模块中还没有计算LC调整，这里先使用占位符
+    lc_adjust_cf = getattr(context, 'lc_adjust_cf', Decimal('0')) or Decimal('0')
+    revenue_claims_expenses_lc_alloc = revenue_claims_expenses_lc_alloc_base + lc_adjust_cf
+    
+    context.revenue_claims_expenses_net = revenue_claims_expenses_gross - revenue_claims_expenses_lc_alloc_base
     
     # 构建公式描述
-    if is_new_business:
-        formula_desc = (
-            f"【新增合同-初始确认-预期当期-赔付现金流-期末现值（加权初始确认利率）】\n"
-            f"+【新增合同-初始确认-预期当期-维持费用现金流-期末现值（加权初始确认利率）】\n"
-            f"PV字段：{pv_field_claims_desc}, {pv_field_maint_desc}\n"
-            f"所有现值均从PV原材料数据读取，使用加权初始确认利率（Wlk），只包含预期当期（Cca）"
-        )
-    else:
-        formula_desc = (
-            f"【有效合同-年初预期-预期当期-赔付现金流-期末现值（加权初始确认利率）】\n"
-            f"+【有效合同-年初预期-预期当期-维持费用现金流-期末现值（加权初始确认利率）】\n"
-            f"PV字段：{pv_field_claims_desc}, {pv_field_maint_desc}\n"
-            f"所有现值均从PV原材料数据读取，使用加权初始确认利率（Wlk），只包含预期当期（Cca）"
-        )
+    formula_desc = (
+        f"【有效合同-年初预期-预期当年-赔付现金流-期末现值（加权初始确认利率）】\n"
+        f"+【新增合同-初始确认-预期当期-预赔付现金流-期末现值（加权初始确认利率）】\n"
+        f"+【有效合同-年初预期-预期当年-维持费用现金流-期末现值（加权初始确认利率）】\n"
+        f"+【新增合同-初始确认-预期当期-维持费用现金流-期末现值（加权初始确认利率）】\n"
+        f"PV字段：{pv_field_claims_if}, {pv_field_maint_if}, {pv_field_claims_nb if pv_data_init else 'N/A'}, {pv_field_maint_nb if pv_data_init else 'N/A'}\n"
+        f"所有现值均从PV原材料数据读取，使用加权初始确认利率（Wlk），只包含预期当期（Cca）"
+    )
     
     logger.log_item(
         "保险合同收入_预期赔付与费用_含亏损",
-        f"当期预期的赔付和维持费用释放（{contract_type_desc}，预期当期）",
+        "当期预期的赔付和维持费用释放（有效合同+新增合同，预期当期）",
         formula_desc,
         {
-            f"{contract_type_desc}_预期当期_赔付（Wlk）": pv_claims_nb if is_new_business else pv_claims_if,
-            f"{contract_type_desc}_预期当期_维费（Wlk）": pv_maint_nb if is_new_business else pv_maint_if,
+            "有效合同_预期当期_赔付（Wlk）": pv_claims_if,
+            "新增合同_预期当期_赔付（Wlk）": pv_claims_nb,
+            "有效合同_预期当期_维费（Wlk）": pv_maint_if,
+            "新增合同_预期当期_维费（Wlk）": pv_maint_nb,
             "预期赔付与费用合计（含亏损）": revenue_claims_expenses_gross,
-            "LC Ratio": context.nb_lc_ratio,
-            "亏损分摊": revenue_claims_expenses_lc_alloc,
-            "预期赔付与费用（扣除亏损分摊）": context.revenue_claims_expenses_net,
-            "PV字段": f"{pv_field_claims_desc}, {pv_field_maint_desc}",
+            "PV字段": f"{pv_field_claims_if}, {pv_field_maint_if}, {pv_field_claims_nb if pv_data_init else 'N/A'}, {pv_field_maint_nb if pv_data_init else 'N/A'}",
             "评估月（期末）": eop_month_str
         },
-        context.revenue_claims_expenses_net,
-        note=f"所有现值均从PV原材料数据读取，使用加权初始确认利率（Wlk），只包含预期当期（Cca）。{contract_type_desc}的预期赔付与费用 = {revenue_claims_expenses_gross}，扣除亏损分摊后 = {context.revenue_claims_expenses_net}"
+        revenue_claims_expenses_gross,
+        note=f"所有现值均从PV原材料数据读取，使用加权初始确认利率（Wlk），只包含预期当期（Cca）。同时包含有效合同和新增合同"
     )
     
     # 记录亏损分摊明细
     logger.log_item(
         "保险合同收入_预期赔付与费用_亏损分摊",
         "分摊到亏损成分的预期赔付与费用",
-        "分摊的LC_预期现金流 = 预期赔付与费用_含亏损 × LC_Ratio",
+        "分摊的LC_预期现金流 + LC调整_预期现金流\n其中：\n  分摊的LC_预期现金流 = 预期赔付与费用_含亏损 × LC_Ratio\n  LC调整_预期现金流 = 从csm_lc_measurement模块获取",
         {
             "预期赔付与费用_含亏损": revenue_claims_expenses_gross,
-            "LC Ratio": context.nb_lc_ratio,
-            "分摊的LC_预期现金流": revenue_claims_expenses_lc_alloc
+            "LC Ratio": getattr(context, 'nb_lc_ratio', Decimal('0')) or Decimal('0'),
+            "分摊的LC_预期现金流": revenue_claims_expenses_lc_alloc_base,
+            "LC调整_预期现金流": lc_adjust_cf,
+            "亏损分摊合计": revenue_claims_expenses_lc_alloc
         },
         revenue_claims_expenses_lc_alloc,
-        note=f"亏损分摊 = {revenue_claims_expenses_gross} × {context.nb_lc_ratio} = {revenue_claims_expenses_lc_alloc}"
+        note=f"亏损分摊 = 分摊的LC_预期现金流({revenue_claims_expenses_lc_alloc_base}) + LC调整_预期现金流({lc_adjust_cf}) = {revenue_claims_expenses_lc_alloc}"
     )
     
     # 7.2 RA 释放（直接使用PV字段中的Rad_Amt）
-    # 根据文档要求：使用加权初始确认利率（Wlk），只包含预期当期（Cca），区分有效合同和新增合同
-    eop_month_str = context.eop_date.strftime('%Y%m')
-    pv_data_eop = context.pv_source_data.get_data(eop_month_str)
-    if pv_data_eop is None:
-        # 尝试使用上一个可用的评估月数据（按月份倒序查找）
-        available_months = sorted(context.pv_source_data.data_by_month.keys(), reverse=True)
-        if available_months:
-            # 找到小于等于当前评估月的最大月份
-            fallback_month = None
-            for month in available_months:
-                if month <= eop_month_str:
-                    fallback_month = month
-                    break
-            if fallback_month:
-                pv_data_eop = context.pv_source_data.get_data(fallback_month)
-                logger.log_text(f"⚠️  警告: 评估月 {eop_month_str} 的PV原材料数据不存在，使用 {fallback_month} 的数据作为替代")
-            else:
-                # 如果找不到合适的替代月份，使用最新的可用数据
-                fallback_month = available_months[0]
-                pv_data_eop = context.pv_source_data.get_data(fallback_month)
-                logger.log_text(f"⚠️  警告: 评估月 {eop_month_str} 的PV原材料数据不存在，使用最新的可用数据 {fallback_month} 作为替代")
-        else:
-            raise ValueError(
-                f"❌ 错误: 找不到期末评估月 {eop_month_str} 的PV原材料数据，且没有可用的替代数据！\n"
-                f"   评估日期: {context.eop_date}\n"
-                f"   请确保 pv_calculator.py 已计算该评估月的PV数据。"
-            )
+    # 根据文档要求：使用加权初始确认利率（Wlk），只包含预期当期（Cca），同时包含有效合同和新增合同
+    # 有效合同：年初预期-预期当期-非金融风险调整-期末现值（加权初始确认利率）
+    pv_field_ra_if = 'Pvfl_If_Bop_Cca_Rep_Wlk_Rad_Amt'
+    ra_release_if = pv_data_bop.get_field(pv_field_ra_if) if pv_data_bop else Decimal('0')
     
-    # 从PV原材料数据读取期末现值（基于当前利率）- 用于其他计算
-    from BBA_dev.utils.pv_field_desc import describe_field, format_pv_field_in_formula
-    if is_new_business:
-        pv_field_claims = 'Pvfl_Nb_Eop_Cfa_Rep_Cur_Cla_Amt'
-        pv_field_maint = 'Pvfl_Nb_Eop_Cfa_Rep_Cur_Mtn_Amt'
-    else:
-        pv_field_claims = 'Pvfl_If_Eop_Cfa_Rep_Cur_Cla_Amt'
-        pv_field_maint = 'Pvfl_If_Eop_Cfa_Rep_Cur_Mtn_Amt'
-    context.pv_eop_claims_current = pv_data_eop.get_field(pv_field_claims)
-    context.pv_eop_maint_current = pv_data_eop.get_field(pv_field_maint)
-    
-    # RA释放：直接使用PV字段中的Rad_Amt（加权初始确认利率，预期当期）
-    # 根据文档：区分有效合同和新增合同
-    if is_new_business:
-        # 新增合同：初始确认-预期当期-非金融风险调整-期末现值（加权初始确认利率）
+    # 新增合同：初始确认-预期当期-非金融风险调整-期末现值（加权初始确认利率）
+    ra_release_nb = Decimal('0')
+    if pv_data_init is not None:
         pv_field_ra_nb = 'Pvfl_Nb_Ini_Cca_Rep_Wlk_Rad_Amt'
-        ra_release_gross = pv_data_eop.get_field(pv_field_ra_nb)
-        contract_type_desc = "新增合同"
-    else:
-        # 有效合同：年初预期-预期当期-非金融风险调整-期末现值（加权初始确认利率）
-        # 需要获取年初月份的PV数据
-        bop_month_str = date_class(context.year, 1, 1).strftime('%Y%m')
-        pv_data_bop = context.pv_source_data.get_data(bop_month_str)
-        if pv_data_bop is None:
-            raise ValueError(f"❌ 错误: 找不到年初月份 {bop_month_str} 的PV原材料数据！")
-        pv_field_ra_if = 'Pvfl_If_Bop_Cca_Rep_Wlk_Rad_Amt'
-        ra_release_gross = pv_data_bop.get_field(pv_field_ra_if)
-        contract_type_desc = "有效合同"
+        ra_release_nb = pv_data_init.get_field(pv_field_ra_nb)
     
-    # 扣除 LC 分摊
-    ra_release_lc_alloc = ra_release_gross * context.nb_lc_ratio
-    context.ra_release_net = ra_release_gross - ra_release_lc_alloc
+    # 合计：有效合同 + 新增合同
+    ra_release_gross = ra_release_if + ra_release_nb
+    
+    # 亏损分摊：分摊的LC_非金融风险调整 + LC调整_非金融风险调整
+    # 分摊的LC_非金融风险调整 = RA释放_含亏损 × LC_Ratio
+    ra_release_lc_alloc_base = ra_release_gross * (getattr(context, 'nb_lc_ratio', Decimal('0')) or Decimal('0'))
+    
+    # LC调整_非金融风险调整：从csm_lc_measurement模块获取
+    lc_adjust_ra = getattr(context, 'lc_adjust_ra', Decimal('0')) or Decimal('0')
+    ra_release_lc_alloc = ra_release_lc_alloc_base + lc_adjust_ra
+    
+    context.ra_release_net = ra_release_gross - ra_release_lc_alloc_base
+    context.ra_release_gross = ra_release_gross
+    context.ra_release_lc_alloc = ra_release_lc_alloc
     
     # 构建公式描述
-    if is_new_business:
-        formula_desc = (
-            f"【新增合同-初始确认-预期当期-非金融风险调整-期末现值（加权初始确认利率）】\n"
-            f"PV字段：{pv_field_ra_nb}\n"
-            f"所有现值均从PV原材料数据读取，使用Rad字段（不能从(Cla+Mtn)×RA_Ratio计算）"
-        )
-        pv_field_ra_desc = pv_field_ra_nb
-    else:
-        formula_desc = (
-            f"【有效合同-年初预期-预期当期-非金融风险调整-期末现值（加权初始确认利率）】\n"
-            f"PV字段：{pv_field_ra_if}\n"
-            f"所有现值均从PV原材料数据读取，使用Rad字段（不能从(Cla+Mtn)×RA_Ratio计算）"
-        )
-        pv_field_ra_desc = pv_field_ra_if
+    formula_desc = (
+        f"【有效合同-年初预期-预期当年-非金融风险调整-期末现值（加权初始确认利率）】\n"
+        f"+【新增合同-初始确认-预期当期-非金融风险调整-期末现值（加权初始确认利率）】\n"
+        f"PV字段：{pv_field_ra_if}, {pv_field_ra_nb if pv_data_init else 'N/A'}\n"
+        f"所有现值均从PV原材料数据读取，使用Rad字段（不能从(Cla+Mtn)×RA_Ratio计算）"
+    )
     
     logger.log_item(
-        "保险合同收入_RA释放",
-        f"当期释放的非金融风险调整（{contract_type_desc}，预期当期）",
+        "保险合同收入_预期释放的非金融风险调整_含亏损",
+        "当期释放的非金融风险调整（有效合同+新增合同，预期当期）",
         formula_desc,
         {
-            f"{contract_type_desc}_预期当期_RA（Wlk）": ra_release_gross,
-            "LC Ratio": context.nb_lc_ratio,
+            "有效合同_预期当期_RA（Wlk）": ra_release_if,
+            "新增合同_预期当期_RA（Wlk）": ra_release_nb,
             "RA释放（含亏损）": ra_release_gross,
-            "RA释放（扣除亏损分摊）": context.ra_release_net,
-            "PV字段": pv_field_ra_desc,
+            "PV字段": f"{pv_field_ra_if}, {pv_field_ra_nb if pv_data_init else 'N/A'}",
             "评估月（期末）": eop_month_str
         },
-        context.ra_release_net,
-        note=f"所有现值均从PV原材料数据读取，使用Rad字段。{contract_type_desc}的RA释放 = {ra_release_gross}，扣除LC分摊后 = {context.ra_release_net}"
+        ra_release_gross,
+        note=f"所有现值均从PV原材料数据读取，使用Rad字段。同时包含有效合同和新增合同"
+    )
+    
+    # 记录亏损分摊明细
+    logger.log_item(
+        "保险合同收入_预期释放的非金融风险调整_亏损分摊",
+        "分摊到亏损成分的非金融风险调整",
+        "分摊的LC_非金融风险调整 + LC调整_非金融风险调整\n其中：\n  分摊的LC_非金融风险调整 = RA释放_含亏损 × LC_Ratio\n  LC调整_非金融风险调整 = 从csm_lc_measurement模块获取",
+        {
+            "RA释放_含亏损": ra_release_gross,
+            "LC Ratio": getattr(context, 'nb_lc_ratio', Decimal('0')) or Decimal('0'),
+            "分摊的LC_非金融风险调整": ra_release_lc_alloc_base,
+            "LC调整_非金融风险调整": lc_adjust_ra,
+            "亏损分摊合计": ra_release_lc_alloc
+        },
+        ra_release_lc_alloc,
+        note=f"亏损分摊 = 分摊的LC_非金融风险调整({ra_release_lc_alloc_base}) + LC调整_非金融风险调整({lc_adjust_ra}) = {ra_release_lc_alloc}"
     )
     
     # 7.3 CSM 摊销（文档 Sec 8.2 & 8.9）
@@ -273,18 +258,22 @@ def run(context, logger):
             note="⚠️ 警告：应使用覆盖单元动态比例法"
         )
     
+    # CSM摊销金额（负值，表示CSM减少）
     context.csm_amort_amount = -(context.end_csm_before_amort * csm_amort_ratio)
+    # CSM摊销确认的收入（正值）
+    context.revenue_csm_amort = abs(context.csm_amort_amount)
     
     logger.log_item(
-        "保险合同收入_CSM摊销",
+        "保险合同收入_摊销的CSM",
         "[Sec 8.9] 当期确认的合同服务边际（使用覆盖单元动态比例法）",
-        "CSM_Amort = -(CSM_beg + CSM_new + CSM_Interest + Δ_CSM) × CSM_Amort_Ratio",
+        "CSM_Amort_Revenue = Abs(-(CSM_beg + CSM_new + CSM_Interest + Δ_CSM) × CSM_Amort_Ratio)",
         {
             "CSM Balance (摊销前)": context.end_csm_before_amort,
-            "摊销比例": csm_amort_ratio
+            "摊销比例": csm_amort_ratio,
+            "CSM摊销金额(负)": context.csm_amort_amount
         },
-        context.csm_amort_amount,
-        note="负号表示摊销减少 CSM 余额；释放的覆盖单元已包含自保单起期至当前评估日的累计服务（含追溯月份）"
+        context.revenue_csm_amort,
+        note="摊销减少CSM余额，同时增加保险合同收入"
     )
     
     # 更新期末 CSM（csm_amort_amount 为负值，直接相加即可完成扣减）
@@ -302,48 +291,51 @@ def run(context, logger):
     )
     
     # 7.5 经验调整 (Revenue Part)
-    context.revenue_exp_adj = context.prem_var
+    # 经验调整包括保费经验调整和IACF经验调整
+    # 注意：如果经验调整为正（实际优于预期），应增加收入
+    prem_exp_adj = getattr(context, 'prem_var', Decimal('0')) or Decimal('0')
+    iacf_exp_adj = getattr(context, 'iacf_var', Decimal('0')) or Decimal('0')
+    context.revenue_exp_adj = prem_exp_adj + iacf_exp_adj
     
     logger.log_item(
         "保险合同收入_经验调整",
-        "与当期服务相关的保费经验调整",
-        "Premium Variance (Current Service)",
-        {"Prem Var": context.prem_var},
-        context.revenue_exp_adj
+        "与当期服务相关的经验调整（保费+IACF）",
+        "保费经验调整 + IACF经验调整",
+        {
+            "保费经验调整": prem_exp_adj,
+            "IACF经验调整": iacf_exp_adj,
+            "经验调整合计": prem_exp_adj + iacf_exp_adj,
+            "保险合同收入_经验调整": context.revenue_exp_adj
+        },
+        context.revenue_exp_adj,
+        note="经验调整包括保费经验调整和IACF经验调整"
     )
     
-    # 7.6 投资成分
-    revenue_inv_comp = Decimal('0')
-    
-    # 7.7 合计
-    # 根据文档：Sum(含亏损各项 + 亏损分摊各项 + CSM摊销 + IACF摊销 + 经验调整 - 投资成分)
-    # 注意：含亏损和亏损分摊是分开的，需要分别加总
+    # 7.6 合计
+    # 根据文档：Sum(含亏损各项 - 亏损分摊各项 + CSM摊销 + IACF摊销 + 经验调整)
+    # 注意：亏损分摊应从收入中扣除
     context.total_revenue = (
-        revenue_claims_expenses_gross +  # 含亏损
-        revenue_claims_expenses_lc_alloc +  # 亏损分摊
-        getattr(context, 'ra_release_gross', context.ra_release_net) +  # RA含亏损
-        getattr(context, 'ra_release_lc_alloc', Decimal('0')) +  # RA亏损分摊
-        context.csm_amort_amount +
-        context.revenue_iacf_amort +
-        context.revenue_exp_adj - 
-        revenue_inv_comp
+        revenue_claims_expenses_gross - revenue_claims_expenses_lc_alloc +  # 赔付与费用（扣除亏损分摊）
+        ra_release_gross - ra_release_lc_alloc +  # RA释放（扣除亏损分摊）
+        context.revenue_csm_amort +  # CSM摊销（正值）
+        context.revenue_iacf_amort +  # IACF摊销（正值）
+        context.revenue_exp_adj  # 经验调整
     )
     
     logger.log_item(
         "保险合同收入_合计",
         "当期确认的总保险合同收入",
-        "Sum(保险合同收入_预期赔付与费用_含亏损, 保险合同收入_预期赔付与费用_亏损分摊, 保险合同收入_预期释放的非金融风险调整_含亏损, 保险合同收入_预期释放的非金融风险调整_亏损分摊, 保险合同收入_摊销的CSM, 保险合同收入_摊销的IACF, 保险合同收入_经验调整, 保险合同收入_分解的投资成分)\n其中：\n  保险合同收入_预期赔付与费用_含亏损 = 预期赔付与费用合计（含亏损）\n  保险合同收入_预期赔付与费用_亏损分摊 = 亏损分摊\n  保险合同收入_预期释放的非金融风险调整_含亏损 = RA释放（含亏损）\n  保险合同收入_预期释放的非金融风险调整_亏损分摊 = RA释放（亏损分摊）\n  保险合同收入_摊销的CSM = CSM摊销\n  保险合同收入_摊销的IACF = IACF摊销\n  保险合同收入_经验调整 = 经验调整\n  保险合同收入_分解的投资成分 = 投资成分（通常为0）",
+        "Sum(保险合同收入_预期赔付与费用_含亏损 - 保险合同收入_预期赔付与费用_亏损分摊, 保险合同收入_预期释放的非金融风险调整_含亏损 - 保险合同收入_预期释放的非金融风险调整_亏损分摊, 保险合同收入_摊销的CSM, 保险合同收入_摊销的IACF, 保险合同收入_经验调整)\n其中：\n  保险合同收入_预期赔付与费用_含亏损 = 预期赔付与费用合计（含亏损）\n  保险合同收入_预期赔付与费用_亏损分摊 = 亏损分摊（分摊的LC_预期现金流 + LC调整_预期现金流）\n  保险合同收入_预期释放的非金融风险调整_含亏损 = RA释放（含亏损）\n  保险合同收入_预期释放的非金融风险调整_亏损分摊 = RA释放（亏损分摊）（分摊的LC_非金融风险调整 + LC调整_非金融风险调整）\n  保险合同收入_摊销的CSM = CSM摊销确认的收入\n  保险合同收入_摊销的IACF = IACF摊销\n  保险合同收入_经验调整 = 保费经验调整 + IACF经验调整",
         {
             "保险合同收入_预期赔付与费用_含亏损": revenue_claims_expenses_gross,
-            "保险合同收入_预期赔付与费用_亏损分摊": revenue_claims_expenses_lc_alloc,
-            "保险合同收入_预期释放的非金融风险调整_含亏损": getattr(context, 'ra_release_gross', context.ra_release_net),
-            "保险合同收入_预期释放的非金融风险调整_亏损分摊": getattr(context, 'ra_release_lc_alloc', Decimal('0')),
-            "保险合同收入_摊销的CSM": context.csm_amort_amount,
+            "减：保险合同收入_预期赔付与费用_亏损分摊": -revenue_claims_expenses_lc_alloc,
+            "保险合同收入_预期释放的非金融风险调整_含亏损": ra_release_gross,
+            "减：保险合同收入_预期释放的非金融风险调整_亏损分摊": -ra_release_lc_alloc,
+            "保险合同收入_摊销的CSM": context.revenue_csm_amort,
             "保险合同收入_摊销的IACF": context.revenue_iacf_amort,
-            "保险合同收入_经验调整": context.revenue_exp_adj,
-            "保险合同收入_分解的投资成分": revenue_inv_comp
+            "保险合同收入_经验调整": context.revenue_exp_adj
         },
         context.total_revenue,
-        note=f"合计 = {revenue_claims_expenses_gross}（含亏损）+ {revenue_claims_expenses_lc_alloc}（亏损分摊）+ {getattr(context, 'ra_release_gross', context.ra_release_net)}（RA含亏损）+ {getattr(context, 'ra_release_lc_alloc', Decimal('0'))}（RA亏损分摊）+ {context.csm_amort_amount}（CSM摊销）+ {context.revenue_iacf_amort}（IACF摊销）+ {context.revenue_exp_adj}（经验调整）- {revenue_inv_comp}（投资成分） = {context.total_revenue}"
+        note=f"合计 = {revenue_claims_expenses_gross} (赔付含亏损) - {revenue_claims_expenses_lc_alloc} (赔付亏损分摊) + {ra_release_gross} (RA含亏损) - {ra_release_lc_alloc} (RA亏损分摊) + {context.revenue_csm_amort} (CSM摊销) + {context.revenue_iacf_amort} (IACF摊销) + {context.revenue_exp_adj} (经验调整) = {context.total_revenue}"
     )
 

@@ -76,7 +76,7 @@ class CalculationContext:
         self.revenue_iacf_amort = None
         self.revenue_exp_adj = None
         self.total_revenue = None
-        self.changes_in_estimates = Decimal('0')
+        # self.changes_in_estimates = Decimal('0')
         
         self.pv_eop_claims_current = None # Part 8 & 9 used
         self.pv_eop_maint_current = None # Part 8 & 9 used

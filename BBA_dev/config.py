@@ -2,7 +2,8 @@ from decimal import Decimal, getcontext
 
 # --- 参数配置 ---
 getcontext().prec = 38
-POLICY_NO = '1440003000004501220210000004'
+POLICY_NO = '1440000000004501220170000002'
+CERTI_NO = '1440000000004501220170000002-1'  # 批单号，如果为None则计算主单
 
 # 精算假设参数
 # 注意：以下参数中，除了 RATIO_IACF（获取费用率）从配置读取外，
@@ -16,4 +17,3 @@ USE_OCI_OPTION  = True             # OCI 选择权 (True = 拆分, 利率变动�
 
 # 计量方法配置
 VAL_METHOD = '7'  # 计量方法，用于查询精算假设表（'7' 表示 BBA 方法）
-

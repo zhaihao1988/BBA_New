@@ -22,15 +22,17 @@ import os
 class PVCashFlowExcelLogger:
     """PV现金流明细Excel日志生成器"""
     
-    def __init__(self, policy_no: str, excel_file_path: Optional[str] = None):
+    def __init__(self, policy_no: str, certi_no: Optional[str] = None, excel_file_path: Optional[str] = None):
         """
         初始化Excel日志生成器
         
         Args:
             policy_no: 保单号
+            certi_no: 批单号（可选）
             excel_file_path: Excel文件路径，如果为None则自动生成
         """
         self.policy_no = policy_no
+        self.certi_no = certi_no
         self.wb = Workbook()
         self.wb.remove(self.wb.active)  # 删除默认sheet
         
@@ -57,7 +59,10 @@ class PVCashFlowExcelLogger:
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             logs_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'logs')
             os.makedirs(logs_dir, exist_ok=True)
-            excel_file_path = os.path.join(logs_dir, f"pv_cashflow_detail_{policy_no}_{timestamp}.xlsx")
+            
+            # 文件名包含批单号
+            certi_part = f"_{certi_no}" if certi_no else ""
+            excel_file_path = os.path.join(logs_dir, f"pv_cashflow_detail_{policy_no}{certi_part}_{timestamp}.xlsx")
         
         self.excel_file_path = excel_file_path
     
@@ -170,6 +175,7 @@ class PVCashFlowExcelLogger:
         policy_info = data['policy_info']
         info_data = [
             ["保单号", policy_info.get('policy_no', '')],
+            ["批单号", policy_info.get('certi_no', '')],  # 添加批单号
             ["签单日期", policy_info.get('under_write_date', '')],
             ["起保日期", policy_info.get('start_date', '')],
             ["终保日期", policy_info.get('end_date', '')],

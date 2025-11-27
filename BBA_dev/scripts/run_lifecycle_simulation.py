@@ -36,7 +36,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from contextlib import redirect_stdout, redirect_stderr
 import io
 
-from BBA_dev.config import POLICY_NO, RATIO_IACF, VAL_METHOD
+from BBA_dev.config import POLICY_NO, RATIO_IACF, VAL_METHOD, CERTI_NO
 from BBA_dev.models import PolicyState, CohortState, Assumptions
 from BBA_dev.data_access import loader
 from BBA_dev.context import CalculationContext
@@ -47,9 +47,8 @@ from BBA_dev.utils.pv_field_desc import describe_field
 from BBA_dev.utils.pv_cashflow_excel_logger import PVCashFlowExcelLogger
 from BBA_dev.logic import (
     initial_recognition,
-    experience_adj,
-    interest_accretion,
-    csm_allocation,
+    fulfillment_cashflow_changes,
+    csm_lc_measurement,
     iacf_amortization,
     revenue,
     ifie,
@@ -121,7 +120,7 @@ class LifecycleSimulator:
         self.val_method = val_method
         if enable_logging:
             self.logger = CalculationLogger(md_file_path=md_log_file)
-            self.excel_logger = PVCashFlowExcelLogger(policy_no)
+            self.excel_logger = PVCashFlowExcelLogger(policy_no, certi_no=certi_no)
         else:
             self.logger = _SilentLogger()
             self.excel_logger = _SilentExcelLogger()
@@ -319,6 +318,7 @@ class LifecycleSimulator:
         context = CalculationContext()
         context.policy_data = pd.Series({
             'policy_no': self.policy_no,  # 添加保单号
+            'certi_no': self.certi_no,  # 添加批单号
             'sum_premium_no_tax': float(self.policy_state.written_premium),
             'under_write_date': self.policy_state.valuation_date,
             'start_date': self.policy_state.start_date,
@@ -326,6 +326,7 @@ class LifecycleSimulator:
             'class_code': self.cohort_state.cohort_id
         })
         context.policy_no = self.policy_no  # 同时在context中设置保单号
+        context.certi_no = self.certi_no  # 同时在context中设置批单号
         context.under_write_date = self.policy_state.valuation_date
         context.start_date = self.policy_state.start_date
         context.end_date = self.policy_state.end_date
@@ -384,6 +385,8 @@ class LifecycleSimulator:
             })
         if not hasattr(context, 'policy_no') or context.policy_no is None:
             context.policy_no = self.policy_no
+        if not hasattr(context, 'certi_no') or context.certi_no is None:
+            context.certi_no = self.certi_no
         return context
     
     def _build_rollforward_context(self, prev_context: CalculationContext, target_year: int) -> CalculationContext:
@@ -394,7 +397,7 @@ class LifecycleSimulator:
         copy_attrs = [
             'policy_data', 'actual_premium', 'init_fut_claim', 'init_fut_maint',
             'init_ra', 'total_months', 'rates_df', 'rates_df_locked', 'rates_df_eop',
-            'under_write_date', 'pv_source_data', 'policy_no'  # 保留PV原材料数据和保单号
+            'under_write_date', 'pv_source_data', 'policy_no', 'certi_no'  # 保留PV原材料数据、保单号和批单号
         ]
         for attr in copy_attrs:
             setattr(context, attr, getattr(prev_context, attr, None))
@@ -436,71 +439,6 @@ class LifecycleSimulator:
             return None
         prev_key = max(earlier_keys)
         return self.assumptions_history.get(prev_key)
-    
-    def _calculate_bel_change_from_assumptions(
-        self,
-        context: CalculationContext,
-        prev_assumptions: Optional[Assumptions],
-        current_assumptions: Optional[Assumptions]
-    ) -> Tuple[Decimal, Decimal, Decimal]:
-        """
-        计算由于非金融假设变更引起的未来现金流现值变化
-        
-        注意：此函数需要从PV原材料数据读取现值。
-        如果假设发生变更，需要重新运行pv_calculator.py生成新的PV原材料数据。
-        """
-        if prev_assumptions is None or current_assumptions is None:
-            return (Decimal('0'), Decimal('0'), Decimal('0'))
-        
-        # 强制要求PV原材料数据必须存在
-        if context.pv_source_data is None:
-            pv_source_data = load_pv_source_data(self.policy_no)
-            if pv_source_data:
-                context.pv_source_data = pv_source_data
-        
-        if context.pv_source_data is None:
-            raise ValueError(
-                f"❌ 错误: PV原材料数据不可用！\n"
-                f"   保单号: {self.policy_no}\n"
-                f"   请先运行 pv_calculator.py 生成PV原材料数据文件: logs/pv_source_data_{self.policy_no}.json\n"
-                f"   系统要求必须使用PV原材料数据，不允许使用旧的计算方式。\n"
-                f"   注意：如果精算假设发生变更，需要重新运行pv_calculator.py生成新的PV原材料数据。"
-            )
-        
-        current_month_str = current_assumptions.val_month
-        prev_month_str = prev_assumptions.val_month
-        pv_data_curr = context.pv_source_data.get_data(current_month_str)
-        pv_data_prev = context.pv_source_data.get_data(prev_month_str)
-        if pv_data_curr is None:
-            raise ValueError(
-                f"❌ 错误: 找不到评估月 {current_month_str} 的PV原材料数据！\n"
-                f"   请先运行 pv_calculator.py 为该评估月生成PV原材料。"
-            )
-        if pv_data_prev is None:
-            raise ValueError(
-                f"❌ 错误: 找不到评估月 {prev_month_str} 的PV原材料数据！\n"
-                f"   请确保已为上一评估月生成PV原材料。"
-            )
-        
-        bel_prev = self._calculate_bel_from_pv(pv_data_prev)
-        bel_curr = self._calculate_bel_from_pv(pv_data_curr)
-        delta = bel_curr - bel_prev
-        
-        return (bel_prev, bel_curr, delta)
-
-    @staticmethod
-    def _calculate_bel_from_pv(pv_data) -> Decimal:
-        """从PV原材料中抽取未来赔付与维费现值，用于比较BEL变化。"""
-        fields = [
-            'Pvfl_Nb_Eop_Cfa_Rep_Cur_Cla_Amt',
-            'Pvfl_Nb_Eop_Cfa_Rep_Cur_Mtn_Amt',
-            'Pvfl_If_Eop_Cfa_Rep_Cur_Cla_Amt',
-            'Pvfl_If_Eop_Cfa_Rep_Cur_Mtn_Amt'
-        ]
-        bel = Decimal('0')
-        for field in fields:
-            bel += pv_data.get_field(field)
-        return bel
     
     @staticmethod
     def _calculate_months_between(start_date: date, end_date: date) -> int:
@@ -637,50 +575,36 @@ class LifecycleSimulator:
         # 将保单添加到 context，用于后续的覆盖单元计算和合同组状态判定
         context.policies = [self.policy_state]
         
-        # 5.1 经验调整（文档第4节）
+        # 5.1 履约现金流变化（文档第4-5节）：整合经验调整和被CSM/LC吸收的变化
         # 判断是否为新业务：签单年 = 评估年 → 新业务，签单年 < 评估年 → 有效合同
         is_new_business = (year == context.under_write_date.year)
-        experience_adj.run(context, self.logger, current_assumptions, is_new_business=is_new_business)
-        
-        # 5.2 CSM计息（文档第6节）- 使用加权锁定利率
-        interest_accretion.run(context, self.logger, self.cohort_state, self.policy_state)
-        
-        # 5.2.1 会计估计变更（非金融假设）
-        prev_assumptions = self._get_previous_assumptions(val_month_str)
-        bel_prev, bel_curr, delta_changes = self._calculate_bel_change_from_assumptions(
+        fulfillment_cashflow_changes.run(
             context,
-            prev_assumptions,
-            current_assumptions
-        )
-        context.changes_in_estimates = delta_changes
-        self.logger.log_item(
-            "会计估计变更（非金融假设）",
-            "[Sec 5] 使用锁定利率折现的未来现金流现值变动",
-            "Δ_BEL = BEL_new(锁定) - BEL_old(锁定)",
-            {
-                "BEL_old (Locked)": bel_prev,
-                "BEL_new (Locked)": bel_curr,
-                "Prev Assumption": prev_assumptions.loss_ratio if prev_assumptions else Decimal('0'),
-                "Curr Assumption": current_assumptions.loss_ratio,
-                "Prev Maint Ratio": prev_assumptions.maintenance_expense_ratio if prev_assumptions else Decimal('0'),
-                "Curr Maint Ratio": current_assumptions.maintenance_expense_ratio,
-                "Prev ULAE Ratio": prev_assumptions.indirect_claims_expense_ratio if prev_assumptions else Decimal('0'),
-                "Curr ULAE Ratio": current_assumptions.indirect_claims_expense_ratio
-            },
-            delta_changes,
-            note="仅捕捉非金融假设（赔付率/费用率）对未来现金流的影响，折现使用加权锁定利率"
+            self.logger,
+            assumptions=current_assumptions,
+            cohort_state=self.cohort_state,
+            policies=[self.policy_state],
+            is_new_business=is_new_business
         )
         
-        # 5.3 被CSM/LC吸收的变化（文档第5节）和合同组状态判定（文档第8.5.5节）
-        csm_allocation.calculate_absorption(context, self.logger, self.cohort_state, [self.policy_state])
+        # 5.2 CSM/LC计量（文档第6-8.5.5节）：整合CSM计息、LC分摊IFIE、合同组判断、CSM计量、LC计量
+        # 注意：LC分摊IFIE的完整计算在IFIE模块中，这里只做基础计算
+        csm_lc_measurement.run(
+            context,
+            self.logger,
+            cohort_state=self.cohort_state,
+            policy_state=self.policy_state,
+            policies=[self.policy_state],
+            assumptions=current_assumptions
+        )
         
-        # 5.4 IACF摊销（文档第10节）
+        # 5.3 IACF摊销（文档第10节）
         iacf_amortization.run(context, self.logger)
         
-        # 5.5 保险合同收入（文档第11节）- 使用覆盖单元动态比例法
+        # 5.4 保险合同收入（文档第11节）- 使用覆盖单元动态比例法
         revenue.run(context, self.logger)
         
-        # 5.6 IFIE（文档第13-14节）- 严格区分 IFIE_P&C 和 IFIE_OCI
+        # 5.5 IFIE（文档第13-14节）- 严格区分 IFIE_P&C 和 IFIE_OCI
         # 确保 is_new_business 在 IFIE 执行前已正确设置
         if not hasattr(context, 'is_new_business') or context.is_new_business is None:
             context.is_new_business = (year == context.under_write_date.year)
@@ -721,6 +645,7 @@ class LifecycleSimulator:
             # 1. 保单信息
             policy_info = {
                 'policy_no': self.policy_no,
+                'certi_no': self.certi_no if self.certi_no else '',  # 添加批单号
                 'under_write_date': context.under_write_date.strftime('%Y-%m-%d') if context.under_write_date else '',
                 'start_date': self.policy_state.start_date.strftime('%Y-%m-%d') if self.policy_state and self.policy_state.start_date else '',
                 'end_date': self.policy_state.end_date.strftime('%Y-%m-%d') if self.policy_state and self.policy_state.end_date else '',
@@ -985,23 +910,41 @@ class LifecycleSimulator:
             "保险合同收入_摊销的CSM": self._to_number(getattr(context, 'csm_amort_amount', Decimal('0'))),
             "保险合同收入_摊销的IACF": self._to_number(getattr(context, 'revenue_iacf_amort', Decimal('0'))),
             "保险合同收入_经验调整": self._to_number(getattr(context, 'revenue_exp_adj', Decimal('0'))),
-            "保险合同收入_分解的投资成分": 0.0,  # TODO: 当投资成分拆分口径明确后替换
             "赔付与费用_亏损分摊_预期现金流": self._to_number(allocated_lc_exp_adj),
+            "赔付与费用_亏损分摊_非金融风险调整": 0.0,  # TODO: 待实现
             "赔付与费用_摊销的IACF": self._to_number(iacf_amort_expense),
             "亏损合同损益_新增合同预期现金流_赔付与费用现金流_亏损": self._to_number(nb_initial_lc),
+            "亏损合同损益_新增合同非金融风险调整_亏损": 0.0,  # TODO: 待实现
+            "亏损合同损益_不调整CSM的预期现金流变动": 0.0,  # TODO: 待实现
+            "亏损合同损益_不调整CSM的非金融风险调整变动": 0.0,  # TODO: 待实现
             "IFIE_P&L_未到期_预期现金流_非亏损": self._to_number(ifie_pl_cf_non_lc),
             "IFIE_P&L_未到期_预期现金流_亏损": self._to_number(ifie_pl_cf_lc),
             "IFIE_P&L_未到期_非金融风险调整_非亏损": self._to_number(ifie_pl_ra_non_lc),
             "IFIE_P&L_未到期_非金融风险调整_亏损": self._to_number(ifie_pl_ra_lc),
             "IFIE_P&L_未到期_CSM": self._to_number(ifie_csm),
-            "IFIE_OCI_预期现金流_非亏损": self._to_number(ifie_oci_cf_non_lc),
-            "IFIE_OCI_预期现金流_亏损": self._to_number(ifie_oci_cf_lc),
-            "IFIE_OCI_非金融风险调整_非亏损": self._to_number(ifie_oci_ra_non_lc),
-            "IFIE_OCI_非金融风险调整_亏损": self._to_number(ifie_oci_ra_lc),
-            "未到期责任负债_CSM": self._to_number(end_csm),
+            "IFIE_OCI_未到期_预期现金流_非亏损": self._to_number(ifie_oci_cf_non_lc),
+            "IFIE_OCI_未到期_预期现金流_亏损": self._to_number(ifie_oci_cf_lc),
+            "IFIE_OCI_未到期_非金融风险调整_非亏损": self._to_number(ifie_oci_ra_non_lc),
+            "IFIE_OCI_未到期_非金融风险调整_亏损": self._to_number(ifie_oci_ra_lc),
             "未到期责任负债_预期现金流_非亏损": self._to_number(lrc_bel_total),  # TODO: 待确定亏损/非亏损拆分口径
-            "未到期责任负债_非金融风险调整": self._to_number(lrc_ra),
-            "未到期责任负债_总额": self._to_number(lrc_total),  # BEL + RA + CSM
+            "未到期责任负债_预期现金流_亏损": 0.0,  # TODO: 待确定亏损/非亏损拆分口径
+            "未到期责任负债_非金融风险调整_非亏损": self._to_number(lrc_ra),  # TODO: 待确定亏损/非亏损拆分口径
+            "未到期责任负债_非金融风险调整_亏损": 0.0,  # TODO: 待确定亏损/非亏损拆分口径
+            "未到期责任负债_CSM": self._to_number(end_csm),
+            "未到期_调整CSM的预期现金流变动": self._to_number(getattr(context, 'csm_absorbed', Decimal('0'))),
+            "未到期_调整CSM的非金融风险调整变动": 0.0,  # TODO: 待实现
+            "未到期_调整CSM的估计变更": self._to_number(getattr(context, 'csm_absorbed', Decimal('0'))),  # 暂时使用csm_absorbed
+            "新增合同预期现金流_保费现金流_盈利合同": self._to_number(getattr(context, 'actual_premium', Decimal('0')) if is_new_business and nb_initial_lc >= 0 else Decimal('0')),
+            "新增合同预期现金流_IACF_盈利合同": self._to_number(getattr(context, 'actual_iacf_incurred', Decimal('0')) if is_new_business and nb_initial_lc >= 0 else Decimal('0')),
+            "新增合同预期现金流_赔付与费用现金流_盈利合同": self._to_number((getattr(context, 'init_fut_claim', Decimal('0')) + getattr(context, 'init_fut_maint', Decimal('0'))) if is_new_business and nb_initial_lc >= 0 else Decimal('0')),
+            "新增合同非金融风险调整_盈利合同": self._to_number(getattr(context, 'init_ra', Decimal('0')) if is_new_business and nb_initial_lc >= 0 else Decimal('0')),
+            "新增合同CSM_盈利合同": self._to_number(getattr(context, 'nb_initial_csm', Decimal('0')) if is_new_business and nb_initial_lc >= 0 else Decimal('0')),
+            "新增合同预期现金流_保费现金流_亏损合同": self._to_number(getattr(context, 'actual_premium', Decimal('0')) if is_new_business and nb_initial_lc < 0 else Decimal('0')),
+            "新增合同预期现金流_IACF_亏损合同": self._to_number(getattr(context, 'actual_iacf_incurred', Decimal('0')) if is_new_business and nb_initial_lc < 0 else Decimal('0')),
+            "新增合同预期现金流_赔付与费用现金流_亏损合同_非亏损": self._to_number((getattr(context, 'init_fut_claim', Decimal('0')) + getattr(context, 'init_fut_maint', Decimal('0'))) if is_new_business and nb_initial_lc < 0 else Decimal('0')),
+            "新增合同非金融风险调整_亏损合同_非亏损": self._to_number(getattr(context, 'init_ra', Decimal('0')) if is_new_business and nb_initial_lc < 0 else Decimal('0')),
+            "现金流_收到的保费": self._to_number(getattr(context, 'actual_premium', Decimal('0')) if is_new_business else Decimal('0')),
+            "现金流_支付的获取费用": self._to_number(getattr(context, 'actual_iacf_incurred', Decimal('0')) if is_new_business else Decimal('0')),
         }
 
         return result
@@ -1081,7 +1024,14 @@ def main():
     
     print(f"📝 日志将保存到: {md_log_file}\n")
     
-    simulator = LifecycleSimulator(POLICY_NO, md_log_file=md_log_file, enable_logging=True)
+    # 开启 dynamic_pv_mode=True，自动计算所需的 PV 数据，无需手动先跑 pv_calculator.py
+    simulator = LifecycleSimulator(
+        POLICY_NO, 
+        certi_no=CERTI_NO, 
+        md_log_file=md_log_file, 
+        enable_logging=True,
+        dynamic_pv_mode=True
+    )
     simulator.run()
     
     print(f"\n✅ 日志已保存到: {md_log_file}")

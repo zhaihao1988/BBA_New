@@ -386,252 +386,232 @@ def main():
     print_rate_curve(rate_current_df, f"CURRENT CURVE ({val_date.strftime('%Y%m')})")
 
     # 3. Project Cash Flows
+    # 移除了在主循环外的全局full_cf_df生成，因为后续需要根据不同的精算假设（签单时、上年末、当前评估月）分别生成现金流
+    
+    # 保留projector实例用于循环内调用
     projector = CashFlowProjector()
-    full_cf_df = projector.project_policy_flows(policy_row, assump_obj)
-    full_cf_df['Date_Obj'] = pd.to_datetime(full_cf_df['YYYYMM'], format='%Y%m').dt.date
     
-    # Split Contexts
-    # "Ini" Context: Valuation Date = UW Date
-    # "Eop" Context: Valuation Date = End of Year
-    # "Future" relative to Ini: All flows after UW Date
-    # "Future" relative to Eop: All flows after EOP Date
-    
-    # But the requested fields are simpler:
-    # "预期当期 (Current Period)": Flows in Year 0 (Sign Year)
-    # "预期未来 (Future Period)": Flows in Year 1+
-    
-    cf_current_period = full_cf_df[full_cf_df['Year'] == uw_date.year]
-    cf_future_period = full_cf_df[full_cf_df['Year'] > uw_date.year]
+    # 为了预览目的，生成一份基于期末假设的现金流
+    full_cf_df_preview = projector.project_policy_flows(policy_row, assump_obj)
+    full_cf_df_preview['Date_Obj'] = pd.to_datetime(full_cf_df_preview['YYYYMM'], format='%Y%m').dt.date
     
     # Print CF Preview
     print("\n" + "="*50)
-    print("CASH FLOW PREVIEW (First 12 Months)")
-    print(full_cf_df.head(12).to_string(columns=['YYYYMM', 'Premium', 'IACF', 'Claims', 'Expenses']))
+    print("CASH FLOW PREVIEW (First 12 Months - Based on EOP Assumptions)")
+    print(full_cf_df_preview.head(12).to_string(columns=['YYYYMM', 'Premium', 'IACF', 'Claims', 'Expenses']))
     
-    # 4. Calculate PVs for each valuation month
-    # Each valuation month should have both Rec (initial recognition) and Rep (end of period) metrics
-    
+    # 获取精算假设函数 (Helper)
+    def get_assumptions_for_date(target_date):
+        """根据日期获取精算假设"""
+        month_str = target_date.strftime("%Y%m")
+        try:
+            return get_real_assumptions(policy_row["class_code"], month_str)
+        except RuntimeError as e:
+            logger.warning(f"⚠️ 警告: {month_str} 精算假设缺失，使用默认假设")
+            return assump_obj # Fallback to initial assumptions
+
+    # Define helpers
     def calc_all(cf_subset, val_d, curve_base_d, rates, label_suffix):
-        """Helper to calc Pre, Acq, Cla, Mtn, Rad for a specific subset and curve"""
+        """Helper to calc Pre, Acq, Cla, Mtn, Rad using EXACT discounting"""
         pre = calculate_pv_exact(cf_subset, 'Premium', rates, val_d, curve_base_d)
         acq = calculate_pv_exact(cf_subset, 'IACF', rates, val_d, curve_base_d)
         cla = calculate_pv_exact(cf_subset, 'Claims', rates, val_d, curve_base_d)
         mtn = calculate_pv_exact(cf_subset, 'Expenses', rates, val_d, curve_base_d)
-        
-        # RAD Calculation: (PV_Claims + PV_Maint) * RA_Ratio
-        # Note: RAD is usually based on Outflows only.
         rad = (cla + mtn) * assump_obj.ra_ratio
-        
-        return {
-            f"_Pre_Amt": pre,
-            f"_Acq_Amt": acq,
-            f"_Cla_Amt": cla,
-            f"_Mtn_Amt": mtn,
-            f"_Rad_Amt": rad
-        }
+        return {f"_Pre_Amt": pre, f"_Acq_Amt": acq, f"_Cla_Amt": cla, f"_Mtn_Amt": mtn, f"_Rad_Amt": rad}
 
-    # Define valuation months: 
-    # 1. 签单月（初始确认）
-    # 2. 后续每年年初（1月1日，用于生成年初预期的PV数据）
-    # 3. 从签单年开始的各年年底（12月31日，用于生成期末预期的PV数据）
-    val_months = [
-        (uw_date, "初始确认评估月"),
-    ]
-    # 添加签单年年底
+    def calc_all_cca(cf_subset, val_d, curve_base_d, rates):
+        """Helper for Cca: Past/Current -> Original Value; Future -> Discounted"""
+        pre = calculate_pv_current_period_no_interest_after_occurrence(cf_subset, 'Premium', rates, val_d, curve_base_d)
+        acq = calculate_pv_current_period_no_interest_after_occurrence(cf_subset, 'IACF', rates, val_d, curve_base_d)
+        cla = calculate_pv_current_period_no_interest_after_occurrence(cf_subset, 'Claims', rates, val_d, curve_base_d)
+        mtn = calculate_pv_current_period_no_interest_after_occurrence(cf_subset, 'Expenses', rates, val_d, curve_base_d)
+        rad = (cla + mtn) * assump_obj.ra_ratio
+        return {f"_Pre_Amt": pre, f"_Acq_Amt": acq, f"_Cla_Amt": cla, f"_Mtn_Amt": mtn, f"_Rad_Amt": rad}
+
+    # Define valuation months
+    # 注意：不生成签单年年初的数据，因为那时保单还不存在
+    val_months = [(uw_date, "初始确认评估月")]
+    
+    # 签单年年底（如果签单年 <= 2024）
     if uw_date.year <= 2024:
         val_months.append((date(uw_date.year, 12, 31), f"{uw_date.year}年年底"))
-    # 添加后续每年年初和年底到2024年
-    for year in range(uw_date.year + 1, 2025):  # 2025不包含，所以到2024年
-        val_months.append((date(year, 1, 1), f"{year}年年初"))  # 年初，用于生成年初预期的PV数据
-        val_months.append((date(year, 12, 31), f"{year}年年底"))  # 年底，用于生成期末预期的PV数据
-
+    
+    # 后续年份的年初和年底
+    for year in range(uw_date.year + 1, 2025):
+        val_months.append((date(year, 1, 1), f"{year}年年初"))
+        val_months.append((date(year, 12, 31), f"{year}年年底"))
+    
     if TARGET_VAL_MONTH_FILTER:
         normalized_targets = {m.replace("-", "") for m in TARGET_VAL_MONTH_FILTER}
-        filtered_val_months = [
-            (month_date, label)
-            for (month_date, label) in val_months
-            if month_date.strftime("%Y%m") in normalized_targets
-        ]
-        if not filtered_val_months:
-            raise ValueError(f"指定的评估月份 {TARGET_VAL_MONTH_FILTER} 在生成列表中不存在。")
-        val_months = filtered_val_months
-    
-    all_results = {}
-    # Create PV source data collection to store all calculated PV metrics
-    pv_source_collection = PVSourceDataCollection(policy_no=TARGET_POLICY_NO)
-    
-    # 存储每年年初的现金流（基于上年年底的精算假设）
-    # key: year (int), value: DataFrame
-    bop_cf_by_year = {}
-    
-    last_current_curve = None
+        val_months = [(m, l) for (m, l) in val_months if m.strftime("%Y%m") in normalized_targets]
+        if not val_months: raise ValueError(f"Specified months not found.")
 
+    # Create PV source data collection
+    pv_source_collection = PVSourceDataCollection(policy_no=TARGET_POLICY_NO)
+    bop_cf_by_year = {} # Store BOP cashflows
+    all_results = {} # Store all results across valuation months
+    
+    # 4. Calculate PVs for each valuation month
     for val_month_date, val_month_label in val_months:
-        val_month_str = val_month_date.strftime("%Y-%m")
-        # Calculate last day of the month
-        _, last_day = calendar.monthrange(val_month_date.year, val_month_date.month)
-        val_month_end = date(val_month_date.year, val_month_date.month, last_day)
-        
-        # Get rate curves for this valuation month
-        val_month_yyyymm = val_month_date.strftime("%Y%m")
-        rate_val_locked_df = get_discount_factors("locked", uw_date.strftime("%Y%m"))
-        
-        # 尝试获取当前评估月的利率曲线，如果不存在则报错
-        try:
+            # 计算评估月相关日期
+            val_month_yyyymm = val_month_date.strftime("%Y%m")
+            val_month_str = val_month_yyyymm
+            _, last_day_val = calendar.monthrange(val_month_date.year, val_month_date.month)
+            val_month_end = date(val_month_date.year, val_month_date.month, last_day_val)
+            
+            # 判断是否为签单年度
+            is_new_business = (val_month_date.year == uw_date.year)
+            
+            # 判断是否为年初（1月1日）
+            is_bop = (val_month_date.month == 1 and val_month_date.day == 1)
+            
+            # 准备不同时点的精算假设
+            # 1. 签单时假设 (用于初始确认)
+            assump_uw = get_assumptions_for_date(uw_date)
+            
+            # 2. 上年末假设 (用于年初预期)
+            # 如果当前是签单年，上年末假设可能不存在或不适用（通常用于后续年份）
+            prev_year_end = date(val_month_date.year - 1, 12, 31)
+            assump_prev_ye = get_assumptions_for_date(prev_year_end)
+            
+            # 3. 当前评估月假设 (用于期末预期)
+            assump_val = get_assumptions_for_date(val_month_date)
+            
+            # 生成对应现金流
+            # 1. 基于签单时假设的现金流 (用于Nb_Ini)
+            cf_uw = projector.project_policy_flows(policy_row, assump_uw)
+            cf_uw['Date_Obj'] = pd.to_datetime(cf_uw['YYYYMM'], format='%Y%m').dt.date
+            
+            # 2. 基于上年末假设的现金流 (用于If_Bop)
+            cf_prev_ye = projector.project_policy_flows(policy_row, assump_prev_ye)
+            cf_prev_ye['Date_Obj'] = pd.to_datetime(cf_prev_ye['YYYYMM'], format='%Y%m').dt.date
+            
+            # 3. 基于当前评估月假设的现金流 (用于Nb_Eop / If_Eop)
+            cf_val = projector.project_policy_flows(policy_row, assump_val)
+            cf_val['Date_Obj'] = pd.to_datetime(cf_val['YYYYMM'], format='%Y%m').dt.date
+            
+            # 获取折现率
+            rate_val_locked_df = get_discount_factors("locked", uw_date.strftime("%Y%m"))
             rate_val_current_df = get_discount_factors("current", val_month_yyyymm)
-        except RuntimeError as e:
-            raise RuntimeError(f"评估月 {val_month_yyyymm} 缺少 current 曲线，无法继续生成PV原材料。") from e
-        
-        # 判断是否为签单年度
-        is_new_business = (val_month_date.year == uw_date.year)
-        
-        # 重要：Nb字段只在签单年度有值，非签单年度应该为0
-        # 但为了保持数据结构一致性，我们仍然会生成这些字段，只是值设为0
-        
-        # 获取精算假设
-        # 对于年初（1月1日），使用上年年底的精算假设
-        # 对于其他评估月，使用当月的精算假设
-        if val_month_date.month == 1 and val_month_date.day == 1:
-            # 年初评估使用当前年初的评估月份
-            assump_month_str = val_month_yyyymm
-        else:
-            # 年末等其他评估点使用对应月份
-            assump_month_str = val_month_yyyymm
-        
-        try:
-            val_assump_obj = get_real_assumptions(policy_row["class_code"], assump_month_str)
-        except RuntimeError as e:
-            logger.warning(f"⚠️  警告: 评估月 {assump_month_str} 的精算假设数据不存在，使用默认假设: {e}")
-            val_assump_obj = assump_obj  # 使用初始假设作为fallback
-        
-        # 判断是否为年初（1月1日）
-        is_bop = (val_month_date.month == 1 and val_month_date.day == 1)
-        
-        # 生成现金流
-        if is_bop and not is_new_business:
-            # 年初：生成基于上年年底精算假设的现金流，并保存
-            projector_bop = CashFlowProjector()
-            bop_cf_df = projector_bop.project_policy_flows(policy_row, val_assump_obj)
-            bop_cf_df['Date_Obj'] = pd.to_datetime(bop_cf_df['YYYYMM'], format='%Y%m').dt.date
-            bop_cf_by_year[val_month_date.year] = bop_cf_df
-            cf_for_calc = bop_cf_df
-        else:
-            # 其他评估月：生成基于当月精算假设的现金流（从下月开始）
-            projector_eop = CashFlowProjector()
-            eop_cf_df = projector_eop.project_policy_flows(policy_row, val_assump_obj)
-            eop_cf_df['Date_Obj'] = pd.to_datetime(eop_cf_df['YYYYMM'], format='%Y%m').dt.date
-            # 对于期末预期，只使用从下月开始的所有现金流
-            next_month_start = date(val_month_date.year, val_month_date.month, 1)
-            if val_month_date.month == 12:
-                next_month_start = date(val_month_date.year + 1, 1, 1)
+            rate_prev_year_locked_df = get_discount_factors("locked", uw_date.strftime("%Y%m"))
+            
+            # 保存当前现金流用于后续计算
+            cf_for_calc = cf_val
+            val_assump_obj = assump_val
+            
+            # Split cash flows for UW (underwriting) calculations
+            cf_uw_current = cf_uw[cf_uw['Year'] == uw_date.year]
+            cf_uw_future = cf_uw[cf_uw['Year'] > uw_date.year]
+            
+            # Split cash flows：预期当期=评估年度年初至评估期末，预期未来=评估期末之后
+            year_start = date(val_month_date.year, 1, 1)
+            if cf_val is not None and not cf_val.empty:
+                cf_val_current = cf_val[
+                    (cf_val['Date_Obj'] >= year_start) &
+                    (cf_val['Date_Obj'] <= val_month_end)
+                ]
+                cf_val_future = cf_val[cf_val['Date_Obj'] > val_month_end]
             else:
-                next_month_start = date(val_month_date.year, val_month_date.month + 1, 1)
-            eop_cf_df = eop_cf_df[eop_cf_df['Date_Obj'] >= next_month_start]
-            cf_for_calc = eop_cf_df
+                cf_val_current = cf_val
+                cf_val_future = cf_val
+            
+            results = {}
         
-        # 对于新增合同，使用初始现金流
-        if is_new_business:
-            cf_for_calc = full_cf_df
-        
-        # Split cash flows: current period (same year as val_month) vs future
-        cf_val_current = cf_for_calc[cf_for_calc['Year'] == val_month_date.year]
-        cf_val_future = cf_for_calc[cf_for_calc['Year'] > val_month_date.year]
-        
-        results = {}
-        
-        # --- NB Initial Recognition (Rec) - only for new business year ---
-        # 重要：Nb字段只在签单年度有值，非签单年度应该为0
-        if is_new_business:
-            # 签单年度：计算新增合同的PV值
-            # Ini_Cca (Current Period Flows, discounted to Initial Recognition)
-            res_ini_cca = calc_all(cf_val_current, uw_date, uw_date, rate_val_locked_df, "")
-            for k, v in res_ini_cca.items():
-                results[f"Pvfl_Nb_Ini_Cca_Rec_Lkd{k}"] = v
-                results[f"Pvfl_Nb_Ini_Cca_Rec_Wlk{k}"] = v  # Weighted = Locked for single policy
-            
-            # Ini_Cfa (Future Period Flows, discounted to Initial Recognition)
-            res_ini_cfa = calc_all(cf_val_future, uw_date, uw_date, rate_val_locked_df, "")
-            for k, v in res_ini_cfa.items():
-                results[f"Pvfl_Nb_Ini_Cfa_Rec_Lkd{k}"] = v
-                results[f"Pvfl_Nb_Ini_Cfa_Rec_Wlk{k}"] = v
-            
-            # --- NB Rep (End of Period) - based on val_month_end ---
-            # Ini_Cca_Rep (Current Period Flows, rolled to val_month_end using locked curve)
-            # Special rule: If CF occurs in or before valuation month, use original value (no interest)
-            def calc_all_current_period_rep(cf_subset, val_d, curve_base_d, rates):
-                """Helper for Cca_Rep: special logic for current period flows"""
-                pre = calculate_pv_current_period_no_interest_after_occurrence(cf_subset, 'Premium', rates, val_d, curve_base_d)
-                acq = calculate_pv_current_period_no_interest_after_occurrence(cf_subset, 'IACF', rates, val_d, curve_base_d)
-                cla = calculate_pv_current_period_no_interest_after_occurrence(cf_subset, 'Claims', rates, val_d, curve_base_d)
-                mtn = calculate_pv_current_period_no_interest_after_occurrence(cf_subset, 'Expenses', rates, val_d, curve_base_d)
-                rad = (cla + mtn) * assump_obj.ra_ratio
-                return {
-                    f"_Pre_Amt": pre,
-                    f"_Acq_Amt": acq,
-                    f"_Cla_Amt": cla,
-                    f"_Mtn_Amt": mtn,
-                    f"_Rad_Amt": rad
-                }
-            
-            res_ini_cca_rep = calc_all_current_period_rep(cf_val_current, val_month_end, uw_date, rate_val_locked_df)
-            for k, v in res_ini_cca_rep.items():
-                results[f"Pvfl_Nb_Ini_Cca_Rep_Wlk{k}"] = v
-            
-            # Ini_Cfa_Rep (Future Period Flows, rolled to val_month_end using locked curve)
-            res_ini_cfa_rep = calc_all(cf_val_future, val_month_end, uw_date, rate_val_locked_df, "")
-            for k, v in res_ini_cfa_rep.items():
-                results[f"Pvfl_Nb_Ini_Cfa_Rep_Wlk{k}"] = v
-            
-            # Eop_Cfa_Rep (Future Period Flows, rolled to val_month_end)
-            # Wlk (using locked curve from UW date)
-            for k, v in res_ini_cfa_rep.items():
-                results[f"Pvfl_Nb_Eop_Cfa_Rep_Wlk{k}"] = v
-            
-            # Eop_Cca_Rep (Current Period Flows, rolled to val_month_end) - 新增：预期当期
-            # 用于IFIE计算，需要包含预期当期的期末现值
-            res_eop_cca_rep = calc_all_current_period_rep(cf_val_current, val_month_end, uw_date, rate_val_locked_df)
-            for k, v in res_eop_cca_rep.items():
-                results[f"Pvfl_Nb_Eop_Cca_Rep_Wlk{k}"] = v
-            
-            # Cur (using current curve from val_month)
-            res_eop_cfa_cur = calc_all(cf_val_future, val_month_end, val_month_end, rate_val_current_df, "")
-            for k, v in res_eop_cfa_cur.items():
-                results[f"Pvfl_Nb_Eop_Cfa_Rep_Cur{k}"] = v
-            
-            # Eop_Cca_Rep_Cur (Current Period Flows, using current curve) - 新增：预期当期（期末利率）
-            res_eop_cca_cur = calc_all_current_period_rep(cf_val_current, val_month_end, val_month_end, rate_val_current_df)
-            for k, v in res_eop_cca_cur.items():
-                results[f"Pvfl_Nb_Eop_Cca_Rep_Cur{k}"] = v
-        else:
-            # 非签单年度：新增合同的PV值应该为0（因为没有新增合同）
-            # 但为了保持数据结构一致性，我们仍然会生成这些字段，只是值设为0
-            nb_field_suffixes = [
-                "_Pre_Amt", "_Acq_Amt", "_Cla_Amt", "_Mtn_Amt", "_Rad_Amt"
-            ]
-            nb_field_prefixes = [
-                "Pvfl_Nb_Ini_Cca_Rec_Lkd",
-                "Pvfl_Nb_Ini_Cca_Rec_Wlk",
-                "Pvfl_Nb_Ini_Cfa_Rec_Lkd",
-                "Pvfl_Nb_Ini_Cfa_Rec_Wlk",
-                "Pvfl_Nb_Ini_Cca_Rep_Wlk",
-                "Pvfl_Nb_Ini_Cfa_Rep_Wlk",
-                "Pvfl_Nb_Eop_Cfa_Rep_Wlk",
-                "Pvfl_Nb_Eop_Cca_Rep_Wlk",
-                "Pvfl_Nb_Eop_Cfa_Rep_Cur",
-                "Pvfl_Nb_Eop_Cca_Rep_Cur",
-            ]
-            for prefix in nb_field_prefixes:
-                for suffix in nb_field_suffixes:
-                    field_name = f"{prefix}{suffix}"
-                    results[field_name] = DECIMAL_ZERO
+            # --- NB Initial Recognition (Rec) - only for new business year ---
+            # 重要：Nb字段只在签单年度有值，非签单年度应该为0
+            if is_new_business:
+                # 计算签单月月末（作为初始确认现值 Rec 的折现时点）
+                _, last_day_uw = calendar.monthrange(uw_date.year, uw_date.month)
+                uw_month_end = date(uw_date.year, uw_date.month, last_day_uw)
+
+                # 签单年度：计算新增合同的PV值
+                
+                # 1. Nb_Ini_Rec (新增-初始-初始确认现值): 折现至 签单月末 (uw_month_end)
+                # Ini_Cca (Current Period Flows: 年初至当前评估月末)
+                # 使用 calc_all_cca (当期/过去不折现)
+                res_ini_cca_rec = calc_all_cca(cf_uw_current, uw_month_end, uw_date, rate_val_locked_df)
+                for k, v in res_ini_cca_rec.items():
+                    results[f"Pvfl_Nb_Ini_Cca_Rec_Lkd{k}"] = v
+                    # 删除 Wlk 字段（未使用）
+                
+                # Ini_Cfa (Future Period Flows: 当前评估月末之后)
+                # 使用 calc_all (精确折现)
+                res_ini_cfa_rec = calc_all(cf_uw_future, uw_month_end, uw_date, rate_val_locked_df, "")
+                for k, v in res_ini_cfa_rec.items():
+                    results[f"Pvfl_Nb_Ini_Cfa_Rec_Lkd{k}"] = v
+                    # 删除 Wlk 字段（未使用）
+                
+                # --- NB Rep (End of Period) - based on val_month_end ---
+                # 2. Nb_Ini_Rep (新增-初始-期末现值): 折现至 评估期末 (val_month_end)
+                
+                # Ini_Cca_Rep (Current Period Flows, rolled to val_month_end using locked curve)
+                # 使用 calc_all_cca (当期/过去不折现)
+                res_ini_cca_rep = calc_all_cca(cf_uw_current, val_month_end, uw_date, rate_val_locked_df)
+                for k, v in res_ini_cca_rep.items():
+                    results[f"Pvfl_Nb_Ini_Cca_Rep_Wlk{k}"] = v
+                
+                # Ini_Cfa_Rep (Future Period Flows, rolled to val_month_end using locked curve)
+                res_ini_cfa_rep = calc_all(cf_uw_future, val_month_end, uw_date, rate_val_locked_df, "")
+                for k, v in res_ini_cfa_rep.items():
+                    results[f"Pvfl_Nb_Ini_Cfa_Rep_Wlk{k}"] = v
+                
+                # 3. Nb_Eop_Rep (新增-期末-期末现值): 折现至 评估期末 (val_month_end)
+                # 使用 cf_val (基于当前评估月假设的现金流)
+                
+                # split cf_val
+                year_start = date(val_month_date.year, 1, 1)
+                cf_val_current = cf_val[
+                    (cf_val['Date_Obj'] >= year_start) &
+                    (cf_val['Date_Obj'] <= val_month_end)
+                ]
+                cf_val_future = cf_val[cf_val['Date_Obj'] > val_month_end]
+
+                # Eop_Cfa_Rep (Future Period Flows, rolled to val_month_end)
+                # Wlk (using locked curve from UW date)
+                res_eop_cfa_wlk = calc_all(cf_val_future, val_month_end, uw_date, rate_val_locked_df, "")
+                for k, v in res_eop_cfa_wlk.items():
+                    results[f"Pvfl_Nb_Eop_Cfa_Rep_Wlk{k}"] = v
+                
+                # Eop_Cca_Rep (Current Period Flows, rolled to val_month_end)
+                # 使用 calc_all_cca
+                res_eop_cca_wlk = calc_all_cca(cf_val_current, val_month_end, uw_date, rate_val_locked_df)
+                for k, v in res_eop_cca_wlk.items():
+                    results[f"Pvfl_Nb_Eop_Cca_Rep_Wlk{k}"] = v
+                
+                # Cur (using current curve from val_month)
+                res_eop_cfa_cur = calc_all(cf_val_future, val_month_end, val_month_end, rate_val_current_df, "")
+                for k, v in res_eop_cfa_cur.items():
+                    results[f"Pvfl_Nb_Eop_Cfa_Rep_Cur{k}"] = v
+                
+                # 删除 Eop_Cca_Rep_Cur 字段（未使用，当期现金流不需要当期利率折现）
+            else:
+                # 非签单年度：新增合同的PV值应该为0（因为没有新增合同）
+                # 但为了保持数据结构一致性，我们仍然会生成这些字段，只是值设为0
+                nb_field_suffixes = [
+                    "_Pre_Amt", "_Acq_Amt", "_Cla_Amt", "_Mtn_Amt", "_Rad_Amt"
+                ]
+                # 删除了 Wlk 和 Eop_Cca_Rep_Cur 相关前缀（未使用）
+                nb_field_prefixes = [
+                    "Pvfl_Nb_Ini_Cca_Rec_Lkd",
+                    "Pvfl_Nb_Ini_Cfa_Rec_Lkd",
+                    "Pvfl_Nb_Ini_Cca_Rep_Wlk",
+                    "Pvfl_Nb_Ini_Cfa_Rep_Wlk",
+                    "Pvfl_Nb_Eop_Cfa_Rep_Wlk",
+                    "Pvfl_Nb_Eop_Cca_Rep_Wlk",
+                    "Pvfl_Nb_Eop_Cfa_Rep_Cur",
+                ]
+                for prefix in nb_field_prefixes:
+                    for suffix in nb_field_suffixes:
+                        field_name = f"{prefix}{suffix}"
+                        results[field_name] = DECIMAL_ZERO
         
         # --- IF Fields (有效合同PV数据) ---
         # 判断是否为签单年度：签单年 = 评估年 → 新业务，签单年 < 评估年 → 有效合同
-        is_new_business = (val_month_date.year == uw_date.year)
         
-        if is_new_business:
-            # 签单年度：有效合同的PV数据为0（因为此时是新增合同）
-            if_required_fields = [
+            if is_new_business:
+                # 签单年度：有效合同的PV数据为0（因为此时是新增合同）
+                if_required_fields = [
                 "Pvfl_If_Bop_Cca_Rep_Wlk_Pre_Amt",
                 "Pvfl_If_Bop_Cca_Rep_Wlk_Acq_Amt",
                 "Pvfl_If_Bop_Cca_Rep_Wlk_Cla_Amt",
@@ -642,23 +622,12 @@ def main():
                 "Pvfl_If_Bop_Cfa_Rep_Wlk_Cla_Amt",
                 "Pvfl_If_Bop_Cfa_Rep_Wlk_Mtn_Amt",
                 "Pvfl_If_Bop_Cfa_Rep_Wlk_Rad_Amt",
-                "Pvfl_If_Bop_Cca_Beg_Lcu_Pre_Amt",
-                "Pvfl_If_Bop_Cca_Beg_Lcu_Acq_Amt",
                 "Pvfl_If_Bop_Cca_Beg_Lcu_Cla_Amt",
                 "Pvfl_If_Bop_Cca_Beg_Lcu_Mtn_Amt",
                 "Pvfl_If_Bop_Cca_Beg_Lcu_Rad_Amt",
-                "Pvfl_If_Bop_Cfa_Beg_Lcu_Pre_Amt",
-                "Pvfl_If_Bop_Cfa_Beg_Lcu_Acq_Amt",
                 "Pvfl_If_Bop_Cfa_Beg_Lcu_Cla_Amt",
                 "Pvfl_If_Bop_Cfa_Beg_Lcu_Mtn_Amt",
                 "Pvfl_If_Bop_Cfa_Beg_Lcu_Rad_Amt",
-                "Pvfl_If_Bop_Cca_Beg_Wlk_Pre_Amt",
-                "Pvfl_If_Bop_Cca_Beg_Wlk_Acq_Amt",
-                "Pvfl_If_Bop_Cca_Beg_Wlk_Cla_Amt",
-                "Pvfl_If_Bop_Cca_Beg_Wlk_Mtn_Amt",
-                "Pvfl_If_Bop_Cca_Beg_Wlk_Rad_Amt",
-                "Pvfl_If_Bop_Cfa_Beg_Wlk_Pre_Amt",
-                "Pvfl_If_Bop_Cfa_Beg_Wlk_Acq_Amt",
                 "Pvfl_If_Bop_Cfa_Beg_Wlk_Cla_Amt",
                 "Pvfl_If_Bop_Cfa_Beg_Wlk_Mtn_Amt",
                 "Pvfl_If_Bop_Cfa_Beg_Wlk_Rad_Amt",
@@ -677,211 +646,200 @@ def main():
                 "Pvfl_If_Eop_Cfa_Rep_Cur_Cla_Amt",
                 "Pvfl_If_Eop_Cfa_Rep_Cur_Mtn_Amt",
                 "Pvfl_If_Eop_Cfa_Rep_Cur_Rad_Amt",
-                "Pvfl_If_Eop_Cca_Rep_Cur_Pre_Amt",
-                "Pvfl_If_Eop_Cca_Rep_Cur_Acq_Amt",
-                "Pvfl_If_Eop_Cca_Rep_Cur_Cla_Amt",
-                "Pvfl_If_Eop_Cca_Rep_Cur_Mtn_Amt",
-                "Pvfl_If_Eop_Cca_Rep_Cur_Rad_Amt",
             ]
-            for field in if_required_fields:
-                if field not in results:
-                    results[field] = DECIMAL_ZERO
-        else:
-            # 非签单年度（第二年及以后）：计算有效合同的PV数据
-            # 年初（BOP）：评估年1月1日
-            bop_date = date(val_month_date.year, 1, 1)
-            
-            # 获取年初现金流（基于上年年底的精算假设）
-            if val_month_date.year in bop_cf_by_year:
-                cf_bop = bop_cf_by_year[val_month_date.year]
+                for field in if_required_fields:
+                    if field not in results:
+                        results[field] = DECIMAL_ZERO
             else:
-                # 如果没有年初现金流，使用当前现金流（fallback）
-                cf_bop = cf_for_calc
-            
-            # 年初预期当期现金流（BOP_Cca）：评估年当年发生的现金流
-            # 关键逻辑：已过去月份取原值，未来月份折现到评估月底
-            cf_bop_current = cf_bop[cf_bop['Year'] == val_month_date.year]
-            
-            # 计算年初预期当期（BOP_Cca）
-            # 已过去月份（1月到评估月）：取原值（不计息）
-            # 未来月份（评估月+1月到12月）：折现到评估月底
-            def calc_bop_cca_rep(cf_subset, val_d, curve_base_d, rates):
-                """计算年初预期当期：已过去月份取原值，未来月份折现"""
-                if cf_subset.empty:
+                # 非签单年度（第二年及以后）：计算有效合同的PV数据
+                # 年初（BOP）：评估年1月1日
+                bop_date = date(val_month_date.year, 1, 1)
+                
+                # 获取年初现金流（基于上年年底的精算假设）
+                if val_month_date.year in bop_cf_by_year:
+                    cf_bop = bop_cf_by_year[val_month_date.year]
+                else:
+                    # 如果没有年初现金流，使用当前现金流（fallback）
+                    cf_bop = cf_for_calc
+                
+                # 年初预期当期现金流（BOP_Cca）：评估年度内的现金流
+                if not cf_bop.empty:
+                    cf_bop_current = cf_bop[
+                        (cf_bop['Date_Obj'] >= year_start) &
+                        (cf_bop['Date_Obj'] <= val_month_end)
+                    ]
+                    cf_bop_future = cf_bop[cf_bop['Date_Obj'] > val_month_end]
+                else:
+                    cf_bop_current = cf_bop
+                    cf_bop_future = cf_bop
+                
+                # 计算年初预期当期（BOP_Cca）
+                # 已过去月份（1月到评估月）：取原值（不计息）
+                # 未来月份（评估月+1月到12月）：折现到评估月底
+                def calc_bop_cca_rep(cf_subset, val_d, curve_base_d, rates):
+                    """计算年初预期当期：已过去月份取原值，未来月份折现"""
+                    if cf_subset.empty:
+                        return {
+                            f"_Pre_Amt": DECIMAL_ZERO,
+                            f"_Acq_Amt": DECIMAL_ZERO,
+                            f"_Cla_Amt": DECIMAL_ZERO,
+                            f"_Mtn_Amt": DECIMAL_ZERO,
+                            f"_Rad_Amt": DECIMAL_ZERO
+                        }
+                    
+                    # 分离已过去和未来的现金流
+                    # 注意：val_d是评估月底，已过去月份是指Date_Obj < val_d的月份
+                    cf_past = cf_subset[cf_subset['Date_Obj'] < val_d].copy()
+                    cf_future = cf_subset[cf_subset['Date_Obj'] >= val_d].copy()
+                    
+                    # 已过去月份：取原值（不计息）
+                    past_pre = Decimal(str(cf_past['Premium'].sum())) if not cf_past.empty and 'Premium' in cf_past.columns else DECIMAL_ZERO
+                    past_acq = Decimal(str(cf_past['IACF'].sum())) if not cf_past.empty and 'IACF' in cf_past.columns else DECIMAL_ZERO
+                    past_cla = Decimal(str(cf_past['Claims'].sum())) if not cf_past.empty and 'Claims' in cf_past.columns else DECIMAL_ZERO
+                    past_mtn = Decimal(str(cf_past['Expenses'].sum())) if not cf_past.empty and 'Expenses' in cf_past.columns else DECIMAL_ZERO
+                    
+                    # 未来月份：折现到评估月底
+                    future_pre = calculate_pv_exact(cf_future, 'Premium', rates, val_d, curve_base_d) if not cf_future.empty else DECIMAL_ZERO
+                    future_acq = calculate_pv_exact(cf_future, 'IACF', rates, val_d, curve_base_d) if not cf_future.empty else DECIMAL_ZERO
+                    future_cla = calculate_pv_exact(cf_future, 'Claims', rates, val_d, curve_base_d) if not cf_future.empty else DECIMAL_ZERO
+                    future_mtn = calculate_pv_exact(cf_future, 'Expenses', rates, val_d, curve_base_d) if not cf_future.empty else DECIMAL_ZERO
+                    
+                    # 合计
+                    pre = past_pre + future_pre
+                    acq = past_acq + future_acq
+                    cla = past_cla + future_cla
+                    mtn = past_mtn + future_mtn
+                    
+                    # 使用评估月的精算假设计算RA
+                    rad = (cla + mtn) * val_assump_obj.ra_ratio
+                    
                     return {
-                        f"_Pre_Amt": DECIMAL_ZERO,
-                        f"_Acq_Amt": DECIMAL_ZERO,
-                        f"_Cla_Amt": DECIMAL_ZERO,
-                        f"_Mtn_Amt": DECIMAL_ZERO,
-                        f"_Rad_Amt": DECIMAL_ZERO
+                        f"_Pre_Amt": pre,
+                        f"_Acq_Amt": acq,
+                        f"_Cla_Amt": cla,
+                        f"_Mtn_Amt": mtn,
+                        f"_Rad_Amt": rad
                     }
                 
-                # 分离已过去和未来的现金流
-                # 注意：val_d是评估月底，已过去月份是指Date_Obj < val_d的月份
-                cf_past = cf_subset[cf_subset['Date_Obj'] < val_d].copy()
-                cf_future = cf_subset[cf_subset['Date_Obj'] >= val_d].copy()
+                res_bop_cca = calc_bop_cca_rep(cf_bop_current, val_month_end, uw_date, rate_val_locked_df)
+                for k, v in res_bop_cca.items():
+                    results[f"Pvfl_If_Bop_Cca_Rep_Wlk{k}"] = v
                 
-                # 已过去月份：取原值（不计息）
-                past_pre = Decimal(str(cf_past['Premium'].sum())) if not cf_past.empty and 'Premium' in cf_past.columns else DECIMAL_ZERO
-                past_acq = Decimal(str(cf_past['IACF'].sum())) if not cf_past.empty and 'IACF' in cf_past.columns else DECIMAL_ZERO
-                past_cla = Decimal(str(cf_past['Claims'].sum())) if not cf_past.empty and 'Claims' in cf_past.columns else DECIMAL_ZERO
-                past_mtn = Decimal(str(cf_past['Expenses'].sum())) if not cf_past.empty and 'Expenses' in cf_past.columns else DECIMAL_ZERO
+                # 年初预期未来现金流（BOP_Cfa）：评估期末之后发生的现金流，折现到评估月底
+                res_bop_cfa = calc_all(cf_bop_future, val_month_end, uw_date, rate_val_locked_df, "")
+                for k, v in res_bop_cfa.items():
+                    results[f"Pvfl_If_Bop_Cfa_Rep_Wlk{k}"] = v
                 
-                # 未来月份：折现到评估月底
-                future_pre = calculate_pv_exact(cf_future, 'Premium', rates, val_d, curve_base_d) if not cf_future.empty else DECIMAL_ZERO
-                future_acq = calculate_pv_exact(cf_future, 'IACF', rates, val_d, curve_base_d) if not cf_future.empty else DECIMAL_ZERO
-                future_cla = calculate_pv_exact(cf_future, 'Claims', rates, val_d, curve_base_d) if not cf_future.empty else DECIMAL_ZERO
-                future_mtn = calculate_pv_exact(cf_future, 'Expenses', rates, val_d, curve_base_d) if not cf_future.empty else DECIMAL_ZERO
+                # --- 新增：年初现值（Beg）字段计算 ---
+                # 折现到年初时点（1月1日），使用上年年末的锁定利率曲线（Lcu）
+                # 仅针对有效合同年初预期（If_Bop），且仅在年初（is_bop）时计算
+                # 注意：这里已经在 is_bop 且 not is_new_business 的分支中，所以不需要再次判断
+                # 获取上年年末的锁定利率曲线（上年12月31日）
+                # 注意：Lcu使用的是上年年末的锁定利率曲线
+                # 锁定利率曲线在签单日确定后保持不变，所以使用签单日的锁定利率曲线
+                rate_prev_year_locked_df = get_discount_factors("locked", uw_date.strftime("%Y%m"))
                 
-                # 合计
-                pre = past_pre + future_pre
-                acq = past_acq + future_acq
-                cla = past_cla + future_cla
-                mtn = past_mtn + future_mtn
+                # 年初时点（1月1日）
+                bop_date = date(val_month_date.year, 1, 1)
                 
-                # 使用评估月的精算假设计算RA
-                rad = (cla + mtn) * val_assump_obj.ra_ratio
+                # 计算年初预期当期（BOP_Cca）的年初现值（Beg_Lcu）
+                # 折现到年初时点（1月1日），使用上年年末锁定利率曲线
+                # 1月现金流折现1个月，12月现金流折现12个月
+                res_bop_cca_beg = calc_all(cf_bop_current, bop_date, uw_date, rate_prev_year_locked_df, "")
+                # 修正RA计算：使用年初时的精算假设（val_assump_obj）
+                cla_beg = res_bop_cca_beg.get("_Cla_Amt", DECIMAL_ZERO)
+                mtn_beg = res_bop_cca_beg.get("_Mtn_Amt", DECIMAL_ZERO)
+                rad_beg = (cla_beg + mtn_beg) * val_assump_obj.ra_ratio
+                res_bop_cca_beg["_Rad_Amt"] = rad_beg
+                # 只保存赔付、维费、RA字段（删除保费和IACF）
+                for k, v in res_bop_cca_beg.items():
+                    if k in ["_Cla_Amt", "_Mtn_Amt", "_Rad_Amt"]:
+                        results[f"Pvfl_If_Bop_Cca_Beg_Lcu{k}"] = v
                 
-                return {
-                    f"_Pre_Amt": pre,
-                    f"_Acq_Amt": acq,
-                    f"_Cla_Amt": cla,
-                    f"_Mtn_Amt": mtn,
-                    f"_Rad_Amt": rad
+                # 计算年初预期未来（BOP_Cfa）的年初现值（Beg_Lcu）
+                # 折现到年初时点（1月1日），使用上年年末锁定利率曲线
+                res_bop_cfa_beg = calc_all(cf_bop_future, bop_date, uw_date, rate_prev_year_locked_df, "")
+                # 修正RA计算：使用年初时的精算假设（val_assump_obj）
+                cla_beg_fut = res_bop_cfa_beg.get("_Cla_Amt", DECIMAL_ZERO)
+                mtn_beg_fut = res_bop_cfa_beg.get("_Mtn_Amt", DECIMAL_ZERO)
+                rad_beg_fut = (cla_beg_fut + mtn_beg_fut) * val_assump_obj.ra_ratio
+                res_bop_cfa_beg["_Rad_Amt"] = rad_beg_fut
+                # 只保存赔付、维费、RA字段（删除保费和IACF）
+                for k, v in res_bop_cfa_beg.items():
+                    if k in ["_Cla_Amt", "_Mtn_Amt", "_Rad_Amt"]:
+                        results[f"Pvfl_If_Bop_Cfa_Beg_Lcu{k}"] = v
+                
+                # 计算年初预期未来（BOP_Cfa）的年初现值（Beg_Wlk）- 赔付、维费、RA
+                # 折现到年初时点（1月1日），使用签单日的锁定利率曲线（加权初始确认利率）
+                # 这些字段用于IFIE_OCI计算（利率变化影响），必须保留！
+                res_bop_cfa_beg_wlk = calc_all(cf_bop_future, bop_date, uw_date, rate_val_locked_df, "")
+                # RA计算：使用相同维度的赔付+维持费用的值*精算假设中的ra率
+                cla_beg_wlk_fut = res_bop_cfa_beg_wlk.get("_Cla_Amt", DECIMAL_ZERO)
+                mtn_beg_wlk_fut = res_bop_cfa_beg_wlk.get("_Mtn_Amt", DECIMAL_ZERO)
+                rad_beg_wlk_fut = (cla_beg_wlk_fut + mtn_beg_wlk_fut) * val_assump_obj.ra_ratio
+                res_bop_cfa_beg_wlk["_Rad_Amt"] = rad_beg_wlk_fut
+                # 只保存赔付、维费、RA字段（用于IFIE_OCI和LC分摊IFIE计算，删除保费和IACF）
+                for k, v in res_bop_cfa_beg_wlk.items():
+                    if k in ["_Cla_Amt", "_Mtn_Amt", "_Rad_Amt"]:
+                        results[f"Pvfl_If_Bop_Cfa_Beg_Wlk{k}"] = v
+                
+                # 期末预期未来现金流（EOP_Cfa）：基于评估月精算假设，从下月开始的所有现金流，折现到评估月底
+                # Wlk (using locked curve from UW date)
+                res_eop_cfa_wlk = calc_all(cf_val_future, val_month_end, uw_date, rate_val_locked_df, "")
+                for k, v in res_eop_cfa_wlk.items():
+                    results[f"Pvfl_If_Eop_Cfa_Rep_Wlk{k}"] = v
+                
+                # 期末预期当期现金流（EOP_Cca）：评估年当年发生的现金流，折现到评估月底 - 新增
+                # 用于IFIE计算，需要包含预期当期的期末现值
+                # 注意：这里需要区分已过去月份和未来月份
+                if is_bop:
+                    # 年初时：使用年初现金流（cf_bop_current）
+                    res_eop_cca_wlk = calc_bop_cca_rep(cf_bop_current, val_month_end, uw_date, rate_val_locked_df)
+                else:
+                    # 年末时：使用当前现金流（cf_val_current）
+                    res_eop_cca_wlk = calc_bop_cca_rep(cf_val_current, val_month_end, uw_date, rate_val_locked_df)
+                for k, v in res_eop_cca_wlk.items():
+                    results[f"Pvfl_If_Eop_Cca_Rep_Wlk{k}"] = v
+                
+                # Cur (using current curve from val_month)
+                res_eop_cfa_cur_if = calc_all(cf_val_future, val_month_end, val_month_end, rate_val_current_df, "")
+                for k, v in res_eop_cfa_cur_if.items():
+                    results[f"Pvfl_If_Eop_Cfa_Rep_Cur{k}"] = v
+                
+                # 删除 Eop_Cca_Rep_Cur 字段（未使用，当期现金流不需要当期利率折现）
+            
+            # Store results with valuation month prefix (for backward compatibility)
+            for key, value in results.items():
+                all_results[f"{val_month_str}_{key}"] = value
+            
+            # Create PVSourceData object for this valuation month
+            pv_data = PVSourceData(
+                policy_no=TARGET_POLICY_NO,
+                valuation_month=val_month_yyyymm,
+                valuation_date=val_month_end,
+                under_write_date=uw_date,
+                pv_fields=results.copy(),
+                metadata={
+                    'valuation_month_label': val_month_label,
+                    'rate_locked_month': uw_date.strftime("%Y%m"),
+                    'rate_current_month': val_month_yyyymm,
                 }
+            )
+            pv_source_collection.add_data(pv_data)
             
-            res_bop_cca = calc_bop_cca_rep(cf_bop_current, val_month_end, uw_date, rate_val_locked_df)
-            for k, v in res_bop_cca.items():
-                results[f"Pvfl_If_Bop_Cca_Rep_Wlk{k}"] = v
+            # Print Results for this valuation month
+            print("\n" + "="*80)
+            print(f"RESULTS — {val_month_label} {val_month_str} (评估期末: {val_month_end.strftime('%Y-%m-%d')})")
+            print("="*80)
+            print(f"{'Field Name':<{FIELD_NAME_WIDTH}} | {'Value':>{VALUE_WIDTH}} | {DESC_HEADER}")
+            print("-" * (FIELD_NAME_WIDTH + VALUE_WIDTH + len(DESC_HEADER) + 6))
             
-            # 年初预期未来现金流（BOP_Cfa）：评估年之后发生的现金流，折现到评估月底
-            # 注意：折现时间点是评估月底，不是年初
-            cf_bop_future = cf_bop[cf_bop['Year'] > val_month_date.year]
-            res_bop_cfa = calc_all(cf_bop_future, val_month_end, uw_date, rate_val_locked_df, "")
-            for k, v in res_bop_cfa.items():
-                results[f"Pvfl_If_Bop_Cfa_Rep_Wlk{k}"] = v
+            # Sort for readability
+            for key in sorted(results.keys()):
+                desc = describe_field(key)
+                print(f"{key:<{FIELD_NAME_WIDTH}} | {results[key]:>{VALUE_WIDTH},.2f} | {desc}")
             
-            # --- 新增：年初现值（Beg）字段计算 ---
-            # 折现到年初时点（1月1日），使用上年年末的锁定利率曲线（Lcu）
-            # 仅针对有效合同年初预期（If_Bop），且仅在年初（is_bop）时计算
-            # 注意：这里已经在 is_bop 且 not is_new_business 的分支中，所以不需要再次判断
-            # 获取上年年末的锁定利率曲线（上年12月31日）
-            # 注意：Lcu使用的是上年年末的锁定利率曲线
-            # 锁定利率曲线在签单日确定后保持不变，所以使用签单日的锁定利率曲线
-            rate_prev_year_locked_df = get_discount_factors("locked", uw_date.strftime("%Y%m"))
-            
-            # 年初时点（1月1日）
-            bop_date = date(val_month_date.year, 1, 1)
-            
-            # 计算年初预期当期（BOP_Cca）的年初现值（Beg_Lcu）
-            # 折现到年初时点（1月1日），使用上年年末锁定利率曲线
-            # 1月现金流折现1个月，12月现金流折现12个月
-            res_bop_cca_beg = calc_all(cf_bop_current, bop_date, uw_date, rate_prev_year_locked_df, "")
-            # 修正RA计算：使用年初时的精算假设（val_assump_obj）
-            cla_beg = res_bop_cca_beg.get("_Cla_Amt", DECIMAL_ZERO)
-            mtn_beg = res_bop_cca_beg.get("_Mtn_Amt", DECIMAL_ZERO)
-            rad_beg = (cla_beg + mtn_beg) * val_assump_obj.ra_ratio
-            res_bop_cca_beg["_Rad_Amt"] = rad_beg
-            for k, v in res_bop_cca_beg.items():
-                results[f"Pvfl_If_Bop_Cca_Beg_Lcu{k}"] = v
-            
-            # 计算年初预期未来（BOP_Cfa）的年初现值（Beg_Lcu）
-            # 折现到年初时点（1月1日），使用上年年末锁定利率曲线
-            res_bop_cfa_beg = calc_all(cf_bop_future, bop_date, uw_date, rate_prev_year_locked_df, "")
-            # 修正RA计算：使用年初时的精算假设（val_assump_obj）
-            cla_beg_fut = res_bop_cfa_beg.get("_Cla_Amt", DECIMAL_ZERO)
-            mtn_beg_fut = res_bop_cfa_beg.get("_Mtn_Amt", DECIMAL_ZERO)
-            rad_beg_fut = (cla_beg_fut + mtn_beg_fut) * val_assump_obj.ra_ratio
-            res_bop_cfa_beg["_Rad_Amt"] = rad_beg_fut
-            for k, v in res_bop_cfa_beg.items():
-                results[f"Pvfl_If_Bop_Cfa_Beg_Lcu{k}"] = v
-            
-            # --- 新增：年初现值（Beg_Wlk）字段计算 ---
-            # 折现到年初时点（1月1日），使用签单日的锁定利率曲线（加权初始确认利率）
-            # 注意：Wlk使用的是签单日的锁定利率曲线，锁定利率在签单日确定后保持不变
-            # 计算年初预期当期（BOP_Cca）的年初现值（Beg_Wlk）
-            res_bop_cca_beg_wlk = calc_all(cf_bop_current, bop_date, uw_date, rate_val_locked_df, "")
-            # RA计算：使用相同维度的赔付+维持费用的值*精算假设中的ra率
-            cla_beg_wlk = res_bop_cca_beg_wlk.get("_Cla_Amt", DECIMAL_ZERO)
-            mtn_beg_wlk = res_bop_cca_beg_wlk.get("_Mtn_Amt", DECIMAL_ZERO)
-            rad_beg_wlk = (cla_beg_wlk + mtn_beg_wlk) * val_assump_obj.ra_ratio
-            res_bop_cca_beg_wlk["_Rad_Amt"] = rad_beg_wlk
-            for k, v in res_bop_cca_beg_wlk.items():
-                results[f"Pvfl_If_Bop_Cca_Beg_Wlk{k}"] = v
-            
-            # 计算年初预期未来（BOP_Cfa）的年初现值（Beg_Wlk）
-            res_bop_cfa_beg_wlk = calc_all(cf_bop_future, bop_date, uw_date, rate_val_locked_df, "")
-            # RA计算：使用相同维度的赔付+维持费用的值*精算假设中的ra率
-            cla_beg_wlk_fut = res_bop_cfa_beg_wlk.get("_Cla_Amt", DECIMAL_ZERO)
-            mtn_beg_wlk_fut = res_bop_cfa_beg_wlk.get("_Mtn_Amt", DECIMAL_ZERO)
-            rad_beg_wlk_fut = (cla_beg_wlk_fut + mtn_beg_wlk_fut) * val_assump_obj.ra_ratio
-            res_bop_cfa_beg_wlk["_Rad_Amt"] = rad_beg_wlk_fut
-            for k, v in res_bop_cfa_beg_wlk.items():
-                results[f"Pvfl_If_Bop_Cfa_Beg_Wlk{k}"] = v
-            
-            # 期末预期未来现金流（EOP_Cfa）：基于评估月精算假设，从下月开始的所有现金流，折现到评估月底
-            # Wlk (using locked curve from UW date)
-            res_eop_cfa_wlk = calc_all(cf_val_future, val_month_end, uw_date, rate_val_locked_df, "")
-            for k, v in res_eop_cfa_wlk.items():
-                results[f"Pvfl_If_Eop_Cfa_Rep_Wlk{k}"] = v
-            
-            # 期末预期当期现金流（EOP_Cca）：评估年当年发生的现金流，折现到评估月底 - 新增
-            # 用于IFIE计算，需要包含预期当期的期末现值
-            # 注意：这里需要区分已过去月份和未来月份
-            if is_bop:
-                # 年初时：使用年初现金流（cf_bop_current）
-                res_eop_cca_wlk = calc_bop_cca_rep(cf_bop_current, val_month_end, uw_date, rate_val_locked_df)
-            else:
-                # 年末时：使用当前现金流（cf_val_current）
-                res_eop_cca_wlk = calc_bop_cca_rep(cf_val_current, val_month_end, uw_date, rate_val_locked_df)
-            for k, v in res_eop_cca_wlk.items():
-                results[f"Pvfl_If_Eop_Cca_Rep_Wlk{k}"] = v
-            
-            # Cur (using current curve from val_month)
-            res_eop_cfa_cur_if = calc_all(cf_val_future, val_month_end, val_month_end, rate_val_current_df, "")
-            for k, v in res_eop_cfa_cur_if.items():
-                results[f"Pvfl_If_Eop_Cfa_Rep_Cur{k}"] = v
-            
-            # 期末预期当期现金流（EOP_Cca_Cur）：使用期末利率 - 新增
-            if is_bop:
-                res_eop_cca_cur_if = calc_bop_cca_rep(cf_bop_current, val_month_end, val_month_end, rate_val_current_df)
-            else:
-                res_eop_cca_cur_if = calc_bop_cca_rep(cf_val_current, val_month_end, val_month_end, rate_val_current_df)
-            for k, v in res_eop_cca_cur_if.items():
-                results[f"Pvfl_If_Eop_Cca_Rep_Cur{k}"] = v
-        
-        # Store results with valuation month prefix (for backward compatibility)
-        for key, value in results.items():
-            all_results[f"{val_month_str}_{key}"] = value
-        
-        # Create PVSourceData object for this valuation month
-        pv_data = PVSourceData(
-            policy_no=TARGET_POLICY_NO,
-            valuation_month=val_month_yyyymm,
-            valuation_date=val_month_end,
-            under_write_date=uw_date,
-            pv_fields=results.copy(),
-            metadata={
-                'valuation_month_label': val_month_label,
-                'rate_locked_month': uw_date.strftime("%Y%m"),
-                'rate_current_month': val_month_yyyymm,
-            }
-        )
-        pv_source_collection.add_data(pv_data)
-        
-        # Print Results for this valuation month
-        print("\n" + "="*80)
-        print(f"RESULTS — {val_month_label} {val_month_str} (评估期末: {val_month_end.strftime('%Y-%m-%d')})")
-        print("="*80)
-        print(f"{'Field Name':<{FIELD_NAME_WIDTH}} | {'Value':>{VALUE_WIDTH}} | {DESC_HEADER}")
-        print("-" * (FIELD_NAME_WIDTH + VALUE_WIDTH + len(DESC_HEADER) + 6))
-        
-        # Sort for readability
-        for key in sorted(results.keys()):
-            desc = describe_field(key)
-            print(f"{key:<{FIELD_NAME_WIDTH}} | {results[key]:>{VALUE_WIDTH},.2f} | {desc}")
-        
-        print("="*80)
+            print("="*80)
     
     # Save PV source data to file for reuse by other scripts
     import json

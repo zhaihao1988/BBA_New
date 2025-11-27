@@ -9,108 +9,126 @@ from BBA_dev.logic.coverage_units import (
 def run(context, logger):
     logger.log_section("Part 6: IACF 摊销 (IACF Amortization)")
     
-    # 6.1 期初待摊 IACF 余额
-    # 如果 context.bop_iacf 已经设置（从上年末滚存），则使用已有值；否则设置为0（新增合同）
-    if not hasattr(context, 'bop_iacf') or context.bop_iacf is None:
-        context.bop_iacf = Decimal('0')  # 新增合同或首次计算
-    logger.log_item(
-        "年初待摊IACF余额",
-        "期初尚未摊销的获取费用余额（从上年末滚存）",
-        "BOP Balance (Rolled from Previous Year End)",
-        {"BOP": context.bop_iacf},
-        context.bop_iacf
-    )
+    # ==========================================================================================
+    # 1. 当年新增合同总 IACF 期末现值
+    # ==========================================================================================
     
-    # 6.2 期初待摊 IACF 计息 (0)
-    iacf_interest_bop = Decimal('0')
+    # 1.1 初始确认预期当年 IACF
+    # 公式：-[新增合同-初始确认-预期当期-预期IACF-期末现值(Wlk)]
+    # 注意：这里使用Wlk利率，从PV数据获取
+    if context.pv_source_data:
+        # 尝试获取签单月的PV数据（初始确认）
+        uw_month_str = context.under_write_date.strftime('%Y%m') if hasattr(context, 'under_write_date') and context.under_write_date else None
+        pv_data_init = context.pv_source_data.get_data(uw_month_str) if uw_month_str else None
+        
+        # 尝试获取评估月的PV数据（期末）
+        eop_month_str = context.val_month_str
+        pv_data_eop = context.pv_source_data.get_data(eop_month_str)
+        
+        if pv_data_init:
+            # 注意：图片公式是“期末现值(Wlk)”，所以应该从 pv_data_eop 获取？
+            # 但名字叫“初始确认...”，可能是指基于初始确认现金流在期末的现值？
+            # 根据常规理解，这里应该是初始确认时刻的现值，或者期末时刻基于初始现金流的现值。
+            # 图片公式明确写着“期末现值(Wlk)”，这通常意味着随时间推移后的现值。
+            # 但如果是“当年新增合同总IACF期末现值”，这通常用于计算摊销基础。
+            
+            # 简化处理：为了对齐图片，我们尽量寻找对应字段。
+            # 假设使用 PV 原材料中的 Pvfl_Nb_Ini_Cca_Rep_Wlk_Acq_Amt (新增-初始-预期当期-期末现值-Wlk-IACF)
+            init_expected_cur_iacf = pv_data_eop.get_field('Pvfl_Nb_Ini_Cca_Rep_Wlk_Acq_Amt', Decimal('0')) if pv_data_eop else Decimal('0')
+            # 取负号
+            init_expected_cur_iacf = -init_expected_cur_iacf
+        else:
+            init_expected_cur_iacf = Decimal('0')
+            
+        # 1.3 期末预期未来 IACF 现值
+        # 公式：-[新增合同-初始确认-预期未来-IACF-期末现值(Wlk)]
+        # 使用 Pvfl_Nb_Ini_Cfa_Rep_Wlk_Acq_Amt
+        end_expected_fut_iacf = pv_data_eop.get_field('Pvfl_Nb_Ini_Cfa_Rep_Wlk_Acq_Amt', Decimal('0')) if pv_data_eop else Decimal('0')
+        # 取负号
+        end_expected_fut_iacf = -end_expected_fut_iacf
+        
+    else:
+        init_expected_cur_iacf = Decimal('0')
+        end_expected_fut_iacf = Decimal('0')
+
     logger.log_item(
-        "年初待摊IACF计息",
-        "期初余额产生的利息 (不考虑时间价值)",
-        "0 (Logic: No Time Value)",
+        "初始确认预期当年IACF",
+        "[Step 1.1] 初始确认时预期的当年IACF流出（期末现值）",
+        "-[新增合同-初始确认-预期当期-预期IACF-期末现值(Wlk)]",
         {},
-        iacf_interest_bop
+        init_expected_cur_iacf
     )
     
-    # 6.3 当年新增 IACF
-    context.nb_iacf_addition = context.expected_iacf_nominal
+    # 1.2 当年 IACF 计息
+    # 方案：不考虑获取费用计息 => 0
+    iacf_interest_current = Decimal('0')
     logger.log_item(
-        "当年新增IACF",
-        "本期新增业务带来的获取费用 (名义值)",
-        "Expected IACF Nominal",
-        {"Expected IACF": context.expected_iacf_nominal},
-        context.nb_iacf_addition
-    )
-    
-    # 6.4 当年新增 IACF 计息 (0)
-    context.iacf_interest_nb = Decimal('0')
-    logger.log_item(
-        "当年新增IACF计息",
-        "新增IACF产生的利息 (不考虑时间价值)",
-        "0 (Logic: No Time Value)",
+        "当年IACF计息",
+        "[Step 1.2] 当年新增IACF产生的利息",
+        "0 (不考虑时间价值)",
         {},
-        context.iacf_interest_nb
+        iacf_interest_current
     )
     
-    # 6.5 IACF 变化
-    context.iacf_change = context.iacf_var
     logger.log_item(
-        "IACF变化",
-        "实际与预期获取费用的差异",
-        "Actual IACF - Expected IACF",
-        {"Actual": context.actual_iacf_incurred, "Expected": context.expected_iacf_nominal},
-        context.iacf_change
-    )
-    
-    # 6.6 IACF 经验调整
-    iacf_exp_adj = Decimal('0')
-    logger.log_item(
-        "IACF经验调整",
-        "其他经验调整项",
-        "Manual Input",
+        "期末预期未来IACF现值",
+        "[Step 1.3] 期末时预期的未来IACF流出（期末现值）",
+        "-[新增合同-初始确认-预期未来-IACF-期末现值(Wlk)]",
         {},
-        iacf_exp_adj
+        end_expected_fut_iacf
     )
     
-    # 6.7 摊销比例（使用覆盖单元动态比例法，与CSM摊销比例算法一致，但独立计算）
-    # 重要：IACF摊销比例独立计算，不直接复用CSM的摊销比例值，以便未来可独立调整
-    context.iacf_amort_ratio = Decimal('0')
+    # 1.4 当年新增总 IACF 期末现值
+    total_nb_iacf_end_pv = init_expected_cur_iacf + iacf_interest_current + end_expected_fut_iacf
+    logger.log_item(
+        "当年新增总IACF期末现值",
+        "[Step 1.4] 当年新增合同相关的IACF总额（期末现值）",
+        "Sum(初始确认预期当年IACF, 当年IACF计息, 期末预期未来IACF现值)",
+        {
+            "初始确认预期当年IACF": init_expected_cur_iacf,
+            "当年IACF计息": iacf_interest_current,
+            "期末预期未来IACF现值": end_expected_fut_iacf
+        },
+        total_nb_iacf_end_pv
+    )
     
+    # ==========================================================================================
+    # 2. IACF 摊销
+    # ==========================================================================================
+    
+    # 2.1 IACF 摊销比例
     # 使用覆盖单元动态比例法计算IACF摊销比例
+    context.iacf_amort_ratio = Decimal('0')
     if hasattr(context, 'policies') and context.policies:
         # 获取评估日期和年初日期
         valuation_date = getattr(context, 'eop_date', None) or getattr(context, 'valuation_date', None)
         if valuation_date is None:
-            # 如果没有评估日期，使用年份的最后一天
             valuation_date = date(getattr(context, 'year', 2022), 12, 31)
         
         start_of_year = date(valuation_date.year, 1, 1)
         is_initial_year = getattr(context, 'is_initial_year', False)
         
-        # 独立计算覆盖单元（不复用CSM的计算结果）
+        # 独立计算覆盖单元
         cu_released_iacf = calculate_coverage_units_released(
             context.policies,
             valuation_date,
             start_of_year,
-            logger=None,  # IACF摊销比例计算时不输出详细日志，避免重复
+            logger=None,
             is_initial_year=is_initial_year
         )
-        
         cu_remaining_iacf = calculate_coverage_units_remaining(
             context.policies,
             valuation_date,
-            logger=None  # IACF摊销比例计算时不输出详细日志，避免重复
+            logger=None
         )
         
-        # 计算IACF摊销比例：Ratio = CU_released / (CU_released + CU_remaining)
         denominator_iacf = cu_released_iacf + cu_remaining_iacf
         if denominator_iacf > 0:
             context.iacf_amort_ratio = cu_released_iacf / denominator_iacf
-        else:
-            context.iacf_amort_ratio = Decimal('0')
-        
+            
         logger.log_item(
             "IACF摊销比例",
-            "本期摊销的比例 (使用覆盖单元动态比例法，与CSM摊销比例算法一致，但独立计算)",
+            "[Step 2.1] 本期摊销的比例",
             "CU_released / (CU_released + CU_remaining)",
             {
                 "CU_released": cu_released_iacf,
@@ -118,41 +136,95 @@ def run(context, logger):
                 "Denominator": denominator_iacf
             },
             context.iacf_amort_ratio,
-            note="独立计算IACF摊销比例，不直接复用CSM的摊销比例值，以便未来可独立调整精算方案"
+            note="独立计算，不直接复用CSM摊销比例"
         )
     else:
-        # 兼容模式：如果没有policies，使用时间比例法（不推荐）
+        # 兼容模式
         if context.total_months > 0:
             context.iacf_amort_ratio = Decimal(context.months_passed) / Decimal(context.total_months)
-        
-        logger.log_item(
-            "IACF摊销比例（兼容模式）",
-            "本期摊销的比例 (未提供保单列表，使用时间比例法，不推荐)",
-            "Passed Months / Total Months",
-            {"Passed": context.months_passed, "Total": context.total_months},
-            context.iacf_amort_ratio,
-            note="⚠️ 警告：应使用覆盖单元动态比例法"
-        )
+        logger.log_item("IACF摊销比例（兼容模式）", "", "Time-based", {}, context.iacf_amort_ratio)
+
+    # 2.2 年初待摊 IACF 余额
+    if not hasattr(context, 'bop_iacf') or context.bop_iacf is None:
+        context.bop_iacf = Decimal('0')
+    logger.log_item(
+        "年初待摊IACF余额",
+        "[Step 2.2] 期初尚未摊销的获取费用余额",
+        "BOP Balance",
+        {},
+        context.bop_iacf
+    )
     
-    # 6.8 摊销的 IACF
+    # 2.3 年初待摊 IACF 计息
+    iacf_interest_bop = Decimal('0')
+    logger.log_item(
+        "年初待摊IACF计息",
+        "[Step 2.3] 期初余额产生的利息",
+        "0 (不考虑时间价值)",
+        {},
+        iacf_interest_bop
+    )
+    
+    # 2.4 当年新增 IACF
+    # 使用名义值（不折现）
+    context.nb_iacf_addition = context.expected_iacf_nominal
+    logger.log_item(
+        "当年新增IACF",
+        "[Step 2.4] 本期新增业务带来的获取费用 (名义值)",
+        "Expected IACF Nominal (不考虑时间价值)",
+        {"Expected IACF": context.expected_iacf_nominal},
+        context.nb_iacf_addition
+    )
+    
+    # 2.5 当年新增 IACF 计息
+    context.iacf_interest_nb = Decimal('0')
+    logger.log_item(
+        "当年新增IACF计息",
+        "[Step 2.5] 新增IACF产生的利息",
+        "0 (不考虑时间价值)",
+        {},
+        context.iacf_interest_nb
+    )
+    
+    # 2.6 IACF 变化
+    context.iacf_change = context.iacf_var
+    logger.log_item(
+        "IACF变化",
+        "[Step 2.6] 实际与预期获取费用的差异",
+        "Actual IACF - Expected IACF",
+        {"Actual": context.actual_iacf_incurred, "Expected": context.expected_iacf_nominal},
+        context.iacf_change
+    )
+    
+    # 2.7 IACF 经验调整
+    iacf_exp_adj = Decimal('0')
+    logger.log_item(
+        "IACF经验调整",
+        "[Step 2.7] 其他经验调整项",
+        "Manual Input",
+        {},
+        iacf_exp_adj
+    )
+    
+    # 2.8 摊销的 IACF
     iacf_balance_base = context.bop_iacf + iacf_interest_bop + context.nb_iacf_addition + context.iacf_interest_nb + context.iacf_change
     context.iacf_amort_amount = - (iacf_balance_base * context.iacf_amort_ratio + iacf_exp_adj)
     
     logger.log_item(
         "摊销的IACF",
-        "本期摊销计入费用的金额 (负值代表减少余额)",
+        "[Step 2.8] 本期摊销计入费用的金额",
         "- (Sum(Balance+Additions+Var) * Ratio + ExpAdj)",
         {"Base Sum": iacf_balance_base, "Ratio": context.iacf_amort_ratio, "ExpAdj": iacf_exp_adj},
         context.iacf_amort_amount
     )
     
-    # 6.9 期末待摊 IACF 余额
+    # 2.9 期末待摊 IACF 余额
     context.eop_iacf_balance = iacf_balance_base + iacf_exp_adj + context.iacf_amort_amount
     
     logger.log_item(
         "期末待摊IACF余额",
-        "期末剩余的待摊获取费用",
-        "Sum(BOP + Interest + NB + NB Interest + Var + ExpAdj + Amortization)",
+        "[Step 2.9] 期末剩余的待摊获取费用",
+        "Sum(Base + ExpAdj + Amortization)",
         {
             "Base": iacf_balance_base,
             "ExpAdj": iacf_exp_adj,
