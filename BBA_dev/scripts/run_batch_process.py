@@ -17,10 +17,15 @@ sys.path.insert(0, PROJECT_ROOT)
 
 from BBA_dev.data_access.loader import get_all_policy_entries, preload_static_data, clear_static_cache
 from BBA_dev.scripts.run_lifecycle_simulation import LifecycleSimulator
+from BBA_dev.utils.async_csv_writer import AsyncCSVWriter
 
 OUTPUT_FILE = os.path.join(PROJECT_ROOT, "logs", "bba_batch_results_202412.csv")
 os.makedirs(os.path.dirname(OUTPUT_FILE), exist_ok=True)
-BATCH_SIZE = 100
+
+# 异步写入配置
+ASYNC_BUFFER_SIZE = 500  # 异步写入缓冲区大小（从100提升到500）
+FLUSH_INTERVAL = 5.0     # 自动刷新间隔（秒）
+
 # 多进程配置：充分利用32核CPU
 MAX_WORKERS = 32  # 可根据实际情况调整（建议为CPU核心数）
 RESULT_COLUMNS = [
@@ -72,40 +77,7 @@ RESULT_COLUMNS = [
 ]
 
 
-# CSV写入锁（线程安全）
-_csv_write_lock = threading.Lock()
-
-
-def append_results_to_csv(results: List[Dict], columns: Optional[List[str]] = None) -> None:
-    """线程安全的CSV追加写入"""
-    if not results:
-        return
-    with _csv_write_lock:
-        df = pd.DataFrame(results)
-        target_columns = columns or RESULT_COLUMNS
-        # 确保所有列都存在，缺失的填0，并按target_columns顺序排列
-        df = df.reindex(columns=target_columns, fill_value=0)
-        
-        # 检查文件是否存在，决定是否需要写入表头
-        header_needed = not os.path.exists(OUTPUT_FILE)
-        
-        # 如果文件存在，再次检查表头是否匹配（防止并发问题）
-        if not header_needed:
-            try:
-                existing_df = pd.read_csv(OUTPUT_FILE, nrows=0)
-                existing_columns = list(existing_df.columns)
-                if existing_columns != target_columns:
-                    # 表头不匹配，删除文件重新生成
-                    os.remove(OUTPUT_FILE)
-                    header_needed = True
-                    print(f"⚠️ 检测到表头不匹配，已删除旧文件并重新生成")
-            except Exception:
-                # 读取失败，重新生成
-                if os.path.exists(OUTPUT_FILE):
-                    os.remove(OUTPUT_FILE)
-                header_needed = True
-        
-        df.to_csv(OUTPUT_FILE, mode='a', header=header_needed, index=False)
+# 注意：CSV写入已改为异步模式，无需锁
 
 
 def process_single_policy(
@@ -213,11 +185,21 @@ def run_batch(run_date: str = "202412", val_method: str = "7", max_workers: int 
     print(f"共需处理 {total} 条保单/批单组合")
     print(f"使用 {max_workers} 个进程并行处理")
     
+    # 创建异步CSV写入器
+    print(f"\n{'='*80}")
+    print("步骤2：初始化异步CSV写入器...")
+    print(f"{'='*80}")
+    csv_writer = AsyncCSVWriter(
+        output_file=OUTPUT_FILE,
+        columns=RESULT_COLUMNS,
+        buffer_size=ASYNC_BUFFER_SIZE,
+        flush_interval=FLUSH_INTERVAL
+    )
+    csv_writer.start()
+    
     # 进度跟踪（线程安全）
     completed_count = 0
     completed_lock = threading.Lock()
-    all_results: List[Dict] = []
-    results_lock = threading.Lock()
     stop_flag = False
     
     def update_progress():
@@ -226,78 +208,70 @@ def run_batch(run_date: str = "202412", val_method: str = "7", max_workers: int 
         with completed_lock:
             completed_count += 1
             progress_pct = completed_count / total * 100
-            print(f"进度: {completed_count}/{total} ({progress_pct:.2f}%)")
-    
-    def collect_results(new_results: List[Dict]):
-        """收集结果并批量写入"""
-        nonlocal all_results, stop_flag
-        with results_lock:
-            if stop_flag:
-                return
-            all_results.extend(new_results)
-            if len(all_results) >= BATCH_SIZE:
-                batch = all_results[:BATCH_SIZE]
-                all_results = all_results[BATCH_SIZE:]
-                append_results_to_csv(batch)
-                print(f"已处理 {completed_count} 张，结果已写入 {OUTPUT_FILE}")
+            # 每10%或每100条显示一次进度（减少输出）
+            if completed_count % 100 == 0 or completed_count % (total // 10 + 1) == 0:
+                stats = csv_writer.get_stats()
+                print(f"进度: {completed_count}/{total} ({progress_pct:.2f}%) | "
+                      f"已写入: {stats['total_written']} | 队列: {stats['queue_size']}")
     
     # 使用 ProcessPoolExecutor 并行处理
-    with ProcessPoolExecutor(max_workers=max_workers) as executor:
-        # 提交所有任务
-        future_to_policy = {
-            executor.submit(process_single_policy, policy_no, certi_no, run_date, val_method): (policy_no, certi_no)
-            for policy_no, certi_no in policy_entries
-        }
-        
-        # 处理完成的任务
-        try:
-            for future in as_completed(future_to_policy):
-                policy_no, certi_no = future_to_policy[future]
-                try:
-                    result_policy_no, results, error_msg = future.result()
-                    
-                    if error_msg:
-                        # 遇到错误或警告，停止批处理
-                        print(f"❌ Policy {result_policy_no} 失败: {error_msg}")
-                        if all_results:
-                            with results_lock:
-                                append_results_to_csv(all_results)
-                                all_results.clear()
+    try:
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            # 提交所有任务
+            future_to_policy = {
+                executor.submit(process_single_policy, policy_no, certi_no, run_date, val_method): (policy_no, certi_no)
+                for policy_no, certi_no in policy_entries
+            }
+            
+            # 处理完成的任务
+            try:
+                for future in as_completed(future_to_policy):
+                    policy_no, certi_no = future_to_policy[future]
+                    try:
+                        result_policy_no, results, error_msg = future.result()
+                        
+                        if error_msg:
+                            # 遇到错误或警告，停止批处理
+                            print(f"❌ Policy {result_policy_no} 失败: {error_msg}")
+                            print("检测到错误，批处理已停止。")
+                            stop_flag = True
+                            # 取消剩余任务
+                            for f in future_to_policy:
+                                f.cancel()
+                            break
+                        
+                        if results:
+                            # 直接添加到异步写入器队列（非阻塞）
+                            csv_writer.append(results, block=False)
+                        
+                        update_progress()
+                        
+                    except Exception as exc:
+                        print(f"❌ Policy {policy_no} 处理异常: {exc}")
                         print("检测到错误，批处理已停止。")
                         stop_flag = True
                         # 取消剩余任务
                         for f in future_to_policy:
                             f.cancel()
                         break
-                    
-                    if results:
-                        collect_results(results)
-                    
-                    update_progress()
-                    
-                except Exception as exc:
-                    print(f"❌ Policy {policy_no} 处理异常: {exc}")
-                    if all_results:
-                        with results_lock:
-                            append_results_to_csv(all_results)
-                            all_results.clear()
-                    print("检测到错误，批处理已停止。")
-                    stop_flag = True
-                    # 取消剩余任务
-                    for f in future_to_policy:
-                        f.cancel()
-                    break
-        except KeyboardInterrupt:
-            print("\n⚠️ 用户中断，正在停止...")
-            stop_flag = True
-            for f in future_to_policy:
-                f.cancel()
-    
-    # 写入剩余结果
-    if all_results and not stop_flag:
-        with results_lock:
-            append_results_to_csv(all_results)
-            print(f"最终写入 {len(all_results)} 条结果")
+            except KeyboardInterrupt:
+                print("\n⚠️ 用户中断，正在停止...")
+                stop_flag = True
+                for f in future_to_policy:
+                    f.cancel()
+    finally:
+        # 停止异步写入器，等待所有数据写入完成
+        print(f"\n{'='*80}")
+        print("正在停止异步CSV写入器...")
+        print(f"{'='*80}")
+        csv_writer.stop(timeout=60.0)  # 最多等待60秒
+        
+        # 获取最终统计信息
+        final_stats = csv_writer.get_stats()
+        print(f"✅ 异步CSV写入器已停止")
+        print(f"   - 总写入记录: {final_stats['total_written']}")
+        print(f"   - 写入操作次数: {final_stats['write_count']}")
+        print(f"   - 平均批次大小: {final_stats['avg_batch_size']:.1f}")
     
     # 记录结束时间并计算耗时
     end_time = time.time()

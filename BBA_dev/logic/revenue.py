@@ -276,8 +276,9 @@ def run(context, logger):
         note="摊销减少CSM余额，同时增加保险合同收入"
     )
     
-    # 更新期末 CSM（csm_amort_amount 为负值，直接相加即可完成扣减）
-    context.end_csm_final = context.end_csm_before_amort + context.csm_amort_amount
+    # 注意：end_csm_final 已经在 CSM/LC计量模块中正确计算完成（包含了被CSM吸收的变化）
+    # Revenue模块不应该重新计算这个值，只使用它来确认收入
+    # 原代码: context.end_csm_final = context.end_csm_before_amort + context.csm_amort_amount （已删除）
     
     # 7.4 IACF 摊销 (Revenue Impact)
     context.revenue_iacf_amort = abs(context.iacf_amort_amount)
