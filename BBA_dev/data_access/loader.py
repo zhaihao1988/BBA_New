@@ -1,10 +1,103 @@
 import pandas as pd
 from decimal import Decimal
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Dict
+from datetime import date
 
 from sqlalchemy import text
 
 from BBA_dev.data_access.db_utils import get_sa_engine
+
+
+# ==================== 静态数据缓存 ====================
+# 用于批处理时预加载利率曲线和精算假设，减少数据库查询次数
+
+_RATES_CACHE: Dict[str, pd.DataFrame] = {}
+_ASSUMPTIONS_CACHE: Dict[Tuple[str, str, str], Dict] = {}
+
+
+def preload_static_data(run_date: str = '202412', val_method: str = '7'):
+    """
+    预加载批处理所需的静态数据（利率曲线和精算假设）
+    
+    Args:
+        run_date: 运行批次（默认'202412'）
+        val_method: 计量方法（默认'7'）
+    
+    Returns:
+        dict: 包含预加载统计信息的字典
+    """
+    print("=" * 80)
+    print("开始预加载静态数据...")
+    print("=" * 80)
+    
+    # 1. 获取所有需要的险类代码
+    engine = get_sa_engine('qa')
+    query = f"""
+        SELECT DISTINCT class_code
+        FROM zh.t_pp_jl_contract
+        WHERE run_date = '{run_date}'
+          AND val_method = '{val_method}'
+    """
+    try:
+        with engine.connect() as conn:
+            class_codes_df = pd.read_sql_query(text(query), conn)
+        class_codes = class_codes_df['class_code'].dropna().unique().tolist()
+        print(f"✓ 识别到 {len(class_codes)} 个不同的险类代码")
+    except Exception as e:
+        print(f"✗ 获取险类代码失败: {e}")
+        return {"status": "failed", "error": str(e)}
+    
+    # 2. 预加载利率曲线（2017-2024年，每年1月和12月）
+    rate_months = []
+    for year in range(2017, 2025):  # 2017-2024
+        rate_months.append(f"{year}01")  # 年初
+        rate_months.append(f"{year}12")  # 年末
+    
+    rates_loaded = 0
+    for month in rate_months:
+        try:
+            rates_df = get_rates(month)
+            if not rates_df.empty:
+                _RATES_CACHE[month] = rates_df
+                rates_loaded += 1
+        except Exception as e:
+            print(f"  ⚠ 加载利率曲线 {month} 失败: {e}")
+    
+    print(f"✓ 预加载利率曲线: {rates_loaded}/{len(rate_months)} 个月份")
+    
+    # 3. 预加载精算假设（所有险类 × 所有月份）
+    assumptions_loaded = 0
+    for class_code in class_codes:
+        for month in rate_months:
+            try:
+                assumptions = get_assumptions(class_code, month, val_method, use_db_acquisition_expense=True)
+                if assumptions:
+                    cache_key = (class_code, month, val_method)
+                    _ASSUMPTIONS_CACHE[cache_key] = assumptions
+                    assumptions_loaded += 1
+            except Exception as e:
+                # 不是所有月份都有数据，这是正常的
+                pass
+    
+    print(f"✓ 预加载精算假设: {assumptions_loaded} 条记录")
+    print("=" * 80)
+    print(f"预加载完成！利率曲线: {rates_loaded}个月份，精算假设: {assumptions_loaded}条")
+    print("=" * 80)
+    
+    return {
+        "status": "success",
+        "rates_loaded": rates_loaded,
+        "assumptions_loaded": assumptions_loaded,
+        "class_codes_count": len(class_codes)
+    }
+
+
+def clear_static_cache():
+    """清空静态数据缓存"""
+    global _RATES_CACHE, _ASSUMPTIONS_CACHE
+    _RATES_CACHE.clear()
+    _ASSUMPTIONS_CACHE.clear()
+    print("✓ 静态数据缓存已清空")
 
 
 def get_policy_data(policy_no, certi_no=None, val_method='7', run_date='202412'):
@@ -70,7 +163,7 @@ def get_policy_data(policy_no, certi_no=None, val_method='7', run_date='202412')
         return pd.DataFrame()
 def get_rates(val_month_str):
     """
-    从数据库读取指定评估月份的利率曲线
+    从数据库读取指定评估月份的利率曲线（支持缓存）
     
     Args:
         val_month_str: 评估月份，格式 'YYYYMM'，例如 '202512'
@@ -80,6 +173,11 @@ def get_rates(val_month_str):
             - term_month: 期限（月）
             - forward_disrate_value: 月化远期折现率
     """
+    # 先检查缓存
+    if val_month_str in _RATES_CACHE:
+        return _RATES_CACHE[val_month_str].copy()  # 返回副本，避免修改缓存
+    
+    # 缓存未命中，从数据库查询
     engine = get_sa_engine('test')
     try:
         rates_query = f"""
@@ -92,13 +190,16 @@ def get_rates(val_month_str):
             rates_df = pd.read_sql_query(text(rates_query), conn)
         if rates_df.empty:
             print(f"⚠️  警告: 未找到 {val_month_str} 的利率曲线数据")
+        else:
+            # 自动缓存查询结果
+            _RATES_CACHE[val_month_str] = rates_df.copy()
         return rates_df
     except Exception as e:
         print(f"❌ 读取利率曲线失败: {e}")
         return pd.DataFrame()
 def get_assumptions(class_code, val_month_str, val_method='7', use_db_acquisition_expense=True):
     """
-    从数据库读取精算假设
+    从数据库读取精算假设（支持缓存）
     
     Args:
         class_code: 险类代码（用于匹配精算假设表）
@@ -118,6 +219,12 @@ def get_assumptions(class_code, val_month_str, val_method='7', use_db_acquisitio
         - 如果 use_db_acquisition_expense=False，则 acquisition_expense_ratio 需从代码 Config/Parameter 读取
         - val_method='7' 表示 BBA 计量方法
     """
+    # 先检查缓存
+    cache_key = (class_code, val_month_str, val_method)
+    if cache_key in _ASSUMPTIONS_CACHE:
+        return _ASSUMPTIONS_CACHE[cache_key].copy()  # 返回副本，避免修改缓存
+    
+    # 缓存未命中，从数据库查询
     engine = get_sa_engine('test')
     try:
         # 构建查询字段
@@ -160,6 +267,9 @@ def get_assumptions(class_code, val_month_str, val_method='7', use_db_acquisitio
         # 如果从数据库读取获取费用率
         if use_db_acquisition_expense:
             assumptions['acquisition_expense_ratio'] = Decimal(str(df_assumptions.iloc[0]['acquisition_expense_ratio']))
+        
+        # 自动缓存查询结果
+        _ASSUMPTIONS_CACHE[cache_key] = assumptions.copy()
         
         return assumptions
         

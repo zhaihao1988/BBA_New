@@ -63,18 +63,31 @@ def get_sa_engine(env: str = 'test') -> Engine:
     - pool_size: 每个进程的连接池大小（建议2-5）
     - max_overflow: 允许超出pool_size的连接数（建议0-3）
     - pool_pre_ping: 连接前检查连接是否有效
+    - pool_timeout: 获取连接的超时时间
+    - pool_recycle: 连接回收时间，防止数据库端关闭长时间连接
     """
     if env not in DB_CONFIGS:
         raise ValueError(f"未知数据库环境 '{env}'，目前支持 {list(DB_CONFIGS.keys())}")
     if env not in _ENGINE_CACHE:
         config = DB_CONFIGS[env]
+        from sqlalchemy.pool import QueuePool
         _ENGINE_CACHE[env] = create_engine(
             _build_sa_url(config),
-            pool_size=3,  # 每个进程最多3个连接
-            max_overflow=2,  # 允许超出2个连接
-            pool_pre_ping=True,  # 连接前检查有效性
-            pool_recycle=3600,  # 1小时后回收连接
+            poolclass=QueuePool,
+            pool_size=5,           # 每个进程最多5个连接（从3提升到5）
+            max_overflow=10,       # 允许超出10个连接（从2提升到10）
+            pool_timeout=30,       # 30秒超时
+            pool_pre_ping=True,    # 连接前检查有效性（防止连接失效）
+            pool_recycle=3600,     # 1小时后回收连接（防止数据库端超时）
+            pool_use_lifo=True,    # 使用LIFO模式（后进先出），提高连接复用率
             echo=False
         )
     return _ENGINE_CACHE[env]
+
+
+def dispose_all_engines():
+    """释放所有数据库连接池（用于清理资源）"""
+    for env, engine in _ENGINE_CACHE.items():
+        engine.dispose()
+    _ENGINE_CACHE.clear()
 

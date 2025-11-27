@@ -15,7 +15,7 @@ import pandas as pd
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 
-from BBA_dev.data_access.loader import get_all_policy_entries
+from BBA_dev.data_access.loader import get_all_policy_entries, preload_static_data, clear_static_cache
 from BBA_dev.scripts.run_lifecycle_simulation import LifecycleSimulator
 
 OUTPUT_FILE = os.path.join(PROJECT_ROOT, "logs", "bba_batch_results_202412.csv")
@@ -165,6 +165,22 @@ def run_batch(run_date: str = "202412", val_method: str = "7", max_workers: int 
     print(f"最大进程数: {max_workers}")
     print(f"=" * 80)
     
+    # 预加载静态数据（利率曲线和精算假设）
+    print(f"\n{'='*80}")
+    print("步骤1：预加载静态数据...")
+    print(f"{'='*80}")
+    try:
+        preload_result = preload_static_data(run_date=run_date, val_method=val_method)
+        if preload_result['status'] == 'success':
+            print(f"✅ 静态数据预加载成功")
+            print(f"   - 利率曲线: {preload_result['rates_loaded']} 个月份")
+            print(f"   - 精算假设: {preload_result['assumptions_loaded']} 条记录")
+            print(f"   - 险类数量: {preload_result['class_codes_count']} 个")
+        else:
+            print(f"⚠️ 静态数据预加载失败，将在运行时动态加载")
+    except Exception as e:
+        print(f"⚠️ 静态数据预加载异常: {e}，将在运行时动态加载")
+    
     # 检查并处理旧的CSV文件
     if os.path.exists(OUTPUT_FILE):
         try:
@@ -289,6 +305,13 @@ def run_batch(run_date: str = "202412", val_method: str = "7", max_workers: int 
     elapsed_time = end_time - start_time
     elapsed_minutes = elapsed_time / 60
     elapsed_hours = elapsed_time / 3600
+    
+    # 清理缓存
+    try:
+        clear_static_cache()
+        print("✅ 已清理静态数据缓存")
+    except Exception as e:
+        print(f"⚠️ 清理缓存失败: {e}")
     
     print(f"=" * 80)
     print(f"✅ 批处理完成，共处理 {completed_count}/{total} 条保单")

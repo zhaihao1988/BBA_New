@@ -34,6 +34,15 @@ from BBA_dev.data_loader import load_full_data
 from BBA_dev.data_access.loader import get_assumptions as fetch_assumptions_from_db
 from BBA_dev.models.pv_source_data import PVSourceData, PVSourceDataCollection
 
+# 向量化计算开关（默认开启以提升性能）
+USE_VECTORIZED_PV = True
+try:
+    from BBA_dev.pv_calculator_vectorized import calculate_pv_exact_fast, calculate_pv_cca_fast
+    print("✓ 向量化PV计算模块已加载")
+except ImportError as e:
+    USE_VECTORIZED_PV = False
+    print(f"⚠ 向量化PV计算模块加载失败，将使用原始方法: {e}")
+
 # Setup Logging
 logger = logging.getLogger("pv_validator")
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -413,19 +422,35 @@ def main():
     # Define helpers
     def calc_all(cf_subset, val_d, curve_base_d, rates, label_suffix):
         """Helper to calc Pre, Acq, Cla, Mtn, Rad using EXACT discounting"""
-        pre = calculate_pv_exact(cf_subset, 'Premium', rates, val_d, curve_base_d)
-        acq = calculate_pv_exact(cf_subset, 'IACF', rates, val_d, curve_base_d)
-        cla = calculate_pv_exact(cf_subset, 'Claims', rates, val_d, curve_base_d)
-        mtn = calculate_pv_exact(cf_subset, 'Expenses', rates, val_d, curve_base_d)
+        if USE_VECTORIZED_PV:
+            # 使用向量化版本（5-10倍加速）
+            pre = calculate_pv_exact_fast(cf_subset, 'Premium', rates, val_d, curve_base_d)
+            acq = calculate_pv_exact_fast(cf_subset, 'IACF', rates, val_d, curve_base_d)
+            cla = calculate_pv_exact_fast(cf_subset, 'Claims', rates, val_d, curve_base_d)
+            mtn = calculate_pv_exact_fast(cf_subset, 'Expenses', rates, val_d, curve_base_d)
+        else:
+            # 原始版本（向量化模块不可用时）
+            pre = calculate_pv_exact(cf_subset, 'Premium', rates, val_d, curve_base_d)
+            acq = calculate_pv_exact(cf_subset, 'IACF', rates, val_d, curve_base_d)
+            cla = calculate_pv_exact(cf_subset, 'Claims', rates, val_d, curve_base_d)
+            mtn = calculate_pv_exact(cf_subset, 'Expenses', rates, val_d, curve_base_d)
         rad = (cla + mtn) * assump_obj.ra_ratio
         return {f"_Pre_Amt": pre, f"_Acq_Amt": acq, f"_Cla_Amt": cla, f"_Mtn_Amt": mtn, f"_Rad_Amt": rad}
 
     def calc_all_cca(cf_subset, val_d, curve_base_d, rates):
         """Helper for Cca: Past/Current -> Original Value; Future -> Discounted"""
-        pre = calculate_pv_current_period_no_interest_after_occurrence(cf_subset, 'Premium', rates, val_d, curve_base_d)
-        acq = calculate_pv_current_period_no_interest_after_occurrence(cf_subset, 'IACF', rates, val_d, curve_base_d)
-        cla = calculate_pv_current_period_no_interest_after_occurrence(cf_subset, 'Claims', rates, val_d, curve_base_d)
-        mtn = calculate_pv_current_period_no_interest_after_occurrence(cf_subset, 'Expenses', rates, val_d, curve_base_d)
+        if USE_VECTORIZED_PV:
+            # 使用向量化版本（5-10倍加速）
+            pre = calculate_pv_cca_fast(cf_subset, 'Premium', rates, val_d, curve_base_d)
+            acq = calculate_pv_cca_fast(cf_subset, 'IACF', rates, val_d, curve_base_d)
+            cla = calculate_pv_cca_fast(cf_subset, 'Claims', rates, val_d, curve_base_d)
+            mtn = calculate_pv_cca_fast(cf_subset, 'Expenses', rates, val_d, curve_base_d)
+        else:
+            # 原始版本（向量化模块不可用时）
+            pre = calculate_pv_current_period_no_interest_after_occurrence(cf_subset, 'Premium', rates, val_d, curve_base_d)
+            acq = calculate_pv_current_period_no_interest_after_occurrence(cf_subset, 'IACF', rates, val_d, curve_base_d)
+            cla = calculate_pv_current_period_no_interest_after_occurrence(cf_subset, 'Claims', rates, val_d, curve_base_d)
+            mtn = calculate_pv_current_period_no_interest_after_occurrence(cf_subset, 'Expenses', rates, val_d, curve_base_d)
         rad = (cla + mtn) * assump_obj.ra_ratio
         return {f"_Pre_Amt": pre, f"_Acq_Amt": acq, f"_Cla_Amt": cla, f"_Mtn_Amt": mtn, f"_Rad_Amt": rad}
 
