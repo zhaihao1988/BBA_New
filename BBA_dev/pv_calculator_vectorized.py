@@ -197,8 +197,9 @@ class VectorizedPVCalculator:
                     factors[i] = 1.0
                 elif cf_date > self.valuation_date:
                     # 折现：未来 -> 现在
-                    start_step = max(1, int(idx_val) + 1)
-                    end_step = min(int(idx_cf), self.max_term)
+                    # 期数需要+1：从 (idx_val + 1 + 1) 到 (idx_cf + 1)
+                    start_step = max(1, int(idx_val) + 2)  # +1 for period adjustment
+                    end_step = min(int(idx_cf) + 1, self.max_term)  # +1 for period adjustment
                     if start_step <= end_step:
                         # DF = DF[end] / DF[start-1]
                         factors[i] = self._get_discount_factor_from_table(start_step - 1, end_step)

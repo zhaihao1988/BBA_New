@@ -96,7 +96,7 @@ class CashFlowProjector:
         loss_ratio = Decimal(str(getattr(assumptions, "loss_ratio")))
         claim_exp_ratio = Decimal(str(getattr(assumptions, "claim_expense_ratio", 0)))
         maint_ratio = Decimal(str(getattr(assumptions, "maintenance_expense_ratio", 0)))
-
+        
         records: List[dict] = []
         for month_date in _month_range(timeline_start, end_date):
             yyyymm = f"{month_date.year}{month_date.month:02d}"
@@ -146,11 +146,10 @@ if __name__ == "__main__":
     )
     sample_assump = SimpleNamespace(
         loss_ratio=Decimal("0.5"),
-        claim_expense_ratio=Decimal("0.0"),
+        claim_expense_ratio=Decimal("0.0164636337"),
         maintenance_expense_ratio=Decimal("0.0"),
     )
 
     projector = CashFlowProjector()
     df = projector.project_policy_flows(sample_policy, sample_assump)
     print(df)
-

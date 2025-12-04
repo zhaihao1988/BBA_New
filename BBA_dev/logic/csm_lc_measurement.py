@@ -68,9 +68,9 @@ def get_wlk_curve_from_pv_data(context, uw_month_str: str):
     if not context.pv_source_data:
         return None
     
-    pv_data_init = context.pv_source_data.get_data(uw_month_str)
-    if pv_data_init and pv_data_init.metadata:
-        rate_locked_month = pv_data_init.metadata.get('rate_locked_month')
+    pv_data = context.pv_source_data.get_data(uw_month_str)
+    if pv_data and pv_data.metadata:
+        rate_locked_month = pv_data.metadata.get('rate_locked_month')
         if rate_locked_month:
             try:
                 return get_discount_factors("locked", rate_locked_month)
@@ -100,11 +100,16 @@ def calculate_interest_with_stop_date(
     if stop_date and val_month_str and uw_date:
         try:
             val_date = datetime.strptime(val_month_str, '%Y%m').date()
-            if stop_date.year == val_date.year and stop_date.month < val_date.month:
-                stop_month_str = stop_date.strftime('%Y%m')
-                stop_term = months_from_uw_to_target(uw_date, stop_month_str)
-                if stop_term > 0 and stop_term < actual_end_term:
-                    actual_end_term = stop_term
+            # 止期处理：如果止期在评估月当月或之前，使用止期当月；如果止期在评估月之后，正常计息
+            # 例如：7月止期，7月正常计息，8月及之后使用7月的累计利息
+            if stop_date.year == val_date.year:
+                if stop_date.month < val_date.month:
+                    # 止期在评估月之前，使用止期当月
+                    stop_month_str = stop_date.strftime('%Y%m')
+                    stop_term = months_from_uw_to_target(uw_date, stop_month_str)
+                    if stop_term > 0 and stop_term < actual_end_term:
+                        actual_end_term = stop_term
+                # 如果止期在评估月当月或之后，正常计息（不调整actual_end_term）
         except Exception:
             pass
     
@@ -112,6 +117,162 @@ def calculate_interest_with_stop_date(
     if principal is None or principal == DECIMAL_ZERO or factor == 0:
         return DECIMAL_ZERO, factor
     return principal * factor, factor
+
+def calculate_nb_csm_interest(
+    principal: Decimal,
+    rates_df,
+    uw_date: date,
+    val_month_str: str,
+    stop_date: Optional[date] = None
+) -> Tuple[Decimal, Decimal]:
+    """
+    新增合同CSM计息
+    
+    逻辑：
+    - 签单月：CSM × (1 + wlk[1]/2)
+    - 第二个月：CSM × (1 + wlk[1]/2) × (1 + wlk[2])
+    - 第三个月：CSM × (1 + wlk[1]/2) × (1 + wlk[2]) × (1 + wlk[3])
+    - 以此类推
+    
+    Args:
+        principal: CSM本金
+        rates_df: Wlk利率曲线
+        uw_date: 签单日期
+        val_month_str: 评估月份（YYYYMM格式）
+        stop_date: 合同止期（可选）
+    
+    Returns:
+        (利息金额, 计息因子)
+    """
+    if rates_df is None or rates_df.empty or principal is None or principal == DECIMAL_ZERO:
+        return DECIMAL_ZERO, DECIMAL_ZERO
+    
+    # 计算从签单月到评估月的月数差
+    months_diff = months_from_uw_to_target(uw_date, val_month_str)
+    if months_diff <= 0:
+        return DECIMAL_ZERO, DECIMAL_ZERO
+    
+    # 处理止期：止期当月正常计息，止期之后使用止期当月的累计利息
+    # 例如：7月止期，7月正常计息，8月及之后使用7月的累计利息
+    actual_months_diff = months_diff
+    if stop_date:
+        try:
+            val_date = datetime.strptime(val_month_str, '%Y%m').date()
+            if stop_date.year == val_date.year:
+                if stop_date.month < val_date.month:
+                    # 止期在评估月之前，使用止期当月（止期当月正常计息）
+                    stop_month_str = stop_date.strftime('%Y%m')
+                    actual_months_diff = months_from_uw_to_target(uw_date, stop_month_str)
+                # 如果止期在评估月当月或之后，正常计息
+        except Exception:
+            pass
+    
+    if actual_months_diff <= 0:
+        return DECIMAL_ZERO, DECIMAL_ZERO
+    
+    # 构建利率映射
+    rates_map = dict(zip(rates_df['term_month'], rates_df['forward_disrate_value'].apply(Decimal)))
+    max_term = rates_df['term_month'].max() if not rates_df.empty else 0
+    
+    # 计算计息因子
+    # 第一期：使用 wlk[1]/2（因为初始确认在月中）
+    # 第二期及以后：使用 wlk[2], wlk[3], ...
+    factor = Decimal('1.0')
+    
+    # 第一期：wlk[1]/2
+    r1 = rates_map.get(1, Decimal('0'))
+    factor *= (Decimal('1.0') + r1 / Decimal('2'))
+    
+    # 第二期到第actual_months_diff期：累乘整月利率
+    for term in range(2, actual_months_diff + 1):
+        r = rates_map.get(term, rates_map.get(max_term, Decimal('0')) if max_term > 0 else Decimal('0'))
+        factor *= (Decimal('1.0') + r)
+    
+    # 利息 = 本金 × (因子 - 1)
+    interest = principal * (factor - Decimal('1'))
+    
+    return interest, factor - Decimal('1')
+
+def calculate_if_csm_interest(
+    principal: Decimal,
+    rates_df,
+    uw_date: date,
+    bop_month_str: str,
+    val_month_str: str,
+    stop_date: Optional[date] = None
+) -> Tuple[Decimal, Decimal]:
+    """
+    期初有效合同CSM计息
+    
+    逻辑：
+    - 从年初开始，每个月使用 (该月-签单月的月份差+1) 这一期的wlk利率
+    - 例如：签单月202205，评估月202301
+    - 1月：使用 wlk[(1月-签单月的月份差+1)] = wlk[8+1] = wlk[9]
+    - 2月：累乘 wlk[9] × wlk[10]
+    - 3月：累乘 wlk[9] × wlk[10] × wlk[11]
+    
+    Args:
+        principal: CSM本金
+        rates_df: Wlk利率曲线
+        uw_date: 签单日期
+        bop_month_str: 年初月份（YYYYMM格式）
+        val_month_str: 评估月份（YYYYMM格式）
+        stop_date: 合同止期（可选）
+    
+    Returns:
+        (利息金额, 计息因子)
+    """
+    if rates_df is None or rates_df.empty or principal is None or principal == DECIMAL_ZERO:
+        return DECIMAL_ZERO, DECIMAL_ZERO
+    
+    # 计算年初月份差和评估月月份差
+    bop_months_diff = months_from_uw_to_target(uw_date, bop_month_str)
+    val_months_diff = months_from_uw_to_target(uw_date, val_month_str)
+    
+    if val_months_diff <= bop_months_diff:
+        return DECIMAL_ZERO, DECIMAL_ZERO
+    
+    # 处理止期：止期当月正常计息，止期之后使用止期当月的累计利息
+    # 例如：7月止期，7月正常计息，8月及之后使用7月的累计利息
+    actual_val_months_diff = val_months_diff
+    if stop_date:
+        try:
+            val_date = datetime.strptime(val_month_str, '%Y%m').date()
+            if stop_date.year == val_date.year:
+                if stop_date.month < val_date.month:
+                    # 止期在评估月之前，使用止期当月（止期当月正常计息）
+                    stop_month_str = stop_date.strftime('%Y%m')
+                    actual_val_months_diff = months_from_uw_to_target(uw_date, stop_month_str)
+                # 如果止期在评估月当月或之后，正常计息
+        except Exception:
+            pass
+    
+    if actual_val_months_diff <= bop_months_diff:
+        return DECIMAL_ZERO, DECIMAL_ZERO
+    
+    # 构建利率映射
+    rates_map = dict(zip(rates_df['term_month'], rates_df['forward_disrate_value'].apply(Decimal)))
+    max_term = rates_df['term_month'].max() if not rates_df.empty else 0
+    
+    # 计算计息因子
+    # 从年初开始，每个月使用 (该月-签单月的月份差+1) 这一期的利率
+    # 例如：签单月202205，年初202301（1月），评估月202303（3月）
+    # 1月：使用 wlk[(1月-签单月的月份差+1)] = wlk[bop_months_diff+1]
+    # 2月：累乘 wlk[bop_months_diff+1] × wlk[bop_months_diff+2]
+    # 3月：累乘 wlk[bop_months_diff+1] × wlk[bop_months_diff+2] × wlk[val_months_diff+1]
+    factor = Decimal('1.0')
+    
+    # 从年初月份到评估月份，累乘对应期数的利率
+    # 年初月份对应的期数 = bop_months_diff + 1
+    # 评估月份对应的期数 = actual_val_months_diff + 1
+    for term in range(bop_months_diff + 1, actual_val_months_diff + 1):
+        r = rates_map.get(term, rates_map.get(max_term, Decimal('0')) if max_term > 0 else Decimal('0'))
+        factor *= (Decimal('1.0') + r)
+    
+    # 利息 = 本金 × (因子 - 1)
+    interest = principal * (factor - Decimal('1'))
+    
+    return interest, factor - Decimal('1')
 
 
 def _calculate_csm_interest(context, logger, cohort_state: CohortState, policy_state: PolicyState):
@@ -169,47 +330,39 @@ def _calculate_csm_interest(context, logger, cohort_state: CohortState, policy_s
         stop_date = context.end_date
     
     # 获取统一的CSM/LC字段
-    bop_csm_lc = getattr(context, 'bop_csm', None)
-    if bop_csm_lc is None and cohort_state:
-        bop_csm_lc = cohort_state.bop_csm
-    if bop_csm_lc is None:
-        bop_csm_lc = DECIMAL_ZERO
+    # 修复：正确合并bop_csm和bop_lc，如果bop_csm > 0则为CSM，如果bop_lc < 0则为LC
+    bop_csm_lc = _get_bop_csm_lc(context, cohort_state)
     
-    nb_initial_csm_lc = context.nb_initial_csm or DECIMAL_ZERO
-    if nb_initial_csm_lc == DECIMAL_ZERO and hasattr(context, 'nb_initial_lc'):
-        nb_initial_csm_lc = context.nb_initial_lc or DECIMAL_ZERO
+    # 修复：CSM计息应该直接使用 nb_initial_csm，不要从 nb_initial_lc 获取值
+    # 对于亏损保单，nb_initial_csm = 0，nb_initial_lc > 0
+    # 如果从 nb_initial_lc 获取值，会导致亏损保单错误地按CSM计息
+    nb_initial_csm = context.nb_initial_csm or DECIMAL_ZERO
     
     # 分离CSM和LC
     bop_csm = bop_csm_lc if bop_csm_lc >= 0 else DECIMAL_ZERO
-    nb_initial_csm = nb_initial_csm_lc if nb_initial_csm_lc >= 0 else DECIMAL_ZERO
+    # nb_initial_csm 已经直接获取，不需要再判断正负（因为初始确认时已经正确设置）
     
     # 期初有效合同CSM计息
+    # 从年初开始，每个月使用 (该月-签单月的月份差+1) 这一期的wlk利率累乘
     bop_month_str = date(context.year, 1, 1).strftime('%Y%m')
-    start_term_if = months_from_uw_to_target(uw_date, bop_month_str)
-    end_term_if = months_from_uw_to_target(uw_date, val_month_str)
     
-    if_interest_csm, if_factor = calculate_interest_with_stop_date(
+    if_interest_csm, if_factor = calculate_if_csm_interest(
         bop_csm,
         wlk_curve,
-        start_term_if,
-        end_term_if,
-        stop_date=stop_date,
-        val_month_str=val_month_str,
-        uw_date=uw_date
+        uw_date,
+        bop_month_str,
+        val_month_str,
+        stop_date=stop_date
     )
     
     # 新增合同CSM计息
-    start_term_nb = 1
-    end_term_nb = months_from_uw_to_target(uw_date, val_month_str)
-    
-    nb_interest_csm, nb_factor = calculate_interest_with_stop_date(
+    # 第一期利率用一半（wlk[1]/2），然后累乘后续利率
+    nb_interest_csm, nb_factor = calculate_nb_csm_interest(
         nb_initial_csm,
         wlk_curve,
-        start_term_nb,
-        end_term_nb,
-        stop_date=stop_date,
-        val_month_str=val_month_str,
-        uw_date=uw_date
+        uw_date,
+        val_month_str,
+        stop_date=stop_date
     )
     
     # 保存到context
@@ -247,18 +400,40 @@ def _pv_amount(pv_data, field_name):
         return Decimal('0')
     return pv_data.get_field(field_name)
 
-def _get_nb_initial_pv_data(context):
-    """Helper to get New Business initial PV data"""
-    if not hasattr(context, 'under_write_date') or not context.under_write_date:
-        return None, None
-        
-    # Check if it is new business year
-    if context.year != context.under_write_date.year:
-        return None, None
-        
-    uw_month_str = context.under_write_date.strftime('%Y%m')
-    pv_data = context.pv_source_data.get_data(uw_month_str)
-    return pv_data, uw_month_str
+def _get_bop_csm_lc(context, cohort_state: Optional[CohortState] = None) -> Decimal:
+    """
+    获取统一的CSM/LC字段（期初余额）
+    
+    逻辑：
+    - 合并bop_csm和bop_lc为统一字段：bop_csm_lc = bop_csm + bop_lc
+    - 当盈利时：bop_csm > 0, bop_lc = 0，所以 bop_csm_lc = bop_csm（正数，走CSM逻辑）
+    - 当亏损时：bop_csm = 0, bop_lc < 0，所以 bop_csm_lc = bop_lc（负数，走LC逻辑）
+    - 根据符号判断：>=0走CSM计息计量等逻辑，<0走LC计息计量等逻辑
+    - 优先从context获取，如果没有则从cohort_state获取
+    
+    Args:
+        context: 计算上下文
+        cohort_state: 合同组状态（可选）
+    
+    Returns:
+        统一的CSM/LC字段值（>=0为CSM，<0为LC）
+    """
+    # 优先从context获取
+    bop_csm = getattr(context, 'bop_csm', None)
+    bop_lc = getattr(context, 'bop_lc', None)
+    
+    # 如果context中没有，从cohort_state获取
+    if bop_csm is None and cohort_state:
+        bop_csm = cohort_state.bop_csm
+    if bop_lc is None and cohort_state:
+        bop_lc = cohort_state.bop_lc
+    
+    # 合并为统一字段：bop_csm_lc = bop_csm + bop_lc
+    # 盈利时：bop_csm > 0, bop_lc = 0，所以 bop_csm_lc = bop_csm（正数）
+    # 亏损时：bop_csm = 0, bop_lc < 0，所以 bop_csm_lc = bop_lc（负数）
+    bop_csm_val = bop_csm if bop_csm is not None else DECIMAL_ZERO
+    bop_lc_val = bop_lc if bop_lc is not None else DECIMAL_ZERO
+    return bop_csm_val + bop_lc_val
 
 def _calculate_lc_ifie_allocation(context, logger, cohort_state: CohortState):
     """
@@ -271,113 +446,306 @@ def _calculate_lc_ifie_allocation(context, logger, cohort_state: CohortState):
     """
     logger.log_section("Part 7: LC分摊IFIE (LC IFIE Allocation) [Sec 7]")
     
-    # 获取评估月和年初月份
+    # 获取评估月
     eop_month_str = context.val_month_str
-    bop_month_str = (context.eop_date.replace(day=1) - relativedelta(months=11)).strftime('%Y%m') if hasattr(context, 'eop_date') else None
-    if bop_month_str is None:
-        val_date = datetime.strptime(eop_month_str, '%Y%m')
-        bop_date = val_date.replace(month=1, day=1)
-        bop_month_str = bop_date.strftime('%Y%m')
+    # 所有数据都从当前评估期的PV数据读取
     
     # 获取PV数据
-    pv_data_eop = context.pv_source_data.get_data(eop_month_str)
-    pv_data_bop = context.pv_source_data.get_data(bop_month_str) if bop_month_str else None
+    pv_data = context.pv_source_data.get_data(eop_month_str)
     
-    if pv_data_eop is None:
+    if pv_data is None:
         raise ValueError(f"❌ 错误: 找不到评估月 {eop_month_str} 的PV原材料数据！")
     
     # 获取统一的CSM/LC字段
-    bop_csm_lc = getattr(context, 'bop_csm', None)
-    if bop_csm_lc is None and cohort_state:
-        bop_csm_lc = cohort_state.bop_csm
-    if bop_csm_lc is None:
-        bop_csm_lc = DECIMAL_ZERO
+    # 修复：正确合并bop_csm和bop_lc，如果bop_csm > 0则为CSM，如果bop_lc < 0则为LC
+    bop_csm_lc = _get_bop_csm_lc(context, cohort_state)
     
+    # 获取统一的CSM/LC字段（用于计算LC IFIE分摊比例）
+    # 修复：context.nb_initial_lc 现在直接存储为负数（亏损），不需要再转换
     nb_initial_csm_lc = context.nb_initial_csm or DECIMAL_ZERO
     if nb_initial_csm_lc == DECIMAL_ZERO and hasattr(context, 'nb_initial_lc'):
-        nb_initial_csm_lc = context.nb_initial_lc or DECIMAL_ZERO
+        nb_lc_val = context.nb_initial_lc or DECIMAL_ZERO
+        if nb_lc_val < DECIMAL_ZERO:  # LC应该是负数
+            nb_initial_csm_lc = nb_lc_val
     
     # ==========================================================================================
     # IF（期初有效合同）LC IFIE分摊
     # ==========================================================================================
     if_bop_lc = bop_csm_lc if bop_csm_lc < 0 else DECIMAL_ZERO
     
+    logger.log_item(
+        "IF_年初LC",
+        "[LC IFIE分摊] 期初有效合同年初LC（直接取数）",
+        "IF_年初LC = IF_年初CSM/LC（如果<0，则为LC）",
+        {
+            "IF_年初CSM/LC": bop_csm_lc,
+            "IF_年初LC": if_bop_lc
+        },
+        if_bop_lc,
+        note="使用统一字段逻辑：如果IF_年初CSM/LC < 0，则为LC"
+    )
+    
     # IF_LC IFIE分摊比例
+    # 分母：IF_预期赔付现金流_年初现值 + IF_预期维持费用现金流_年初现值 + IF_预期非金融风险调整_年初现值
     if_lc_ifie_ratio = getattr(context, 'if_lc_ifie_ratio', DECIMAL_ZERO) or DECIMAL_ZERO
+    pv_if_init_claims = DECIMAL_ZERO
+    pv_if_init_maint = DECIMAL_ZERO
+    pv_if_init_ra = DECIMAL_ZERO
+    denom_if = DECIMAL_ZERO
+    
     if if_bop_lc < 0 and if_lc_ifie_ratio == DECIMAL_ZERO:
         # 如果还未计算，则计算
-        if pv_data_bop is None:
-            denom_if = DECIMAL_ZERO
-        else:
-            pv_if_init_claims = (pv_data_bop.get_field('Pvfl_If_Bop_Cfa_Beg_Lcu_Cla_Amt', DECIMAL_ZERO) +
-                                pv_data_bop.get_field('Pvfl_If_Bop_Cca_Beg_Lcu_Cla_Amt', DECIMAL_ZERO))
-            pv_if_init_maint = (pv_data_bop.get_field('Pvfl_If_Bop_Cfa_Beg_Lcu_Mtn_Amt', DECIMAL_ZERO) +
-                               pv_data_bop.get_field('Pvfl_If_Bop_Cca_Beg_Lcu_Mtn_Amt', DECIMAL_ZERO))
-            pv_if_init_ra = (pv_data_bop.get_field('Pvfl_If_Bop_Cfa_Beg_Lcu_Rad_Amt', DECIMAL_ZERO) +
-                            pv_data_bop.get_field('Pvfl_If_Bop_Cca_Beg_Lcu_Rad_Amt', DECIMAL_ZERO))
-            denom_if = pv_if_init_claims + pv_if_init_maint + pv_if_init_ra
+        # 注意：已删除 Cca_Beg_Lcu 字段，Cfa_Beg_Lcu 已经包含了1月现金流（折现到年初）
+        # 年初现值：有效合同-年初预期-预期未来-年初现值（LCU）
+        pv_if_init_claims = pv_data.get_field('Pvfl_If_Bop_Cfa_Beg_Lcu_Cla_Amt', DECIMAL_ZERO)
+        pv_if_init_maint = pv_data.get_field('Pvfl_If_Bop_Cfa_Beg_Lcu_Mtn_Amt', DECIMAL_ZERO)
+        pv_if_init_ra = pv_data.get_field('Pvfl_If_Bop_Cfa_Beg_Lcu_Rad_Amt', DECIMAL_ZERO)
+        denom_if = pv_if_init_claims + pv_if_init_maint + pv_if_init_ra
         
         if denom_if > 0:
             if_lc_ifie_ratio = abs(if_bop_lc) / denom_if
         context.if_lc_ifie_ratio = if_lc_ifie_ratio
+    elif if_bop_lc < 0:
+        # 如果已有值，也需要获取分母用于日志显示
+        pv_if_init_claims = pv_data.get_field('Pvfl_If_Bop_Cfa_Beg_Lcu_Cla_Amt', DECIMAL_ZERO)
+        pv_if_init_maint = pv_data.get_field('Pvfl_If_Bop_Cfa_Beg_Lcu_Mtn_Amt', DECIMAL_ZERO)
+        pv_if_init_ra = pv_data.get_field('Pvfl_If_Bop_Cfa_Beg_Lcu_Rad_Amt', DECIMAL_ZERO)
+        denom_if = pv_if_init_claims + pv_if_init_maint + pv_if_init_ra
+    
+    logger.log_item(
+        "IF_LC IFIE分摊比例",
+        "[LC IFIE分摊] 期初有效合同LC IFIE分摊比例",
+        "IF_LC IFIE分摊比例 = IF_年初LC / (IF_预期赔付现金流_年初现值 + IF_预期维持费用现金流_年初现值 + IF_预期非金融风险调整_年初现值)",
+        {
+            "IF_年初LC": if_bop_lc,
+            "IF_预期赔付现金流_年初现值（LCU）": pv_if_init_claims if if_bop_lc < 0 else DECIMAL_ZERO,
+            "IF_预期维持费用现金流_年初现值（LCU）": pv_if_init_maint if if_bop_lc < 0 else DECIMAL_ZERO,
+            "IF_预期非金融风险调整_年初现值（LCU）": pv_if_init_ra if if_bop_lc < 0 else DECIMAL_ZERO,
+            "分母合计": denom_if if if_bop_lc < 0 else DECIMAL_ZERO,
+            "IF_LC IFIE分摊比例": if_lc_ifie_ratio
+        },
+        if_lc_ifie_ratio,
+        note="如果IF_年初LC < 0，则计算分摊比例；否则为0。年初现值指：有效合同-年初预期-预期未来-年初现值（LCU），已包含1月现金流折现到年初"
+    )
     
     # ==========================================================================================
     # IF（期初有效合同）待分摊IFIE计算（详细逻辑）
     # ==========================================================================================
     # 1. IF_待分摊IFIE_计息_赔付与费用
     # 公式：[Bop_Cfa_Rep_Wlk] + [Bop_Cca_Rep_Wlk] - [Bop_Cfa_Beg_Wlk]
+    pv_if_bop_cfa_rep_wlk_claims = _pv_amount(pv_data, 'Pvfl_If_Bop_Cfa_Rep_Wlk_Cla_Amt')
+    pv_if_bop_cfa_rep_wlk_maint = _pv_amount(pv_data, 'Pvfl_If_Bop_Cfa_Rep_Wlk_Mtn_Amt')
+    pv_if_bop_cca_rep_wlk_claims = _pv_amount(pv_data, 'Pvfl_If_Bop_Cca_Rep_Wlk_Cla_Amt')
+    pv_if_bop_cca_rep_wlk_maint = _pv_amount(pv_data, 'Pvfl_If_Bop_Cca_Rep_Wlk_Mtn_Amt')
+    pv_if_bop_cfa_beg_wlk_claims = _pv_amount(pv_data, 'Pvfl_If_Bop_Cfa_Beg_Wlk_Cla_Amt')
+    pv_if_bop_cfa_beg_wlk_maint = _pv_amount(pv_data, 'Pvfl_If_Bop_Cfa_Beg_Wlk_Mtn_Amt')
+    
     if_ifie_accretion_claims = (
-        _pv_amount(pv_data_bop, 'Pvfl_If_Bop_Cfa_Rep_Wlk_Cla_Amt') +
-        _pv_amount(pv_data_bop, 'Pvfl_If_Bop_Cfa_Rep_Wlk_Mtn_Amt') +
-        _pv_amount(pv_data_bop, 'Pvfl_If_Bop_Cca_Rep_Wlk_Cla_Amt') +
-        _pv_amount(pv_data_bop, 'Pvfl_If_Bop_Cca_Rep_Wlk_Mtn_Amt') -
-        _pv_amount(pv_data_bop, 'Pvfl_If_Bop_Cfa_Beg_Wlk_Cla_Amt') -
-        _pv_amount(pv_data_bop, 'Pvfl_If_Bop_Cfa_Beg_Wlk_Mtn_Amt')
+        pv_if_bop_cfa_rep_wlk_claims +
+        pv_if_bop_cfa_rep_wlk_maint +
+        pv_if_bop_cca_rep_wlk_claims +
+        pv_if_bop_cca_rep_wlk_maint -
+        pv_if_bop_cfa_beg_wlk_claims -
+        pv_if_bop_cfa_beg_wlk_maint
+    )
+    
+    logger.log_item(
+        "IF_待分摊IFIE_计息_赔付与费用",
+        "[LC IFIE分摊] 期初有效合同待分摊IFIE_计息_赔付与费用",
+        "IF_待分摊IFIE_计息_赔付与费用 = 【有效合同-年初预期-预期未来-预期赔付现金流-期末现值（加权初始确认利率）】+【有效合同-年初预期-预期未来-预期维持费用现金流-期末现值（加权初始确认利率）】+【有效合同-年初预期-预期当年-预期赔付现金流-期末现值（加权初始确认利率）】+【有效合同-年初预期-预期当年-预期维持费用现金流-期末现值（加权初始确认利率）】-【有效合同-年初预期-预期未来-预期赔付现金流-年初现值（上年）加权初始确认利率】-【有效合同-年初预期-预期未来-预期维持费用现金流-年初现值（上年）加权初始确认利率】",
+        {
+            "年初-预期未来-赔付（Rep_Wlk）": pv_if_bop_cfa_rep_wlk_claims,
+            "年初-预期未来-维费（Rep_Wlk）": pv_if_bop_cfa_rep_wlk_maint,
+            "年初-预期当年-赔付（Rep_Wlk）": pv_if_bop_cca_rep_wlk_claims,
+            "年初-预期当年-维费（Rep_Wlk）": pv_if_bop_cca_rep_wlk_maint,
+            "年初-预期未来-赔付（Beg_Wlk）": pv_if_bop_cfa_beg_wlk_claims,
+            "年初-预期未来-维费（Beg_Wlk）": pv_if_bop_cfa_beg_wlk_maint,
+            "IF_待分摊IFIE_计息_赔付与费用": if_ifie_accretion_claims
+        },
+        if_ifie_accretion_claims,
+        note="所有现值均从PV原材料数据读取，使用Wlk字段（加权初始确认利率）。公式：[Bop_Cfa_Rep_Wlk] + [Bop_Cca_Rep_Wlk] - [Bop_Cfa_Beg_Wlk]"
     )
     
     # 2. IF_待分摊IFIE_计息_非金融风险调整
     # 公式：[Bop_Cfa_Rep_Wlk] - [Bop_Cfa_Beg_Wlk] + [Bop_Cca_Rep_Wlk]
+    pv_if_bop_cfa_rep_wlk_ra = _pv_amount(pv_data, 'Pvfl_If_Bop_Cfa_Rep_Wlk_Rad_Amt')
+    pv_if_bop_cfa_beg_wlk_ra = _pv_amount(pv_data, 'Pvfl_If_Bop_Cfa_Beg_Wlk_Rad_Amt')
+    pv_if_bop_cca_rep_wlk_ra = _pv_amount(pv_data, 'Pvfl_If_Bop_Cca_Rep_Wlk_Rad_Amt')
+    
     if_ifie_accretion_ra = (
-        _pv_amount(pv_data_bop, 'Pvfl_If_Bop_Cfa_Rep_Wlk_Rad_Amt') -
-        _pv_amount(pv_data_bop, 'Pvfl_If_Bop_Cfa_Beg_Wlk_Rad_Amt') +
-        _pv_amount(pv_data_bop, 'Pvfl_If_Bop_Cca_Rep_Wlk_Rad_Amt')
+        pv_if_bop_cfa_rep_wlk_ra -
+        pv_if_bop_cfa_beg_wlk_ra +
+        pv_if_bop_cca_rep_wlk_ra
+    )
+    
+    logger.log_item(
+        "IF_待分摊IFIE_计息_非金融风险调整",
+        "[LC IFIE分摊] 期初有效合同待分摊IFIE_计息_非金融风险调整",
+        "IF_待分摊IFIE_计息_非金融风险调整 = 【有效合同-年初预期-预期未来-预期非金融风险调整-期末现值（加权初始确认利率）】-【有效合同-年初预期-预期未来-预期非金融风险调整-年初现值（上年）加权初始确认利率】+【有效合同-年初预期-预期当年-预期非金融风险调整-期末现值（加权初始确认利率）】",
+        {
+            "年初-预期未来-RA（Rep_Wlk）": pv_if_bop_cfa_rep_wlk_ra,
+            "年初-预期当年-RA（Rep_Wlk）": pv_if_bop_cca_rep_wlk_ra,
+            "年初-预期未来-RA（Beg_Wlk）": pv_if_bop_cfa_beg_wlk_ra,
+            "IF_待分摊IFIE_计息_非金融风险调整": if_ifie_accretion_ra
+        },
+        if_ifie_accretion_ra,
+        note="所有现值均从PV原材料数据读取，使用Wlk字段（加权初始确认利率）和Rad字段。公式：[Bop_Cfa_Rep_Wlk] - [Bop_Cfa_Beg_Wlk] + [Bop_Cca_Rep_Wlk]"
     )
     
     # 3. IF_待分摊IFIE_利率变化的影响_赔付与费用
     # 公式：([Eop_Cfa_Rep_Cur] - [Eop_Cfa_Rep_Wlk]) - ([Bop_Cfa_Beg_Lcu] - [Bop_Cfa_Beg_Wlk])
     # 注意：文档中还要加上 [Eop_Cfa_Rep_Cur_Mtn] 等，以及年初部分的 Lcu 和 Wlk 差额
+    pv_if_eop_cfa_rep_cur_claims = _pv_amount(pv_data, 'Pvfl_If_Eop_Cfa_Rep_Cur_Cla_Amt')
+    pv_if_eop_cfa_rep_wlk_claims = _pv_amount(pv_data, 'Pvfl_If_Eop_Cfa_Rep_Wlk_Cla_Amt')
+    pv_if_eop_cfa_rep_cur_maint = _pv_amount(pv_data, 'Pvfl_If_Eop_Cfa_Rep_Cur_Mtn_Amt')
+    pv_if_eop_cfa_rep_wlk_maint = _pv_amount(pv_data, 'Pvfl_If_Eop_Cfa_Rep_Wlk_Mtn_Amt')
+    pv_if_bop_cfa_beg_lcu_claims = _pv_amount(pv_data, 'Pvfl_If_Bop_Cfa_Beg_Lcu_Cla_Amt')
+    pv_if_bop_cfa_beg_wlk_claims = _pv_amount(pv_data, 'Pvfl_If_Bop_Cfa_Beg_Wlk_Cla_Amt')
+    pv_if_bop_cfa_beg_lcu_maint = _pv_amount(pv_data, 'Pvfl_If_Bop_Cfa_Beg_Lcu_Mtn_Amt')
+    pv_if_bop_cfa_beg_wlk_maint = _pv_amount(pv_data, 'Pvfl_If_Bop_Cfa_Beg_Wlk_Mtn_Amt')
+    
     term_end_diff = (
-        _pv_amount(pv_data_eop, 'Pvfl_If_Eop_Cfa_Rep_Cur_Cla_Amt') -
-        _pv_amount(pv_data_eop, 'Pvfl_If_Eop_Cfa_Rep_Wlk_Cla_Amt') +
-        _pv_amount(pv_data_eop, 'Pvfl_If_Eop_Cfa_Rep_Cur_Mtn_Amt') -
-        _pv_amount(pv_data_eop, 'Pvfl_If_Eop_Cfa_Rep_Wlk_Mtn_Amt')
+        pv_if_eop_cfa_rep_cur_claims -
+        pv_if_eop_cfa_rep_wlk_claims +
+        pv_if_eop_cfa_rep_cur_maint -
+        pv_if_eop_cfa_rep_wlk_maint
     )
     term_beg_diff = (
-        _pv_amount(pv_data_bop, 'Pvfl_If_Bop_Cfa_Beg_Lcu_Cla_Amt') -
-        _pv_amount(pv_data_bop, 'Pvfl_If_Bop_Cfa_Beg_Wlk_Cla_Amt') +
-        _pv_amount(pv_data_bop, 'Pvfl_If_Bop_Cfa_Beg_Lcu_Mtn_Amt') -
-        _pv_amount(pv_data_bop, 'Pvfl_If_Bop_Cfa_Beg_Wlk_Mtn_Amt')
+        pv_if_bop_cfa_beg_lcu_claims -
+        pv_if_bop_cfa_beg_wlk_claims +
+        pv_if_bop_cfa_beg_lcu_maint -
+        pv_if_bop_cfa_beg_wlk_maint
     )
     if_ifie_rate_change_claims = term_end_diff - term_beg_diff
     
+    logger.log_item(
+        "IF_待分摊IFIE_利率变化的影响_赔付与费用",
+        "[LC IFIE分摊] 期初有效合同待分摊IFIE_利率变化的影响_赔付与费用",
+        "IF_待分摊IFIE_利率变化的影响_赔付与费用 = 【有效合同-期末预期-预期未来-预期赔付现金流-期末现值（期末利率）】-【有效合同-期末预期-预期未来-预期赔付现金流-期末现值（加权初始确认利率）】-【有效合同-年初预期-预期未来-预期赔付现金流-年初现值（上年）期末利率】-【有效合同-年初预期-预期未来-预期赔付现金流-年初现值（上年）加权初始确认利率】+【有效合同-期末预期-预期未来-预期维持费用现金流-期末现值（期末利率）】-【有效合同-期末预期-预期未来-预期维持费用现金流-期末现值（加权初始确认利率）】-【有效合同-年初预期-预期未来-预期维持费用现金流-年初现值（上年）期末利率】-【有效合同-年初预期-预期未来-预期维持费用现金流-年初现值（上年）加权初始确认利率】",
+        {
+            "期末-预期未来-赔付（Cur）": pv_if_eop_cfa_rep_cur_claims,
+            "期末-预期未来-赔付（Wlk）": pv_if_eop_cfa_rep_wlk_claims,
+            "年初-预期未来-赔付（Lcu）": pv_if_bop_cfa_beg_lcu_claims,
+            "年初-预期未来-赔付（Wlk）": pv_if_bop_cfa_beg_wlk_claims,
+            "期末-预期未来-维费（Cur）": pv_if_eop_cfa_rep_cur_maint,
+            "期末-预期未来-维费（Wlk）": pv_if_eop_cfa_rep_wlk_maint,
+            "年初-预期未来-维费（Lcu）": pv_if_bop_cfa_beg_lcu_maint,
+            "年初-预期未来-维费（Wlk）": pv_if_bop_cfa_beg_wlk_maint,
+            "期末利率差异": term_end_diff,
+            "年初利率差异": term_beg_diff,
+            "IF_待分摊IFIE_利率变化的影响_赔付与费用": if_ifie_rate_change_claims
+        },
+        if_ifie_rate_change_claims,
+        note="所有现值均从PV原材料数据读取，使用Cur字段（期末利率）、Wlk字段（加权初始确认利率）和Lcu字段（年初现值-上年期末利率）。公式：([Eop_Cfa_Rep_Cur] - [Eop_Cfa_Rep_Wlk]) - ([Bop_Cfa_Beg_Lcu] - [Bop_Cfa_Beg_Wlk])"
+    )
+    
     # 4. IF_待分摊IFIE_利率变化的影响_非金融风险调整
     # 公式：([Eop_Cfa_Rep_Cur] - [Eop_Cfa_Rep_Wlk]) - ([Bop_Cfa_Beg_Lcu] - [Bop_Cfa_Beg_Wlk])
+    pv_if_eop_cfa_rep_cur_ra = _pv_amount(pv_data, 'Pvfl_If_Eop_Cfa_Rep_Cur_Rad_Amt')
+    pv_if_eop_cfa_rep_wlk_ra = _pv_amount(pv_data, 'Pvfl_If_Eop_Cfa_Rep_Wlk_Rad_Amt')
+    pv_if_bop_cfa_beg_lcu_ra = _pv_amount(pv_data, 'Pvfl_If_Bop_Cfa_Beg_Lcu_Rad_Amt')
+    pv_if_bop_cfa_beg_wlk_ra = _pv_amount(pv_data, 'Pvfl_If_Bop_Cfa_Beg_Wlk_Rad_Amt')
+    
     term_end_diff_ra = (
-        _pv_amount(pv_data_eop, 'Pvfl_If_Eop_Cfa_Rep_Cur_Rad_Amt') -
-        _pv_amount(pv_data_eop, 'Pvfl_If_Eop_Cfa_Rep_Wlk_Rad_Amt')
+        pv_if_eop_cfa_rep_cur_ra -
+        pv_if_eop_cfa_rep_wlk_ra
     )
     term_beg_diff_ra = (
-        _pv_amount(pv_data_bop, 'Pvfl_If_Bop_Cfa_Beg_Lcu_Rad_Amt') -
-        _pv_amount(pv_data_bop, 'Pvfl_If_Bop_Cfa_Beg_Wlk_Rad_Amt')
+        pv_if_bop_cfa_beg_lcu_ra -
+        pv_if_bop_cfa_beg_wlk_ra
     )
     if_ifie_rate_change_ra = term_end_diff_ra - term_beg_diff_ra
     
+    logger.log_item(
+        "IF_待分摊IFIE_利率变化的影响_非金融风险调整",
+        "[LC IFIE分摊] 期初有效合同待分摊IFIE_利率变化的影响_非金融风险调整",
+        "IF_待分摊IFIE_利率变化的影响_非金融风险调整 = 【有效合同-期末预期-预期未来-非金融风险调整-期末现值（期末利率）】-【有效合同-期末预期-预期未来-非金融风险调整-期末现值（加权初始确认利率）】-（【有效合同-年初预期-预期未来-非金融风险调整-年初现值（上年）期末利率】-【有效合同-年初预期-预期未来-非金融风险调整-年初现值（上年）加权初始确认利率】）",
+        {
+            "期末-预期未来-RA（Cur）": pv_if_eop_cfa_rep_cur_ra,
+            "期末-预期未来-RA（Wlk）": pv_if_eop_cfa_rep_wlk_ra,
+            "年初-预期未来-RA（Lcu）": pv_if_bop_cfa_beg_lcu_ra,
+            "年初-预期未来-RA（Wlk）": pv_if_bop_cfa_beg_wlk_ra,
+            "期末利率差异": term_end_diff_ra,
+            "年初利率差异": term_beg_diff_ra,
+            "IF_待分摊IFIE_利率变化的影响_非金融风险调整": if_ifie_rate_change_ra
+        },
+        if_ifie_rate_change_ra,
+        note="所有现值均从PV原材料数据读取，使用Cur字段（期末利率）、Wlk字段（加权初始确认利率）和Lcu字段（年初现值-上年期末利率）。公式：([Eop_Cfa_Rep_Cur] - [Eop_Cfa_Rep_Wlk]) - ([Bop_Cfa_Beg_Lcu] - [Bop_Cfa_Beg_Wlk])"
+    )
+    
     # 计算分摊结果
-    if_lc_ifie_claims = (if_ifie_accretion_claims + if_ifie_rate_change_claims) * if_lc_ifie_ratio
-    if_lc_ifie_ra = (if_ifie_accretion_ra + if_ifie_rate_change_ra) * if_lc_ifie_ratio
-    if_lc_ifie_total = if_lc_ifie_claims + if_lc_ifie_ra
+    if_lc_ifie_claims_before_sign = (if_ifie_accretion_claims + if_ifie_rate_change_claims) * if_lc_ifie_ratio
+    if_lc_ifie_ra_before_sign = (if_ifie_accretion_ra + if_ifie_rate_change_ra) * if_lc_ifie_ratio
+    if_lc_ifie_total_before_sign = if_lc_ifie_claims_before_sign + if_lc_ifie_ra_before_sign
+    
+    # 修复：LC IFIE分摊应该与LC本金同方向（负数，增加亏损）
+    # 如果存在LC（if_bop_lc < 0），则LC IFIE分摊应该是负数
+    if if_bop_lc < 0:
+        if_lc_ifie_claims = -abs(if_lc_ifie_claims_before_sign)
+        if_lc_ifie_ra = -abs(if_lc_ifie_ra_before_sign)
+        if_lc_ifie_total = -abs(if_lc_ifie_total_before_sign)
+    else:
+        if_lc_ifie_claims = if_lc_ifie_claims_before_sign
+        if_lc_ifie_ra = if_lc_ifie_ra_before_sign
+        if_lc_ifie_total = if_lc_ifie_total_before_sign
+    
+    logger.log_item(
+        "IF_LC分摊IFIE_赔付与费用",
+        "[LC IFIE分摊] 期初有效合同LC分摊IFIE_赔付与费用",
+        "IF_LC分摊IFIE_赔付与费用 = (IF_待分摊IFIE_计息_赔付与费用 + IF_待分摊IFIE_利率变化的影响_赔付与费用) × IF_LC IFIE分摊比例",
+        {
+            "IF_待分摊IFIE_计息_赔付与费用": if_ifie_accretion_claims,
+            "IF_待分摊IFIE_利率变化的影响_赔付与费用": if_ifie_rate_change_claims,
+            "IF_LC IFIE分摊比例": if_lc_ifie_ratio,
+            "IF_LC分摊IFIE_赔付与费用（符号处理前）": if_lc_ifie_claims_before_sign,
+            "IF_LC分摊IFIE_赔付与费用": if_lc_ifie_claims
+        },
+        if_lc_ifie_claims,
+        note=f"计算过程：({if_ifie_accretion_claims} + {if_ifie_rate_change_claims}) × {if_lc_ifie_ratio} = {if_lc_ifie_claims_before_sign}，符号处理：{'转为负数（与LC同方向）' if if_bop_lc < 0 else '保持原值'}"
+    )
+    
+    logger.log_item(
+        "IF_LC分摊IFIE_非金融风险调整",
+        "[LC IFIE分摊] 期初有效合同LC分摊IFIE_非金融风险调整",
+        "IF_LC分摊IFIE_非金融风险调整 = (IF_待分摊IFIE_计息_非金融风险调整 + IF_待分摊IFIE_利率变化的影响_非金融风险调整) × IF_LC IFIE分摊比例",
+        {
+            "IF_待分摊IFIE_计息_非金融风险调整": if_ifie_accretion_ra,
+            "IF_待分摊IFIE_利率变化的影响_非金融风险调整": if_ifie_rate_change_ra,
+            "IF_LC IFIE分摊比例": if_lc_ifie_ratio,
+            "IF_LC分摊IFIE_非金融风险调整（符号处理前）": if_lc_ifie_ra_before_sign,
+            "IF_LC分摊IFIE_非金融风险调整": if_lc_ifie_ra
+        },
+        if_lc_ifie_ra,
+        note=f"计算过程：({if_ifie_accretion_ra} + {if_ifie_rate_change_ra}) × {if_lc_ifie_ratio} = {if_lc_ifie_ra_before_sign}，符号处理：{'转为负数（与LC同方向）' if if_bop_lc < 0 else '保持原值'}"
+    )
+    
+    logger.log_item(
+        "IF_LC分摊IFIE",
+        "[LC IFIE分摊] 期初有效合同LC分摊IFIE合计",
+        "IF_LC分摊IFIE = IF_LC分摊IFIE_赔付与费用 + IF_LC分摊IFIE_非金融风险调整",
+        {
+            "IF_LC分摊IFIE_赔付与费用": if_lc_ifie_claims,
+            "IF_LC分摊IFIE_非金融风险调整": if_lc_ifie_ra,
+            "IF_LC分摊IFIE": if_lc_ifie_total
+        },
+        if_lc_ifie_total,
+        note=f"计算过程：{if_lc_ifie_claims} + {if_lc_ifie_ra} = {if_lc_ifie_total}"
+    )
     
     if_lc_after_ifie = if_bop_lc + if_lc_ifie_total
+    
+    logger.log_item(
+        "IF_分摊后IFIE后LC",
+        "[LC IFIE分摊] 期初有效合同分摊后IFIE后LC",
+        "IF_分摊后IFIE后LC = IF_年初LC + IF_LC分摊IFIE",
+        {
+            "IF_年初LC": if_bop_lc,
+            "IF_LC分摊IFIE": if_lc_ifie_total,
+            "IF_分摊后IFIE后LC": if_lc_after_ifie
+        },
+        if_lc_after_ifie,
+        note=f"计算过程：{if_bop_lc} + {if_lc_ifie_total} = {if_lc_after_ifie}"
+    )
     
     context.if_lc_after_ifie = if_lc_after_ifie
     context.if_lc_ifie_total = if_lc_ifie_total
@@ -387,62 +755,257 @@ def _calculate_lc_ifie_allocation(context, logger, cohort_state: CohortState):
     # ==========================================================================================
     # NB（新增合同）LC IFIE分摊（详细逻辑）
     # ==========================================================================================
+    # 使用统一字段逻辑：如果 nb_initial_csm_lc < 0，则为LC
     nb_initial_lc = nb_initial_csm_lc if nb_initial_csm_lc < 0 else DECIMAL_ZERO
+    
+    logger.log_item(
+        "NB_新增LC",
+        "[LC IFIE分摊] 新增合同新增LC",
+        "NB_新增LC = Sum(当年各月新增合同CSM/LC中<0的值)",
+        {
+            "NB_初始CSM/LC": nb_initial_csm_lc,
+            "NB_新增LC": nb_initial_lc
+        },
+        nb_initial_lc,
+        note="使用统一字段逻辑：如果NB_初始CSM/LC < 0，则为LC"
+    )
     
     # NB_LC IFIE分摊比例
     nb_lc_ifie_ratio = getattr(context, 'nb_lc_ratio', DECIMAL_ZERO) or DECIMAL_ZERO
+    init_fut_claim = getattr(context, 'init_fut_claim', DECIMAL_ZERO) or DECIMAL_ZERO
+    init_fut_maint = getattr(context, 'init_fut_maint', DECIMAL_ZERO) or DECIMAL_ZERO
+    init_ra = getattr(context, 'init_ra', DECIMAL_ZERO) or DECIMAL_ZERO
+    denom_nb = init_fut_claim + init_fut_maint + init_ra
+    
     if nb_initial_lc < 0 and nb_lc_ifie_ratio == DECIMAL_ZERO:
-        denom_nb = context.init_fut_claim + context.init_fut_maint + context.init_ra
         if denom_nb > 0:
-            nb_lc_ifie_ratio = abs(nb_initial_lc) / denom_nb
+            nb_lc_ifie_ratio = abs(nb_initial_lc) / denom_nb  # 使用绝对值计算比例
         context.nb_lc_ratio = nb_lc_ifie_ratio
     
-    # 获取新增合同初始确认PV数据
-    # 注意：pv_data_init 已经在 _calculate_csm_lc_absorption 中获取，这里可能需要重新获取或传入
-    pv_data_init, _ = _get_nb_initial_pv_data(context)
+    logger.log_item(
+        "NB_LC IFIE分摊比例",
+        "[LC IFIE分摊] 新增合同LC IFIE分摊比例",
+        "NB_LC IFIE分摊比例 = |NB_年初LC| / (汇总当年各新增年月_预期赔付现金流_初始确认现值 + 汇总当年各新增年月_预期维持费用现金流_初始确认现值 + 汇总当年各新增年月_预期非金融风险调整_初始确认现值)",
+        {
+            "NB_年初LC": nb_initial_lc,
+            "分子（|NB_年初LC|）": abs(nb_initial_lc) if nb_initial_lc < 0 else DECIMAL_ZERO,
+            "汇总当年各新增年月_预期赔付现金流_初始确认现值": init_fut_claim,
+            "汇总当年各新增年月_预期维持费用现金流_初始确认现值": init_fut_maint,
+            "汇总当年各新增年月_预期非金融风险调整_初始确认现值": init_ra,
+            "分母合计": denom_nb,
+            "NB_LC IFIE分摊比例": nb_lc_ifie_ratio
+        },
+        nb_lc_ifie_ratio,
+        note=f"如果NB_年初LC < 0，则计算分摊比例；否则为0。比例{'已在其他模块计算' if nb_lc_ifie_ratio > 0 and getattr(context, 'nb_lc_ratio', None) else '在此处计算'}。计算过程：|{nb_initial_lc}| / ({init_fut_claim} + {init_fut_maint} + {init_ra}) = |{nb_initial_lc}| / {denom_nb} = {nb_lc_ifie_ratio}" if nb_initial_lc < 0 and denom_nb > 0 else "NB_年初LC >= 0 或分母 <= 0，比例为0"
+    )
     
     # 1. NB_待分摊IFIE_计息_赔付与费用
-    # 公式：[Ini_Cfa_Rep_Wlk] - [Ini_Cfa_Rec_Lkd] + [Ini_Cca_Rep_Wlk]
-    # 注意：Rec_Lkd 对应文档中的“初始确认现值（当月初始利率）”
-    nb_ifie_accretion_claims = (
-        _pv_amount(pv_data_init, 'Pvfl_Nb_Ini_Cfa_Rep_Wlk_Cla_Amt') +
-        _pv_amount(pv_data_init, 'Pvfl_Nb_Ini_Cfa_Rep_Wlk_Mtn_Amt') -
-        _pv_amount(pv_data_init, 'Pvfl_Nb_Ini_Cfa_Rec_Lkd_Cla_Amt') -
-        _pv_amount(pv_data_init, 'Pvfl_Nb_Ini_Cfa_Rec_Lkd_Mtn_Amt') +
-        _pv_amount(pv_data_init, 'Pvfl_Nb_Ini_Cca_Rep_Wlk_Cla_Amt') +
-        _pv_amount(pv_data_init, 'Pvfl_Nb_Ini_Cca_Rep_Wlk_Mtn_Amt')
+    # 公式：使用期末时点的数据（Eop），而不是初始确认时点的数据（Ini）
+    # 【新增合同-期末预期-预期未来-预期赔付现金流-期末现值（加权初始确认利率）】+
+    # 【新增合同-期末预期-预期未来-预期维持费用现金流-期末现值（加权初始确认利率）】+
+    # 【新增合同-期末预期-预期当期-预期赔付现金流-期末现值（加权初始确认利率）】+
+    # 【新增合同-期末预期-预期当期-预期维持费用现金流-期末现值（加权初始确认利率）】-
+    # 【新增合同-初始确认-预期未来-预期赔付现金流-初始确认现值（当月初始利率）】-
+    # 【新增合同-初始确认-预期未来-预期维持费用现金流-初始确认现值（当月初始利率）】
+    # 注意：已删除Cca字段，Cfa字段现在包含所有现金流（包括签单月），初始确认现值只使用预期未来部分
+    if pv_data is None:
+        nb_ifie_accretion_claims = DECIMAL_ZERO
+        pv_nb_eop_fut_claims_wlk = pv_nb_eop_fut_maint_wlk = pv_nb_eop_cur_claims_wlk = pv_nb_eop_cur_maint_wlk = DECIMAL_ZERO
+        pv_nb_ini_fut_claims_lkd = pv_nb_ini_fut_maint_lkd = DECIMAL_ZERO
+    else:
+        # 期末现值（加权初始确认利率）：预期未来 + 预期当期
+        pv_nb_eop_fut_claims_wlk = _pv_amount(pv_data, 'Pvfl_Nb_Eop_Cfa_Rep_Wlk_Cla_Amt')
+        pv_nb_eop_fut_maint_wlk = _pv_amount(pv_data, 'Pvfl_Nb_Eop_Cfa_Rep_Wlk_Mtn_Amt')
+        pv_nb_eop_cur_claims_wlk = _pv_amount(pv_data, 'Pvfl_Nb_Eop_Cca_Rep_Wlk_Cla_Amt')
+        pv_nb_eop_cur_maint_wlk = _pv_amount(pv_data, 'Pvfl_Nb_Eop_Cca_Rep_Wlk_Mtn_Amt')
+        
+        # 初始确认现值（当月初始利率）：预期未来（Cfa字段包含所有现金流）
+        # 从当前评估月的PV数据读取
+        pv_nb_ini_fut_claims_lkd = _pv_amount(pv_data, 'Pvfl_Nb_Ini_Cfa_Rec_Lkd_Cla_Amt')
+        pv_nb_ini_fut_maint_lkd = _pv_amount(pv_data, 'Pvfl_Nb_Ini_Cfa_Rec_Lkd_Mtn_Amt')
+        
+        nb_ifie_accretion_claims = ((pv_nb_eop_fut_claims_wlk + pv_nb_eop_fut_maint_wlk +
+                                    pv_nb_eop_cur_claims_wlk + pv_nb_eop_cur_maint_wlk) -
+                                   (pv_nb_ini_fut_claims_lkd + pv_nb_ini_fut_maint_lkd))
+    
+    logger.log_item(
+        "NB_待分摊IFIE_计息_赔付与费用",
+        "[LC IFIE分摊] 新增合同待分摊IFIE_计息_赔付与费用",
+        "NB_待分摊IFIE_计息_赔付与费用 = 【新增合同-初始确认-预期未来-预期赔付现金流-期末现值（加权初始确认利率）】+【新增合同-初始确认-预期未来-预期维持费用现金流-期末现值（加权初始确认利率）】-【新增合同-初始确认-预期未来-预期赔付现金流-初始确认现值（当月初始利率）】-【新增合同-初始确认-预期未来-预期维持费用现金流-初始确认现值（当月初始利率）】+【新增合同-初始确认-预期当期-预赔付现金流-期末现值（加权初始确认利率）】+【新增合同-初始确认-预期当期-预期维持费用现金流-期末现值（加权初始确认利率）】",
+        {
+            "期末-预期未来-赔付（Wlk）": pv_nb_eop_fut_claims_wlk,
+            "期末-预期未来-维费（Wlk）": pv_nb_eop_fut_maint_wlk,
+            "期末-预期当期-赔付（Wlk）": pv_nb_eop_cur_claims_wlk,
+            "期末-预期当期-维费（Wlk）": pv_nb_eop_cur_maint_wlk,
+            "期末现值合计（Wlk）": (pv_nb_eop_fut_claims_wlk + pv_nb_eop_fut_maint_wlk + pv_nb_eop_cur_claims_wlk + pv_nb_eop_cur_maint_wlk),
+            "初始-预期未来-赔付（Lkd）": pv_nb_ini_fut_claims_lkd,
+            "初始-预期未来-维费（Lkd）": pv_nb_ini_fut_maint_lkd,
+            "初始现值合计（Lkd）": (pv_nb_ini_fut_claims_lkd + pv_nb_ini_fut_maint_lkd),
+            "NB_待分摊IFIE_计息_赔付与费用": nb_ifie_accretion_claims
+        },
+        nb_ifie_accretion_claims,
+        note=f"所有现值均从PV原材料数据读取，使用Wlk字段（加权初始确认利率）和Lkd字段（当月初始利率）。计算过程：({pv_nb_eop_fut_claims_wlk} + {pv_nb_eop_fut_maint_wlk} + {pv_nb_eop_cur_claims_wlk} + {pv_nb_eop_cur_maint_wlk}) - ({pv_nb_ini_fut_claims_lkd} + {pv_nb_ini_fut_maint_lkd}) = {nb_ifie_accretion_claims}"
     )
     
     # 2. NB_待分摊IFIE_计息_非金融风险调整
-    # 公式：[Ini_Cfa_Rep_Wlk] - [Ini_Cfa_Rec_Lkd] + [Ini_Cca_Rep_Wlk]
-    nb_ifie_accretion_ra = (
-        _pv_amount(pv_data_init, 'Pvfl_Nb_Ini_Cfa_Rep_Wlk_Rad_Amt') -
-        _pv_amount(pv_data_init, 'Pvfl_Nb_Ini_Cfa_Rec_Lkd_Rad_Amt') +
-        _pv_amount(pv_data_init, 'Pvfl_Nb_Ini_Cca_Rep_Wlk_Rad_Amt')
+    # 公式：使用期末时点的数据（Eop），而不是初始确认时点的数据（Ini）
+    # 【新增合同-期末预期-预期未来-预期非金融风险调整-期末现值（加权初始确认利率）】-
+    # 【新增合同-初始确认-预期未来-预期非金融风险调整-初始确认现值（当月初始利率）】+
+    # 【新增合同-期末预期-预期当期-预期非金融风险调整-期末现值（加权初始确认利率）】
+    # 注意：已删除Cca字段，Cfa字段现在包含所有现金流（包括签单月），初始确认现值只使用预期未来部分
+    if pv_data is None:
+        nb_ifie_accretion_ra = DECIMAL_ZERO
+        pv_nb_eop_fut_ra_wlk = pv_nb_eop_cur_ra_wlk = pv_nb_ini_fut_ra_lkd = DECIMAL_ZERO
+    else:
+        # 期末现值（加权初始确认利率）：预期未来 + 预期当期
+        pv_nb_eop_fut_ra_wlk = _pv_amount(pv_data, 'Pvfl_Nb_Eop_Cfa_Rep_Wlk_Rad_Amt')
+        pv_nb_eop_cur_ra_wlk = _pv_amount(pv_data, 'Pvfl_Nb_Eop_Cca_Rep_Wlk_Rad_Amt')
+        
+        # 初始确认现值（当月初始利率）：预期未来（Cfa字段包含所有现金流）
+        # 从当前评估月的PV数据读取
+        pv_nb_ini_fut_ra_lkd = _pv_amount(pv_data, 'Pvfl_Nb_Ini_Cfa_Rec_Lkd_Rad_Amt')
+        
+        nb_ifie_accretion_ra = (pv_nb_eop_fut_ra_wlk - pv_nb_ini_fut_ra_lkd + pv_nb_eop_cur_ra_wlk)
+    
+    logger.log_item(
+        "NB_待分摊IFIE_计息_非金融风险调整",
+        "[LC IFIE分摊] 新增合同待分摊IFIE_计息_非金融风险调整",
+        "NB_待分摊IFIE_计息_非金融风险调整 = 【新增合同-初始确认-预期未来-预期非金融风险调整-期末现值（加权初始确认利率）】-【新增合同-初始确认-预期未来-预期非金融风险调整-初始确认现值（当月初始利率）】+【新增合同-初始确认-预期当期-预期非金融风险调整-期末现值（加权初始确认利率）】\n注意：已删除Cca字段，Cfa字段现在包含所有现金流（包括签单月），初始确认现值只使用预期未来部分",
+        {
+            "期末-预期未来-RA（Wlk）": pv_nb_eop_fut_ra_wlk,
+            "期末-预期当期-RA（Wlk）": pv_nb_eop_cur_ra_wlk,
+            "初始-预期未来-RA（Lkd）": pv_nb_ini_fut_ra_lkd,
+            "NB_待分摊IFIE_计息_非金融风险调整": nb_ifie_accretion_ra
+        },
+        nb_ifie_accretion_ra,
+        note="所有现值均从PV原材料数据读取，使用Wlk字段（加权初始确认利率）和Lkd字段（当月初始利率）"
     )
     
     # 3. NB_待分摊IFIE_利率变化的影响_赔付与费用
     # 公式：[Eop_Cfa_Rep_Cur] - [Eop_Cfa_Rep_Wlk]
+    pv_nb_eop_cfa_rep_cur_claims = _pv_amount(pv_data, 'Pvfl_Nb_Eop_Cfa_Rep_Cur_Cla_Amt')
+    pv_nb_eop_cfa_rep_wlk_claims = _pv_amount(pv_data, 'Pvfl_Nb_Eop_Cfa_Rep_Wlk_Cla_Amt')
+    pv_nb_eop_cfa_rep_cur_maint = _pv_amount(pv_data, 'Pvfl_Nb_Eop_Cfa_Rep_Cur_Mtn_Amt')
+    pv_nb_eop_cfa_rep_wlk_maint = _pv_amount(pv_data, 'Pvfl_Nb_Eop_Cfa_Rep_Wlk_Mtn_Amt')
+    
     nb_ifie_rate_change_claims = (
-        _pv_amount(pv_data_eop, 'Pvfl_Nb_Eop_Cfa_Rep_Cur_Cla_Amt') -
-        _pv_amount(pv_data_eop, 'Pvfl_Nb_Eop_Cfa_Rep_Wlk_Cla_Amt') +
-        _pv_amount(pv_data_eop, 'Pvfl_Nb_Eop_Cfa_Rep_Cur_Mtn_Amt') -
-        _pv_amount(pv_data_eop, 'Pvfl_Nb_Eop_Cfa_Rep_Wlk_Mtn_Amt')
+        pv_nb_eop_cfa_rep_cur_claims -
+        pv_nb_eop_cfa_rep_wlk_claims +
+        pv_nb_eop_cfa_rep_cur_maint -
+        pv_nb_eop_cfa_rep_wlk_maint
+    )
+    
+    logger.log_item(
+        "NB_待分摊IFIE_利率变化的影响_赔付与费用",
+        "[LC IFIE分摊] 新增合同待分摊IFIE_利率变化的影响_赔付与费用",
+        "NB_待分摊IFIE_利率变化的影响_赔付与费用 = 【新增合同-期末预期-预期未来-预期赔付现金流-期末现值（期末利率）】-【新增合同-期末预期-预期未来-预期赔付现金流-期末现值（加权初始确认利率）】+【新增合同-期末预期-预期未来-预期维持费用现金流-期末现值（期末利率）】-【新增合同-期末预期-预期未来-预期维持费用现金流-期末现值（加权初始确认利率）】",
+        {
+            "期末-预期未来-赔付（Cur）": pv_nb_eop_cfa_rep_cur_claims,
+            "期末-预期未来-赔付（Wlk）": pv_nb_eop_cfa_rep_wlk_claims,
+            "期末-预期未来-维费（Cur）": pv_nb_eop_cfa_rep_cur_maint,
+            "期末-预期未来-维费（Wlk）": pv_nb_eop_cfa_rep_wlk_maint,
+            "NB_待分摊IFIE_利率变化的影响_赔付与费用": nb_ifie_rate_change_claims
+        },
+        nb_ifie_rate_change_claims,
+        note="所有现值均从PV原材料数据读取，使用Cur字段（期末利率）和Wlk字段（加权初始确认利率）"
     )
     
     # 4. NB_待分摊IFIE_利率变化的影响_非金融风险调整
     # 公式：[Eop_Cfa_Rep_Cur] - [Eop_Cfa_Rep_Wlk]
+    pv_nb_eop_cfa_rep_cur_ra = _pv_amount(pv_data, 'Pvfl_Nb_Eop_Cfa_Rep_Cur_Rad_Amt')
+    pv_nb_eop_cfa_rep_wlk_ra = _pv_amount(pv_data, 'Pvfl_Nb_Eop_Cfa_Rep_Wlk_Rad_Amt')
+    
     nb_ifie_rate_change_ra = (
-        _pv_amount(pv_data_eop, 'Pvfl_Nb_Eop_Cfa_Rep_Cur_Rad_Amt') -
-        _pv_amount(pv_data_eop, 'Pvfl_Nb_Eop_Cfa_Rep_Wlk_Rad_Amt')
+        pv_nb_eop_cfa_rep_cur_ra -
+        pv_nb_eop_cfa_rep_wlk_ra
+    )
+    
+    logger.log_item(
+        "NB_待分摊IFIE_利率变化的影响_非金融风险调整",
+        "[LC IFIE分摊] 新增合同待分摊IFIE_利率变化的影响_非金融风险调整",
+        "NB_待分摊IFIE_利率变化的影响_非金融风险调整 = 【新增合同-期末预期-预期未来-非金融风险调整-期末现值（期末利率）】-【新增合同-期末预期-预期未来-非金融风险调整-期末现值（加权初始确认利率）】",
+        {
+            "期末-预期未来-RA（Cur）": pv_nb_eop_cfa_rep_cur_ra,
+            "期末-预期未来-RA（Wlk）": pv_nb_eop_cfa_rep_wlk_ra,
+            "NB_待分摊IFIE_利率变化的影响_非金融风险调整": nb_ifie_rate_change_ra
+        },
+        nb_ifie_rate_change_ra,
+        note="所有现值均从PV原材料数据读取，使用Cur字段（期末利率）和Wlk字段（加权初始确认利率）"
     )
     
     # 计算分摊结果
-    nb_lc_ifie_claims = (nb_ifie_accretion_claims + nb_ifie_rate_change_claims) * nb_lc_ifie_ratio
-    nb_lc_ifie_ra = (nb_ifie_accretion_ra + nb_ifie_rate_change_ra) * nb_lc_ifie_ratio
-    nb_lc_ifie_total = nb_lc_ifie_claims + nb_lc_ifie_ra
+    nb_lc_ifie_claims_before_sign = (nb_ifie_accretion_claims + nb_ifie_rate_change_claims) * nb_lc_ifie_ratio
+    nb_lc_ifie_ra_before_sign = (nb_ifie_accretion_ra + nb_ifie_rate_change_ra) * nb_lc_ifie_ratio
+    nb_lc_ifie_total_before_sign = nb_lc_ifie_claims_before_sign + nb_lc_ifie_ra_before_sign
+    
+    # 修复：LC IFIE分摊应该与LC本金同方向（负数，增加亏损）
+    # 如果存在LC（nb_initial_lc < 0），则LC IFIE分摊应该是负数
+    if nb_initial_lc < 0:
+        nb_lc_ifie_claims = -abs(nb_lc_ifie_claims_before_sign)
+        nb_lc_ifie_ra = -abs(nb_lc_ifie_ra_before_sign)
+        nb_lc_ifie_total = -abs(nb_lc_ifie_total_before_sign)
+    else:
+        nb_lc_ifie_claims = nb_lc_ifie_claims_before_sign
+        nb_lc_ifie_ra = nb_lc_ifie_ra_before_sign
+        nb_lc_ifie_total = nb_lc_ifie_total_before_sign
+    
+    logger.log_item(
+        "NB_LC分摊IFIE_赔付与费用",
+        "[LC IFIE分摊] 新增合同LC分摊IFIE_赔付与费用",
+        "NB_LC分摊IFIE_赔付与费用 = (NB_待分摊IFIE_计息_赔付与费用 + NB_待分摊IFIE_利率变化的影响_赔付与费用) × NB_LC IFIE分摊比例",
+        {
+            "NB_待分摊IFIE_计息_赔付与费用": nb_ifie_accretion_claims,
+            "NB_待分摊IFIE_利率变化的影响_赔付与费用": nb_ifie_rate_change_claims,
+            "NB_LC IFIE分摊比例": nb_lc_ifie_ratio,
+            "NB_LC分摊IFIE_赔付与费用（符号处理前）": nb_lc_ifie_claims_before_sign,
+            "NB_LC分摊IFIE_赔付与费用": nb_lc_ifie_claims
+        },
+        nb_lc_ifie_claims,
+        note=f"计算过程：({nb_ifie_accretion_claims} + {nb_ifie_rate_change_claims}) × {nb_lc_ifie_ratio} = {nb_lc_ifie_claims_before_sign}，符号处理：{'转为负数（与LC同方向）' if nb_initial_lc < 0 else '保持原值'}"
+    )
+    
+    logger.log_item(
+        "NB_LC分摊IFIE_非金融风险调整",
+        "[LC IFIE分摊] 新增合同LC分摊IFIE_非金融风险调整",
+        "NB_LC分摊IFIE_非金融风险调整 = (NB_待分摊IFIE_计息_非金融风险调整 + NB_待分摊IFIE_利率变化的影响_非金融风险调整) × NB_LC IFIE分摊比例",
+        {
+            "NB_待分摊IFIE_计息_非金融风险调整": nb_ifie_accretion_ra,
+            "NB_待分摊IFIE_利率变化的影响_非金融风险调整": nb_ifie_rate_change_ra,
+            "NB_LC IFIE分摊比例": nb_lc_ifie_ratio,
+            "NB_LC分摊IFIE_非金融风险调整（符号处理前）": nb_lc_ifie_ra_before_sign,
+            "NB_LC分摊IFIE_非金融风险调整": nb_lc_ifie_ra
+        },
+        nb_lc_ifie_ra,
+        note=f"计算过程：({nb_ifie_accretion_ra} + {nb_ifie_rate_change_ra}) × {nb_lc_ifie_ratio} = {nb_lc_ifie_ra_before_sign}，符号处理：{'转为负数（与LC同方向）' if nb_initial_lc < 0 else '保持原值'}"
+    )
+    
+    logger.log_item(
+        "NB_LC分摊IFIE",
+        "[LC IFIE分摊] 新增合同LC分摊IFIE合计",
+        "NB_LC分摊IFIE = NB_LC分摊IFIE_赔付与费用 + NB_LC分摊IFIE_非金融风险调整",
+        {
+            "NB_LC分摊IFIE_赔付与费用": nb_lc_ifie_claims,
+            "NB_LC分摊IFIE_非金融风险调整": nb_lc_ifie_ra,
+            "NB_LC分摊IFIE": nb_lc_ifie_total
+        },
+        nb_lc_ifie_total,
+        note=f"计算过程：{nb_lc_ifie_claims} + {nb_lc_ifie_ra} = {nb_lc_ifie_total}"
+    )
     
     nb_lc_after_ifie = nb_initial_lc + nb_lc_ifie_total
+    
+    logger.log_item(
+        "NB_分摊后IFIE后LC",
+        "[LC IFIE分摊] 新增合同分摊后IFIE后LC",
+        "NB_分摊后IFIE后LC = NB_年初LC + NB_LC分摊IFIE",
+        {
+            "NB_年初LC": nb_initial_lc,
+            "NB_LC分摊IFIE": nb_lc_ifie_total,
+            "NB_分摊后IFIE后LC": nb_lc_after_ifie
+        },
+        nb_lc_after_ifie,
+        note=f"计算过程：{nb_initial_lc} + {nb_lc_ifie_total} = {nb_lc_after_ifie}"
+    )
     
     context.nb_lc_after_ifie = nb_lc_after_ifie
     context.nb_lc_ifie_total = nb_lc_ifie_total
@@ -467,7 +1030,7 @@ def _calculate_lc_ifie_allocation(context, logger, cohort_state: CohortState):
             "IF_分摊后IFIE后LC": if_lc_after_ifie,
             
             # NB 部分
-            "NB_新增LC": nb_initial_lc,
+            "NB_新增LC": abs(nb_initial_lc) if nb_initial_lc < 0 else DECIMAL_ZERO,  # 显示绝对值
             "NB_LC IFIE分摊比例": nb_lc_ifie_ratio,
             "NB_待分摊IFIE_计息_赔付与费用": nb_ifie_accretion_claims,
             "NB_待分摊IFIE_计息_非金融风险调整": nb_ifie_accretion_ra,
@@ -501,32 +1064,48 @@ def _determine_cohort_status(
     logger.log_section("Part 8.5.5: 合同组状态判定 (Cohort Status Determination) [Sec 8.5.5]")
     
     # 获取统一的CSM/LC字段
-    bop_csm_lc = cohort_state.bop_csm if cohort_state else DECIMAL_ZERO
-    if_csm_lc_post = bop_csm_lc + (cohort_state.csm_interest if cohort_state else DECIMAL_ZERO)
+    # 修复：正确合并bop_csm和bop_lc，如果bop_csm > 0则为CSM，如果bop_lc < 0则为LC
+    bop_csm_lc = _get_bop_csm_lc(context, cohort_state)
+    # 分离IF的CSM和LC
+    if_bop_csm = bop_csm_lc if bop_csm_lc >= 0 else DECIMAL_ZERO
+    if_bop_lc = bop_csm_lc if bop_csm_lc < 0 else DECIMAL_ZERO
+    # IF_计息后CSM = IF_年初CSM + IF_CSM计息（只计算CSM部分）
+    if_csm_post = if_bop_csm + (cohort_state.csm_interest if cohort_state else DECIMAL_ZERO)
     
-    nb_initial_csm_lc = context.nb_initial_csm or DECIMAL_ZERO
-    if nb_initial_csm_lc == DECIMAL_ZERO and hasattr(context, 'nb_initial_lc'):
-        nb_initial_csm_lc = context.nb_initial_lc or DECIMAL_ZERO
-    nb_csm_lc_post = nb_initial_csm_lc + (context.nb_interest_csm or DECIMAL_ZERO)
+    # 分离NB的CSM和LC
+    nb_initial_csm = context.nb_initial_csm or DECIMAL_ZERO
+    # 修复：nb_initial_lc 现在直接存储为负数（亏损），不需要再转换
+    nb_initial_lc = getattr(context, 'nb_initial_lc', DECIMAL_ZERO) or DECIMAL_ZERO
+    # NB_计息后CSM = NB_新增CSM + NB_CSM计息（只计算CSM部分，LC不计息）
+    nb_csm_post = nb_initial_csm + (context.nb_interest_csm or DECIMAL_ZERO)
+    # NB_LC部分（不计息，但会加上IFIE分摊）
+    nb_lc_base = nb_initial_lc
     
-    # 加上LC的IFIE分摊
-    if_lc_after_ifie = getattr(context, 'if_lc_after_ifie', DECIMAL_ZERO) or DECIMAL_ZERO
-    nb_lc_after_ifie = getattr(context, 'nb_lc_after_ifie', DECIMAL_ZERO) or DECIMAL_ZERO
+    # 获取LC的IFIE分摊额（变化额，不包含期初余额）
+    if_lc_ifie_total = getattr(context, 'if_lc_ifie_total', DECIMAL_ZERO) or DECIMAL_ZERO
+    nb_lc_ifie_total = getattr(context, 'nb_lc_ifie_total', DECIMAL_ZERO) or DECIMAL_ZERO
     
     # 计算净余额试算值（严格对齐文档图片）
     # Net_trial = IF_计息后CSM + NB_计息后CSM + IF_分摊后IFIE后LC + NB_分摊后IFIE后LC
-    # 注意：文档公式中不包含“被CSM/LC吸收的变化”
-    net_trial = if_csm_lc_post + nb_csm_lc_post + if_lc_after_ifie + nb_lc_after_ifie
+    # 注意：文档公式中不包含"被CSM/LC吸收的变化"
+    # 修复：if_lc_after_ifie 已经是(年初LC + IFIE分摊)后的余额，不应再次加 if_bop_lc
+    # IF_分摊后IFIE后LC = IF_年初LC + IF_LC分摊IFIE
+    if_lc_post = if_bop_lc + if_lc_ifie_total
+    # 修复：nb_lc_after_ifie 已经是(新增LC + IFIE分摊)后的余额，不应再次加 nb_lc_base
+    # NB_分摊后IFIE后LC = NB_新增LC + NB_LC分摊IFIE（LC不计息）
+    nb_lc_post = nb_lc_base + nb_lc_ifie_total
+    
+    net_trial = if_csm_post + nb_csm_post + if_lc_post + nb_lc_post
     
     logger.log_item(
         "合同组净余额试算值",
         "[Sec 8.5.5] 步骤1：计算合同组净余额试算值（文档对照）",
         "Net_trial = IF_计息后CSM + NB_计息后CSM + IF_分摊后IFIE后LC + NB_分摊后IFIE后LC",
         {
-            "IF_计息后CSM": if_csm_lc_post,
-            "NB_计息后CSM": nb_csm_lc_post,
-            "IF_分摊后IFIE后LC": if_lc_after_ifie,
-            "NB_分摊后IFIE后LC": nb_lc_after_ifie,
+            "IF_计息后CSM": if_csm_post,
+            "NB_计息后CSM": nb_csm_post,
+            "IF_分摊后IFIE后LC": if_lc_post,
+            "NB_分摊后IFIE后LC": nb_lc_post,
             "Net_trial": net_trial
         },
         net_trial,
@@ -746,24 +1325,15 @@ def _calculate_lc_measurement(context, logger):
     """
     logger.log_section("Part LC: LC计量 (LC Measurement)")
     
-    # 获取评估月和年初月份
+    # 获取评估月
     eop_month_str = context.val_month_str
-    bop_month_str = (context.eop_date.replace(day=1) - relativedelta(months=11)).strftime('%Y%m') if hasattr(context, 'eop_date') else None
-    if bop_month_str is None:
-        val_date = datetime.strptime(eop_month_str, '%Y%m')
-        bop_date = val_date.replace(month=1, day=1)
-        bop_month_str = bop_date.strftime('%Y%m')
+    # 所有数据都从当前评估期的PV数据读取
     
     # 获取PV数据
-    pv_data_eop = context.pv_source_data.get_data(eop_month_str)
-    pv_data_bop = context.pv_source_data.get_data(bop_month_str) if bop_month_str else None
+    pv_data = context.pv_source_data.get_data(eop_month_str)
     
-    if pv_data_eop is None:
+    if pv_data is None:
         raise ValueError(f"❌ 错误: 找不到评估月 {eop_month_str} 的PV原材料数据！")
-    
-    # 获取签单月份的PV数据（用于新增合同）
-    uw_month_str = context.under_write_date.strftime('%Y%m') if hasattr(context, 'under_write_date') and context.under_write_date else None
-    pv_data_init = context.pv_source_data.get_data(uw_month_str) if uw_month_str else None
     
     # 获取CSM摊销比例（用于LC调整判断）
     # 注意：CSM摊销比例应该在revenue模块中计算，但LC计量在revenue之前运行
@@ -807,24 +1377,23 @@ def _calculate_lc_measurement(context, logger):
     # LC分摊IFIE_合计：IF_LC分摊IFIE + NB_LC分摊IFIE
     lc_ifie_total = if_lc_ifie_total + nb_lc_ifie_total
     
-    # 分摊的LC_合计：负的（有效合同+新增合同的所有预期当期现金流）× LC分摊比例
-    if pv_data_bop is None:
+    # 分摊的LC_合计：（有效合同+新增合同的所有预期当期现金流）× LC分摊比例
+    # 注意：正数表示减少LC亏损（LC余额绝对值减少），因为当现金流释放时，亏损应该被摊销
+    if pv_data is None:
         allocated_lc_total = DECIMAL_ZERO
     else:
-        pv_if_cur_claims = pv_data_bop.get_field('Pvfl_If_Bop_Cca_Rep_Wlk_Cla_Amt', DECIMAL_ZERO)
-        pv_if_cur_maint = pv_data_bop.get_field('Pvfl_If_Bop_Cca_Rep_Wlk_Mtn_Amt', DECIMAL_ZERO)
-        pv_if_cur_ra = pv_data_bop.get_field('Pvfl_If_Bop_Cca_Rep_Wlk_Rad_Amt', DECIMAL_ZERO)
+        pv_if_cur_claims = pv_data.get_field('Pvfl_If_Bop_Cca_Rep_Wlk_Cla_Amt', DECIMAL_ZERO)
+        pv_if_cur_maint = pv_data.get_field('Pvfl_If_Bop_Cca_Rep_Wlk_Mtn_Amt', DECIMAL_ZERO)
+        pv_if_cur_ra = pv_data.get_field('Pvfl_If_Bop_Cca_Rep_Wlk_Rad_Amt', DECIMAL_ZERO)
         
-        pv_nb_cur_claims = DECIMAL_ZERO
-        pv_nb_cur_maint = DECIMAL_ZERO
-        pv_nb_cur_ra = DECIMAL_ZERO
-        if pv_data_init is not None:
-            pv_nb_cur_claims = pv_data_init.get_field('Pvfl_Nb_Ini_Cca_Rep_Wlk_Cla_Amt', DECIMAL_ZERO)
-            pv_nb_cur_maint = pv_data_init.get_field('Pvfl_Nb_Ini_Cca_Rep_Wlk_Mtn_Amt', DECIMAL_ZERO)
-            pv_nb_cur_ra = pv_data_init.get_field('Pvfl_Nb_Ini_Cca_Rep_Wlk_Rad_Amt', DECIMAL_ZERO)
+        # 新增合同-初始确认-预期当期-现金流-期末现值（加权初始确认利率）
+        # 从当前评估月的PV数据读取
+        pv_nb_cur_claims = pv_data.get_field('Pvfl_Nb_Ini_Cca_Rep_Wlk_Cla_Amt', DECIMAL_ZERO)
+        pv_nb_cur_maint = pv_data.get_field('Pvfl_Nb_Ini_Cca_Rep_Wlk_Mtn_Amt', DECIMAL_ZERO)
+        pv_nb_cur_ra = pv_data.get_field('Pvfl_Nb_Ini_Cca_Rep_Wlk_Rad_Amt', DECIMAL_ZERO)
         
-        allocated_lc_total = -((pv_if_cur_claims + pv_if_cur_maint + pv_if_cur_ra + 
-                                pv_nb_cur_claims + pv_nb_cur_maint + pv_nb_cur_ra) * lc_ratio)
+        allocated_lc_total = (pv_if_cur_claims + pv_if_cur_maint + pv_if_cur_ra + 
+                              pv_nb_cur_claims + pv_nb_cur_maint + pv_nb_cur_ra) * lc_ratio
     
     # 被LC吸收的变化_合计：复杂的IF条件判断
     # IF(OR(AND(合同组LC<0,SUM(合同组LC, 分摊的LC，被CSM/LC吸收的变化合计)<0),AND(合同组LC=0,SUM(合同组CSM, 被CSM/LC吸收的变化合计)<0)),
@@ -857,13 +1426,14 @@ def _calculate_lc_measurement(context, logger):
     
     # 当年新增LC_预期现金流：按比例分配
     # 分母：新增合同-初始确认-预期未来-（赔付+维费+RA）-初始确认现值（当月初始利率）
-    if pv_data_init is None:
+    # 从当前评估月的PV数据读取
+    if pv_data is None:
         nb_initial_lc_cf = DECIMAL_ZERO
     else:
         # 获取新增合同初始确认现值（当月初始利率）
-        pv_nb_init_claims = pv_data_init.get_field('Pvfl_Nb_Ini_Cfa_Rec_Lkd_Cla_Amt', DECIMAL_ZERO)
-        pv_nb_init_maint = pv_data_init.get_field('Pvfl_Nb_Ini_Cfa_Rec_Lkd_Mtn_Amt', DECIMAL_ZERO)
-        pv_nb_init_ra = pv_data_init.get_field('Pvfl_Nb_Ini_Cfa_Rec_Lkd_Rad_Amt', DECIMAL_ZERO)
+        pv_nb_init_claims = pv_data.get_field('Pvfl_Nb_Ini_Cfa_Rec_Lkd_Cla_Amt', DECIMAL_ZERO)
+        pv_nb_init_maint = pv_data.get_field('Pvfl_Nb_Ini_Cfa_Rec_Lkd_Mtn_Amt', DECIMAL_ZERO)
+        pv_nb_init_ra = pv_data.get_field('Pvfl_Nb_Ini_Cfa_Rec_Lkd_Rad_Amt', DECIMAL_ZERO)
         
         denom_nb_init = pv_nb_init_claims + pv_nb_init_maint + pv_nb_init_ra
         if denom_nb_init > 0:
@@ -876,22 +1446,21 @@ def _calculate_lc_measurement(context, logger):
     nb_lc_ifie_cf = getattr(context, 'nb_lc_ifie_cf', DECIMAL_ZERO) or DECIMAL_ZERO
     lc_ifie_cf = if_lc_ifie_cf + nb_lc_ifie_cf
     
-    # 分摊的LC_预期现金流：负的（有效合同+新增合同的预期当期赔付和维费）× LC分摊比例
-    if pv_data_bop is None:
+    # 分摊的LC_预期现金流：（有效合同+新增合同的预期当期赔付和维费）× LC分摊比例
+    # 注意：正数表示减少LC亏损（LC余额绝对值减少），因为当现金流释放时，亏损应该被摊销
+    if pv_data is None:
         allocated_lc_cf = DECIMAL_ZERO
     else:
         # 有效合同-年初预期-预期当年-赔付/维费现金流-期末现值（加权初始确认利率）
-        pv_if_cur_claims = pv_data_bop.get_field('Pvfl_If_Bop_Cca_Rep_Wlk_Cla_Amt', DECIMAL_ZERO)
-        pv_if_cur_maint = pv_data_bop.get_field('Pvfl_If_Bop_Cca_Rep_Wlk_Mtn_Amt', DECIMAL_ZERO)
+        pv_if_cur_claims = pv_data.get_field('Pvfl_If_Bop_Cca_Rep_Wlk_Cla_Amt', DECIMAL_ZERO)
+        pv_if_cur_maint = pv_data.get_field('Pvfl_If_Bop_Cca_Rep_Wlk_Mtn_Amt', DECIMAL_ZERO)
         
         # 新增合同-初始确认-预期当期-赔付/维费现金流-期末现值（加权初始确认利率）
-        pv_nb_cur_claims = DECIMAL_ZERO
-        pv_nb_cur_maint = DECIMAL_ZERO
-        if pv_data_init is not None:
-            pv_nb_cur_claims = pv_data_init.get_field('Pvfl_Nb_Ini_Cca_Rep_Wlk_Cla_Amt', DECIMAL_ZERO)
-            pv_nb_cur_maint = pv_data_init.get_field('Pvfl_Nb_Ini_Cca_Rep_Wlk_Mtn_Amt', DECIMAL_ZERO)
+        # 从当前评估月的PV数据读取
+        pv_nb_cur_claims = pv_data.get_field('Pvfl_Nb_Ini_Cca_Rep_Wlk_Cla_Amt', DECIMAL_ZERO)
+        pv_nb_cur_maint = pv_data.get_field('Pvfl_Nb_Ini_Cca_Rep_Wlk_Mtn_Amt', DECIMAL_ZERO)
         
-        allocated_lc_cf = -((pv_if_cur_claims + pv_if_cur_maint + pv_nb_cur_claims + pv_nb_cur_maint) * lc_ratio)
+        allocated_lc_cf = (pv_if_cur_claims + pv_if_cur_maint + pv_nb_cur_claims + pv_nb_cur_maint) * lc_ratio
     
     # 被LC吸收的变化_预期现金流
     # IF(待调整LC余额_合计=0, -SUM(年初LC余额，当年新增LC，LC分摊IFIE，分摊的LC), 被LC吸收的变化_合计*IFERROR(预期现金流变化合计/被CSM/LC吸收的变化合计,0))
@@ -918,8 +1487,10 @@ def _calculate_lc_measurement(context, logger):
     # 期末LC余额_预期现金流
     end_lc_cf = lc_balance_to_adjust_cf + lc_adjust_cf
     
-    # 保存到context（供revenue模块使用）
+    # 保存到context（供revenue模块和其他模块使用）
     context.lc_adjust_cf = lc_adjust_cf
+    context.end_lc_cf = end_lc_cf  # 保存期末LC余额_预期现金流，用于未到期责任负债拆分
+    context.nb_initial_lc_cf = nb_initial_lc_cf  # 保存当年新增LC_预期现金流，用于亏损合同损益拆分
     
     logger.log_item(
         "LC计量_预期现金流",
@@ -956,19 +1527,19 @@ def _calculate_lc_measurement(context, logger):
     nb_lc_ifie_ra = getattr(context, 'nb_lc_ifie_ra', DECIMAL_ZERO) or DECIMAL_ZERO
     lc_ifie_ra = if_lc_ifie_ra + nb_lc_ifie_ra
     
-    # 分摊的LC_非金融风险调整：负的（有效合同+新增合同的预期当期非金融风险调整）× LC分摊比例
-    if pv_data_bop is None:
+    # 分摊的LC_非金融风险调整：（有效合同+新增合同的预期当期非金融风险调整）× LC分摊比例
+    # 注意：正数表示减少LC亏损（LC余额绝对值减少），因为当非金融风险调整释放时，亏损应该被摊销
+    if pv_data is None:
         allocated_lc_ra = DECIMAL_ZERO
     else:
         # 有效合同-年初预期-预期当年-非金融风险调整-期末现值（加权初始确认利率）
-        pv_if_cur_ra = pv_data_bop.get_field('Pvfl_If_Bop_Cca_Rep_Wlk_Rad_Amt', DECIMAL_ZERO)
+        pv_if_cur_ra = pv_data.get_field('Pvfl_If_Bop_Cca_Rep_Wlk_Rad_Amt', DECIMAL_ZERO)
         
         # 新增合同-初始确认-预期当期-非金融风险调整-期末现值（加权初始确认利率）
-        pv_nb_cur_ra = DECIMAL_ZERO
-        if pv_data_init is not None:
-            pv_nb_cur_ra = pv_data_init.get_field('Pvfl_Nb_Ini_Cca_Rep_Wlk_Rad_Amt', DECIMAL_ZERO)
+        # 从当前评估月的PV数据读取
+        pv_nb_cur_ra = pv_data.get_field('Pvfl_Nb_Ini_Cca_Rep_Wlk_Rad_Amt', DECIMAL_ZERO)
         
-        allocated_lc_ra = -((pv_if_cur_ra + pv_nb_cur_ra) * lc_ratio)
+        allocated_lc_ra = (pv_if_cur_ra + pv_nb_cur_ra) * lc_ratio
     
     # 被LC吸收的变化_非金融风险调整：被LC吸收的变化_合计 - 被LC吸收的变化_预期现金流
     # 注意：这里使用合计部分计算出的allocated_lc_exp_adj_total
@@ -986,8 +1557,10 @@ def _calculate_lc_measurement(context, logger):
     # 期末LC余额_非金融风险调整
     end_lc_ra = lc_balance_to_adjust_ra + lc_adjust_ra
     
-    # 保存到context（供revenue模块使用）
+    # 保存到context（供revenue模块和其他模块使用）
     context.lc_adjust_ra = lc_adjust_ra
+    context.end_lc_ra = end_lc_ra  # 保存期末LC余额_非金融风险调整，用于未到期责任负债拆分
+    context.nb_initial_lc_ra = nb_initial_lc_ra  # 保存当年新增LC_非金融风险调整，用于亏损合同损益拆分
     
     logger.log_item(
         "LC计量_非金融风险调整",
@@ -1028,6 +1601,7 @@ def _calculate_lc_measurement(context, logger):
     # 保存到context
     context.lc_change = allocated_lc_exp_adj_total
     context.end_lc_final = end_lc_total
+    context.allocated_lc_total = allocated_lc_total  # 保存LC摊销（分摊的LC_合计）供汇总使用
     
     logger.log_item(
         "LC计量_合计",
@@ -1097,16 +1671,17 @@ def run(
     logger.log_item(
         "CSM/LC计量合计",
         "[汇总] CSM/LC计量合计",
-        "CSM/LC计量包括：CSM计息、LC分摊IFIE、合同组判断、CSM摊销、LC变化",
+        "CSM/LC计量包括：CSM计息、LC分摊IFIE、合同组判断、CSM摊销、LC摊销（分摊的LC）、LC变化",
         {
             "CSM计息": (context.if_interest_csm or DECIMAL_ZERO) + (context.nb_interest_csm or DECIMAL_ZERO),
             "LC分摊IFIE": (context.if_lc_ifie_total or DECIMAL_ZERO) + (context.nb_lc_ifie_total or DECIMAL_ZERO),
             "CSM摊销": context.csm_amort_amount or DECIMAL_ZERO,
+            "LC摊销（分摊的LC）": getattr(context, 'allocated_lc_total', DECIMAL_ZERO) or DECIMAL_ZERO,
             "LC变化": context.lc_change or DECIMAL_ZERO,
             "期末CSM": context.end_csm_final or DECIMAL_ZERO,
             "期末LC": context.end_lc_final or DECIMAL_ZERO
         },
         (context.if_interest_csm or DECIMAL_ZERO) + (context.nb_interest_csm or DECIMAL_ZERO),
-        note="使用统一字段逻辑：>=0走CSM逻辑，<0走LC逻辑"
+        note="使用统一字段逻辑：>=0走CSM逻辑，<0走LC逻辑。注意：LC不计息，但通过分摊的LC进行摊销"
     )
 

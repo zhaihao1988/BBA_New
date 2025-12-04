@@ -17,24 +17,15 @@ def run(context, logger):
     # 公式：-[新增合同-初始确认-预期当期-预期IACF-期末现值(Wlk)]
     # 注意：这里使用Wlk利率，从PV数据获取
     if context.pv_source_data:
-        # 尝试获取签单月的PV数据（初始确认）
-        uw_month_str = context.under_write_date.strftime('%Y%m') if hasattr(context, 'under_write_date') and context.under_write_date else None
-        pv_data_init = context.pv_source_data.get_data(uw_month_str) if uw_month_str else None
-        
-        # 尝试获取评估月的PV数据（期末）
+        # 获取评估月的PV数据（所有数据都从当前评估期的PV数据读取）
         eop_month_str = context.val_month_str
-        pv_data_eop = context.pv_source_data.get_data(eop_month_str)
+        pv_data = context.pv_source_data.get_data(eop_month_str)
         
-        if pv_data_init:
-            # 注意：图片公式是“期末现值(Wlk)”，所以应该从 pv_data_eop 获取？
-            # 但名字叫“初始确认...”，可能是指基于初始确认现金流在期末的现值？
-            # 根据常规理解，这里应该是初始确认时刻的现值，或者期末时刻基于初始现金流的现值。
-            # 图片公式明确写着“期末现值(Wlk)”，这通常意味着随时间推移后的现值。
-            # 但如果是“当年新增合同总IACF期末现值”，这通常用于计算摊销基础。
-            
-            # 简化处理：为了对齐图片，我们尽量寻找对应字段。
-            # 假设使用 PV 原材料中的 Pvfl_Nb_Ini_Cca_Rep_Wlk_Acq_Amt (新增-初始-预期当期-期末现值-Wlk-IACF)
-            init_expected_cur_iacf = pv_data_eop.get_field('Pvfl_Nb_Ini_Cca_Rep_Wlk_Acq_Amt', Decimal('0')) if pv_data_eop else Decimal('0')
+        if pv_data:
+            # 1.1 初始确认预期当年 IACF
+            # 公式：-[新增合同-初始确认-预期当期-预期IACF-期末现值(Wlk)]
+            # 从当前评估月的PV数据读取
+            init_expected_cur_iacf = pv_data.get_field('Pvfl_Nb_Ini_Cca_Rep_Wlk_Acq_Amt', Decimal('0'))
             # 取负号
             init_expected_cur_iacf = -init_expected_cur_iacf
         else:
@@ -42,10 +33,13 @@ def run(context, logger):
             
         # 1.3 期末预期未来 IACF 现值
         # 公式：-[新增合同-初始确认-预期未来-IACF-期末现值(Wlk)]
-        # 使用 Pvfl_Nb_Ini_Cfa_Rep_Wlk_Acq_Amt
-        end_expected_fut_iacf = pv_data_eop.get_field('Pvfl_Nb_Ini_Cfa_Rep_Wlk_Acq_Amt', Decimal('0')) if pv_data_eop else Decimal('0')
-        # 取负号
-        end_expected_fut_iacf = -end_expected_fut_iacf
+        # 从当前评估月的PV数据读取
+        if pv_data:
+            end_expected_fut_iacf = pv_data.get_field('Pvfl_Nb_Ini_Cfa_Rep_Wlk_Acq_Amt', Decimal('0'))
+            # 取负号
+            end_expected_fut_iacf = -end_expected_fut_iacf
+        else:
+            end_expected_fut_iacf = Decimal('0')
         
     else:
         init_expected_cur_iacf = Decimal('0')

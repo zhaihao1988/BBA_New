@@ -95,118 +95,93 @@ def run(context, logger, assumptions: Assumptions = None, cohort_state=None):
     from BBA_dev.utils.pv_field_desc import describe_field, format_pv_field_in_formula
     
     # 1.1 保费现值（文档 Sec 2.1）
-    # 强制从PV原材料数据读取：预期当期 + 预期未来
-    pv_field_prem_current = 'Pvfl_Nb_Ini_Cca_Rec_Lkd_Pre_Amt'
-    pv_field_prem_future = 'Pvfl_Nb_Ini_Cfa_Rec_Lkd_Pre_Amt'
-    pv_prem_current = pv_data.get_field(pv_field_prem_current)
-    pv_prem_future = pv_data.get_field(pv_field_prem_future)
-    pv_premium = pv_prem_current + pv_prem_future
+    # 强制从PV原材料数据读取：注意已删除Cca字段，现在只使用Cfa字段（包含所有现金流）
+    pv_field_prem = 'Pvfl_Nb_Ini_Cfa_Rec_Lkd_Pre_Amt'
+    pv_premium = pv_data.get_field(pv_field_prem)
     logger.log_item(
         "当年新增合同_初始确认_预期保费现值",
         "[Sec 2.1] 初始确认时，预期未来收到的保费折现值（从PV原材料数据读取）",
-        f"{describe_field(pv_field_prem_current)} + {describe_field(pv_field_prem_future)}",
+        f"{describe_field(pv_field_prem)}",
         {
-            "PV字段（预期当期）": pv_field_prem_current,
-            "PV字段（预期未来）": pv_field_prem_future,
-            f"{describe_field(pv_field_prem_current)}": pv_prem_current,
-            f"{describe_field(pv_field_prem_future)}": pv_prem_future,
+            "PV字段": pv_field_prem,
+            f"{describe_field(pv_field_prem)}": pv_premium,
             "评估月": uw_month_str,
             "数据来源": "PV原材料数据（pv_calculator.py）"
         },
         pv_premium,
-        note=f"从PV原材料数据读取：{pv_field_prem_current} + {pv_field_prem_future}，使用当月初始利率"
+        note=f"从PV原材料数据读取：{pv_field_prem}，使用当月初始利率，折现至签单月月中"
     )
     
     # 1.2 IACF 现值（文档 Sec 2.1）
-    # 强制从PV原材料数据读取：预期当期 + 预期未来
-    pv_field_iacf_current = 'Pvfl_Nb_Ini_Cca_Rec_Lkd_Acq_Amt'
-    pv_field_iacf_future = 'Pvfl_Nb_Ini_Cfa_Rec_Lkd_Acq_Amt'
-    pv_iacf_current = pv_data.get_field(pv_field_iacf_current)
-    pv_iacf_future = pv_data.get_field(pv_field_iacf_future)
-    val_iacf = pv_iacf_current + pv_iacf_future
+    # 强制从PV原材料数据读取：注意已删除Cca字段，现在只使用Cfa字段（包含所有现金流）
+    pv_field_iacf = 'Pvfl_Nb_Ini_Cfa_Rec_Lkd_Acq_Amt'
+    val_iacf = pv_data.get_field(pv_field_iacf)
     logger.log_item(
         "当年新增合同_初始确认_IACF现值",
         "[Sec 2.1] 初始确认时，预期支付的获取费用折现值（从PV原材料数据读取）",
-        f"{describe_field(pv_field_iacf_current)} + {describe_field(pv_field_iacf_future)}",
+        f"{describe_field(pv_field_iacf)}",
         {
-            "PV字段（预期当期）": pv_field_iacf_current,
-            "PV字段（预期未来）": pv_field_iacf_future,
-            f"{describe_field(pv_field_iacf_current)}": pv_iacf_current,
-            f"{describe_field(pv_field_iacf_future)}": pv_iacf_future,
+            "PV字段": pv_field_iacf,
+            f"{describe_field(pv_field_iacf)}": val_iacf,
             "评估月": uw_month_str,
             "数据来源": "PV原材料数据（pv_calculator.py）"
         },
         val_iacf,
-        note=f"从PV原材料数据读取：{pv_field_iacf_current} + {pv_field_iacf_future}，使用当月初始利率"
+        note=f"从PV原材料数据读取：{pv_field_iacf}，使用当月初始利率，折现至签单月月中"
     )
 
     # 1.3 赔付现值（文档 Sec 2.2）
-    # 强制从PV原材料数据读取：预期当期 + 预期未来赔付现值（初始确认现值-当月初始利率）
-    pv_field_claims_current = 'Pvfl_Nb_Ini_Cca_Rec_Lkd_Cla_Amt'  # 预期当期
-    pv_field_claims_future = 'Pvfl_Nb_Ini_Cfa_Rec_Lkd_Cla_Amt'  # 预期未来
-    pv_claims_current = pv_data.get_field(pv_field_claims_current)
-    pv_claims_future = pv_data.get_field(pv_field_claims_future)
-    context.init_fut_claim = pv_claims_current + pv_claims_future
+    # 强制从PV原材料数据读取：注意已删除Cca字段，现在只使用Cfa字段（包含所有现金流）
+    pv_field_claims = 'Pvfl_Nb_Ini_Cfa_Rec_Lkd_Cla_Amt'
+    context.init_fut_claim = pv_data.get_field(pv_field_claims)
     logger.log_item(
         "当年新增合同_初始确认_预期赔付现值",
         "[Sec 2.2] 初始确认时，预期赔付支出的折现值（从PV原材料数据读取）",
-        f"{describe_field(pv_field_claims_current)} + {describe_field(pv_field_claims_future)}",
+        f"{describe_field(pv_field_claims)}",
         {
-            "PV字段（预期当期）": pv_field_claims_current,
-            "PV字段（预期未来）": pv_field_claims_future,
-            f"{describe_field(pv_field_claims_current)}": pv_claims_current,
-            f"{describe_field(pv_field_claims_future)}": pv_claims_future,
+            "PV字段": pv_field_claims,
+            f"{describe_field(pv_field_claims)}": context.init_fut_claim,
             "评估月": uw_month_str,
             "数据来源": "PV原材料数据（pv_calculator.py）"
         },
         context.init_fut_claim,
-        note=f"从PV原材料数据读取：{pv_field_claims_current} + {pv_field_claims_future}，使用当月初始利率。需要加上预期当期，否则当年的现金流现值会被遗漏"
+        note=f"从PV原材料数据读取：{pv_field_claims}，使用当月初始利率，折现至签单月月中"
     )
 
     # 1.4 维费现值（文档 Sec 2.3）
-    # 强制从PV原材料数据读取：预期当期 + 预期未来维持费用现值（初始确认现值-当月初始利率）
-    pv_field_maint_current = 'Pvfl_Nb_Ini_Cca_Rec_Lkd_Mtn_Amt'  # 预期当期
-    pv_field_maint_future = 'Pvfl_Nb_Ini_Cfa_Rec_Lkd_Mtn_Amt'  # 预期未来
-    pv_maint_current = pv_data.get_field(pv_field_maint_current)
-    pv_maint_future = pv_data.get_field(pv_field_maint_future)
-    context.init_fut_maint = pv_maint_current + pv_maint_future
+    # 强制从PV原材料数据读取：注意已删除Cca字段，现在只使用Cfa字段（包含所有现金流）
+    pv_field_maint = 'Pvfl_Nb_Ini_Cfa_Rec_Lkd_Mtn_Amt'
+    context.init_fut_maint = pv_data.get_field(pv_field_maint)
     logger.log_item(
         "当年新增合同_初始确认_预期维费现值",
         "[Sec 2.3] 初始确认时，预期维持费用的折现值（从PV原材料数据读取）",
-        f"{describe_field(pv_field_maint_current)} + {describe_field(pv_field_maint_future)}",
+        f"{describe_field(pv_field_maint)}",
         {
-            "PV字段（预期当期）": pv_field_maint_current,
-            "PV字段（预期未来）": pv_field_maint_future,
-            f"{describe_field(pv_field_maint_current)}": pv_maint_current,
-            f"{describe_field(pv_field_maint_future)}": pv_maint_future,
+            "PV字段": pv_field_maint,
+            f"{describe_field(pv_field_maint)}": context.init_fut_maint,
             "评估月": uw_month_str,
             "数据来源": "PV原材料数据（pv_calculator.py）"
         },
         context.init_fut_maint,
-        note=f"从PV原材料数据读取：{pv_field_maint_current} + {pv_field_maint_future}，使用当月初始利率。需要加上预期当期，否则当年的现金流现值会被遗漏"
+        note=f"从PV原材料数据读取：{pv_field_maint}，使用当月初始利率，折现至签单月月中"
     )
 
     # 1.5 RA（文档 Sec 3.2）
-    # 强制从PV原材料数据读取：预期当期 + 预期未来非金融风险调整（初始确认现值-当月初始利率）
-    pv_field_ra_current = 'Pvfl_Nb_Ini_Cca_Rec_Lkd_Rad_Amt'  # 预期当期
-    pv_field_ra_future = 'Pvfl_Nb_Ini_Cfa_Rec_Lkd_Rad_Amt'  # 预期未来
-    pv_ra_current = pv_data.get_field(pv_field_ra_current)
-    pv_ra_future = pv_data.get_field(pv_field_ra_future)
-    context.init_ra = pv_ra_current + pv_ra_future
+    # 强制从PV原材料数据读取：注意已删除Cca字段，现在只使用Cfa字段（包含所有现金流）
+    pv_field_ra = 'Pvfl_Nb_Ini_Cfa_Rec_Lkd_Rad_Amt'
+    context.init_ra = pv_data.get_field(pv_field_ra)
     logger.log_item(
         "当年新增合同_初始确认_非金融风险调整(RA)",
         "[Sec 3.2] 初始确认时，对非金融风险的调整额（从PV原材料数据读取）",
-        f"{describe_field(pv_field_ra_current)} + {describe_field(pv_field_ra_future)}",
+        f"{describe_field(pv_field_ra)}",
         {
-            "PV字段（预期当期）": pv_field_ra_current,
-            "PV字段（预期未来）": pv_field_ra_future,
-            f"{describe_field(pv_field_ra_current)}": pv_ra_current,
-            f"{describe_field(pv_field_ra_future)}": pv_ra_future,
+            "PV字段": pv_field_ra,
+            f"{describe_field(pv_field_ra)}": context.init_ra,
             "评估月": uw_month_str,
             "数据来源": "PV原材料数据（pv_calculator.py）"
         },
         context.init_ra,
-        note=f"从PV原材料数据读取：{pv_field_ra_current} + {pv_field_ra_future}，使用当月初始利率。需要加上预期当期，否则当年的现金流现值会被遗漏。RA计算公式：(PV_Claims + PV_Maint) * RA_ratio，已在pv_calculator.py中计算完成"
+        note=f"从PV原材料数据读取：{pv_field_ra}，使用当月初始利率，折现至签单月月中。RA计算公式：(PV_Claims + PV_Maint) * RA_ratio，已在pv_calculator.py中计算完成"
     )
 
     # 1.6 初始 CSM/LC 计算（文档 Sec 3.3）
@@ -224,7 +199,8 @@ def run(context, logger, assumptions: Assumptions = None, cohort_state=None):
         context.nb_initial_csm = margin
         csm_status = "Profitable (CSM)"
     else:
-        context.nb_initial_lc = -margin
+        # 修复：LC应该是负数（亏损），直接存储margin（负数），而不是-margin（正数）
+        context.nb_initial_lc = margin
         csm_status = "Onerous (Loss Component) - 立即确认亏损"
 
     logger.log_item(

@@ -50,47 +50,27 @@ def run(context, logger):
     
     from BBA_dev.utils.pv_field_desc import describe_field, format_pv_field_in_formula
     
-    # 获取年初月份的PV数据（用于有效合同）
-    # 注意：对于签单年，年初时保单还不存在，所以没有年初PV数据，有效合同值为0
-    bop_month_str = date_class(context.year, 1, 1).strftime('%Y%m')
-    pv_data_bop = context.pv_source_data.get_data(bop_month_str)
+    # 获取当前评估期的PV数据（所有数据都从当前评估期读取）
+    eop_month_str = context.val_month_str if hasattr(context, 'val_month_str') else context.eop_date.strftime('%Y%m')
+    pv_data = context.pv_source_data.get_data(eop_month_str)
     
-    # 判断是否为签单年
-    is_new_business_year = False
-    if hasattr(context, 'under_write_date') and context.under_write_date:
-        is_new_business_year = (context.year == context.under_write_date.year)
-    
-    if pv_data_bop is None:
-        if is_new_business_year:
-            # 签单年：年初没有数据是正常的，因为保单还不存在
-            logger.log_text(f"ℹ️  签单年年初（{bop_month_str}）无PV数据，有效合同相关值为0")
-        else:
-            # 非签单年：年初必须有数据
-            raise ValueError(f"❌ 错误: 找不到年初月份 {bop_month_str} 的PV原材料数据！")
-    
-    # 获取签单月份的PV数据（用于新增合同）
-    uw_month_str = None
-    pv_data_init = None
-    if hasattr(context, 'under_write_date') and context.under_write_date:
-        uw_month_str = context.under_write_date.strftime('%Y%m')
-        pv_data_init = context.pv_source_data.get_data(uw_month_str)
+    if pv_data is None:
+        raise ValueError(f"❌ 错误: 找不到评估月 {eop_month_str} 的PV原材料数据！")
     
     # 从PV原材料数据读取预期赔付与费用现值（加权初始确认利率，预期当期）
     # 同时包含有效合同和新增合同
     # 有效合同：年初预期-预期当期-赔付/维费现金流-期末现值（加权初始确认利率）
     pv_field_claims_if = 'Pvfl_If_Bop_Cca_Rep_Wlk_Cla_Amt'
     pv_field_maint_if = 'Pvfl_If_Bop_Cca_Rep_Wlk_Mtn_Amt'
-    pv_claims_if = pv_data_bop.get_field(pv_field_claims_if) if pv_data_bop else Decimal('0')
-    pv_maint_if = pv_data_bop.get_field(pv_field_maint_if) if pv_data_bop else Decimal('0')
+    pv_claims_if = pv_data.get_field(pv_field_claims_if) if pv_data else Decimal('0')
+    pv_maint_if = pv_data.get_field(pv_field_maint_if) if pv_data else Decimal('0')
     
     # 新增合同：初始确认-预期当期-赔付/维费现金流-期末现值（加权初始确认利率）
-    pv_claims_nb = Decimal('0')
-    pv_maint_nb = Decimal('0')
-    if pv_data_init is not None:
-        pv_field_claims_nb = 'Pvfl_Nb_Ini_Cca_Rep_Wlk_Cla_Amt'
-        pv_field_maint_nb = 'Pvfl_Nb_Ini_Cca_Rep_Wlk_Mtn_Amt'
-        pv_claims_nb = pv_data_init.get_field(pv_field_claims_nb)
-        pv_maint_nb = pv_data_init.get_field(pv_field_maint_nb)
+    # 从当前评估月的PV数据读取
+    pv_field_claims_nb = 'Pvfl_Nb_Ini_Cca_Rep_Wlk_Cla_Amt'
+    pv_field_maint_nb = 'Pvfl_Nb_Ini_Cca_Rep_Wlk_Mtn_Amt'
+    pv_claims_nb = pv_data.get_field(pv_field_claims_nb, Decimal('0')) if pv_data else Decimal('0')
+    pv_maint_nb = pv_data.get_field(pv_field_maint_nb, Decimal('0')) if pv_data else Decimal('0')
     
     # 合计：有效合同 + 新增合同
     revenue_claims_expenses_gross = pv_claims_if + pv_maint_if + pv_claims_nb + pv_maint_nb
@@ -112,7 +92,7 @@ def run(context, logger):
         f"+【新增合同-初始确认-预期当期-预赔付现金流-期末现值（加权初始确认利率）】\n"
         f"+【有效合同-年初预期-预期当年-维持费用现金流-期末现值（加权初始确认利率）】\n"
         f"+【新增合同-初始确认-预期当期-维持费用现金流-期末现值（加权初始确认利率）】\n"
-        f"PV字段：{pv_field_claims_if}, {pv_field_maint_if}, {pv_field_claims_nb if pv_data_init else 'N/A'}, {pv_field_maint_nb if pv_data_init else 'N/A'}\n"
+        f"PV字段：{pv_field_claims_if}, {pv_field_maint_if}, {pv_field_claims_nb}, {pv_field_maint_nb}\n"
         f"所有现值均从PV原材料数据读取，使用加权初始确认利率（Wlk），只包含预期当期（Cca）"
     )
     
@@ -126,8 +106,8 @@ def run(context, logger):
             "有效合同_预期当期_维费（Wlk）": pv_maint_if,
             "新增合同_预期当期_维费（Wlk）": pv_maint_nb,
             "预期赔付与费用合计（含亏损）": revenue_claims_expenses_gross,
-            "PV字段": f"{pv_field_claims_if}, {pv_field_maint_if}, {pv_field_claims_nb if pv_data_init else 'N/A'}, {pv_field_maint_nb if pv_data_init else 'N/A'}",
-            "评估月（期末）": eop_month_str
+            "PV字段": f"{pv_field_claims_if}, {pv_field_maint_if}, {pv_field_claims_nb}, {pv_field_maint_nb}",
+            "评估月": eop_month_str
         },
         revenue_claims_expenses_gross,
         note=f"所有现值均从PV原材料数据读取，使用加权初始确认利率（Wlk），只包含预期当期（Cca）。同时包含有效合同和新增合同"
@@ -153,13 +133,12 @@ def run(context, logger):
     # 根据文档要求：使用加权初始确认利率（Wlk），只包含预期当期（Cca），同时包含有效合同和新增合同
     # 有效合同：年初预期-预期当期-非金融风险调整-期末现值（加权初始确认利率）
     pv_field_ra_if = 'Pvfl_If_Bop_Cca_Rep_Wlk_Rad_Amt'
-    ra_release_if = pv_data_bop.get_field(pv_field_ra_if) if pv_data_bop else Decimal('0')
+    ra_release_if = pv_data.get_field(pv_field_ra_if) if pv_data else Decimal('0')
     
     # 新增合同：初始确认-预期当期-非金融风险调整-期末现值（加权初始确认利率）
-    ra_release_nb = Decimal('0')
-    if pv_data_init is not None:
-        pv_field_ra_nb = 'Pvfl_Nb_Ini_Cca_Rep_Wlk_Rad_Amt'
-        ra_release_nb = pv_data_init.get_field(pv_field_ra_nb)
+    # 从当前评估月的PV数据读取
+    pv_field_ra_nb = 'Pvfl_Nb_Ini_Cca_Rep_Wlk_Rad_Amt'
+    ra_release_nb = pv_data.get_field(pv_field_ra_nb, Decimal('0')) if pv_data else Decimal('0')
     
     # 合计：有效合同 + 新增合同
     ra_release_gross = ra_release_if + ra_release_nb
@@ -180,7 +159,7 @@ def run(context, logger):
     formula_desc = (
         f"【有效合同-年初预期-预期当年-非金融风险调整-期末现值（加权初始确认利率）】\n"
         f"+【新增合同-初始确认-预期当期-非金融风险调整-期末现值（加权初始确认利率）】\n"
-        f"PV字段：{pv_field_ra_if}, {pv_field_ra_nb if pv_data_init else 'N/A'}\n"
+        f"PV字段：{pv_field_ra_if}, {pv_field_ra_nb}\n"
         f"所有现值均从PV原材料数据读取，使用Rad字段（不能从(Cla+Mtn)×RA_Ratio计算）"
     )
     
@@ -192,8 +171,8 @@ def run(context, logger):
             "有效合同_预期当期_RA（Wlk）": ra_release_if,
             "新增合同_预期当期_RA（Wlk）": ra_release_nb,
             "RA释放（含亏损）": ra_release_gross,
-            "PV字段": f"{pv_field_ra_if}, {pv_field_ra_nb if pv_data_init else 'N/A'}",
-            "评估月（期末）": eop_month_str
+            "PV字段": f"{pv_field_ra_if}, {pv_field_ra_nb}",
+            "评估月": eop_month_str
         },
         ra_release_gross,
         note=f"所有现值均从PV原材料数据读取，使用Rad字段。同时包含有效合同和新增合同"

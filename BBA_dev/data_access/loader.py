@@ -131,7 +131,8 @@ def get_policy_data(policy_no, certi_no=None, val_method='7', run_date='202412')
         ]
         
         if certi_no is None:
-            where_conditions.append("certi_no IS NULL")
+            # 查询主单：certi_no 为 NULL 或空字符串
+            where_conditions.append("(certi_no IS NULL OR certi_no = '' OR COALESCE(certi_no::text, '') = '')")
         else:
             where_conditions.append(f"certi_no = '{certi_no}'")
         
@@ -151,8 +152,11 @@ def get_policy_data(policy_no, certi_no=None, val_method='7', run_date='202412')
             WHERE {where_clause}
             LIMIT 1
         """
+        
+        # 使用单个连接，确保正确关闭
         with engine.connect() as conn:
             df_data = pd.read_sql_query(text(data_query), conn)
+        
         if df_data.empty:
             print(f"⚠️  警告: 未找到保单号 {policy_no} 的数据（查询条件: certi_no={certi_no}, val_method={val_method}, run_date={run_date}）")
         return df_data
@@ -225,7 +229,7 @@ def get_assumptions(class_code, val_month_str, val_method='7', use_db_acquisitio
         return _ASSUMPTIONS_CACHE[cache_key].copy()  # 返回副本，避免修改缓存
     
     # 缓存未命中，从数据库查询
-    engine = get_sa_engine('test')
+    engine = get_sa_engine('qa')  # 改为qa数据库，与保单数据表一致
     try:
         # 构建查询字段
         select_fields = [
@@ -241,7 +245,7 @@ def get_assumptions(class_code, val_month_str, val_method='7', use_db_acquisitio
         assumptions_query = f"""
             SELECT 
                 {', '.join(select_fields)}
-            FROM measure_platform.conf_measure_actuarial_assumption
+            FROM zh.conf_measure_actuarial_assumption
             WHERE class_code = '{class_code}' 
               AND val_month = '{val_month_str}'
               AND val_method = '{val_method}'

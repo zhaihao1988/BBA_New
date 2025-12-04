@@ -115,6 +115,13 @@ def process_single_policy(
         return (policy_no, results, None)
     except Exception as exc:
         return (policy_no, None, str(exc))
+    finally:
+        # 每个子进程结束时清理数据库连接池
+        try:
+            from BBA_dev.data_access.db_utils import dispose_all_engines
+            dispose_all_engines()
+        except Exception:
+            pass  # 静默失败，避免影响主进程
 
 
 def run_batch(run_date: str = "202412", val_method: str = "7", max_workers: int = MAX_WORKERS, limit: int = None):
@@ -297,6 +304,14 @@ def run_batch(run_date: str = "202412", val_method: str = "7", max_workers: int 
         print(f"平均每张保单耗时: {avg_time:.2f} 秒")
     print(f"输出文件: {OUTPUT_FILE}")
     print(f"=" * 80)
+    
+    # 清理数据库连接池（主进程）
+    try:
+        from BBA_dev.data_access.db_utils import dispose_all_engines
+        dispose_all_engines()
+        print("✓ 主进程数据库连接已清理")
+    except Exception as e:
+        print(f"⚠️ 清理主进程数据库连接时出错: {e}")
 
 
 if __name__ == "__main__":

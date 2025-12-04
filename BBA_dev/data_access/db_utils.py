@@ -74,8 +74,8 @@ def get_sa_engine(env: str = 'test') -> Engine:
         _ENGINE_CACHE[env] = create_engine(
             _build_sa_url(config),
             poolclass=QueuePool,
-            pool_size=5,           # 每个进程最多5个连接（从3提升到5）
-            max_overflow=10,       # 允许超出10个连接（从2提升到10）
+            pool_size=5,           # 每个进程最多5个连接
+            max_overflow=10,       # 允许超出10个连接
             pool_timeout=30,       # 30秒超时
             pool_pre_ping=True,    # 连接前检查有效性（防止连接失效）
             pool_recycle=3600,     # 1小时后回收连接（防止数据库端超时）

@@ -129,6 +129,16 @@ class LifecycleSimulator:
         self.assumptions_history: Dict[str, Assumptions] = {}  # 存储每年的假设
         self.initial_rates_df: Optional[pd.DataFrame] = None  # 保存初始锁定利率曲线
         self._pv_collection: Optional[PVSourceDataCollection] = None
+    
+    def cleanup(self):
+        """
+        清理资源，包括数据库连接池
+        应该在程序结束时调用
+        """
+        from BBA_dev.data_access.db_utils import dispose_all_engines
+        dispose_all_engines()
+        if self.enable_logging:
+            self.logger.close()
 
     def _merge_pv_collection(self, new_collection: PVSourceDataCollection) -> PVSourceDataCollection:
         if self._pv_collection is None:
@@ -206,9 +216,14 @@ class LifecycleSimulator:
         
         # 1. 读取保单数据
         self.logger.log_text("### [Step 0] 获取保单数据")
-        df_policy = loader.get_policy_data(self.policy_no, certi_no=self.certi_no)
+        df_policy = loader.get_policy_data(
+            self.policy_no, 
+            certi_no=self.certi_no,
+            val_method=self.val_method,
+            run_date=self.run_date
+        )
         if df_policy.empty:
-            raise ValueError(f"未找到保单号 {self.policy_no} 的数据")
+            raise ValueError(f"未找到保单号 {self.policy_no} 的数据（查询条件: certi_no={self.certi_no}, val_method={self.val_method}, run_date={self.run_date}）")
         
         policy_row = df_policy.iloc[0]
         
@@ -687,7 +702,8 @@ class LifecycleSimulator:
                     
                     projector = CashFlowProjector()
                     cash_flows_df = projector.project_policy_flows(policy_row, assumptions)
-                    cash_flows_df['Date_Obj'] = pd.to_datetime(cash_flows_df['YYYYMM'], format='%Y%m').dt.date
+                    # 将日期设置为月末（而不是月初），确保折现期数计算正确
+                    cash_flows_df['Date_Obj'] = (pd.to_datetime(cash_flows_df['YYYYMM'], format='%Y%m') + pd.offsets.MonthEnd(0)).dt.date
                 except Exception as e:
                     self.logger.log_text(f"⚠️  警告: 现金流投射失败: {e}")
             
@@ -740,7 +756,10 @@ class LifecycleSimulator:
             # 如果没有摊销后的值，使用摊销前的值（摊销会在 revenue 模块中计算）
             self.cohort_state.eop_csm = Decimal(str(context.end_csm_before_amort))
         
-        if hasattr(context, 'end_lc_before_amort') and context.end_lc_before_amort is not None:
+        if hasattr(context, 'end_lc_final') and context.end_lc_final is not None:
+            self.cohort_state.eop_lc = Decimal(str(context.end_lc_final))
+        elif hasattr(context, 'end_lc_before_amort') and context.end_lc_before_amort is not None:
+            # 如果没有摊销后的值，使用摊销前的值（摊销会在 revenue 模块中计算）
             self.cohort_state.eop_lc = Decimal(str(context.end_lc_before_amort))
         
         if hasattr(context, 'eop_iacf_balance') and context.eop_iacf_balance is not None:
@@ -784,32 +803,121 @@ class LifecycleSimulator:
         Args:
             context: 计算上下文（可选，用于打印财务报表摘要）
         """
+        if context is None:
+            return
+        
+        # 使用与 _extract_yearly_result 相同的逻辑提取字段
+        year = getattr(context, 'year', None)
+        if year is None:
+            return
+        
+        lc_ratio = self._to_decimal(getattr(context, 'nb_lc_ratio', Decimal('0')) or Decimal('0'))
+        
+        claims_net = self._to_decimal(getattr(context, 'revenue_claims_expenses_net', Decimal('0')))
+        claims_gross = self._derive_gross_from_net(claims_net, lc_ratio)
+        claims_lc_alloc = claims_gross - claims_net
+        
+        ra_net = self._to_decimal(getattr(context, 'ra_release_net', Decimal('0')))
+        ra_gross = self._to_decimal(getattr(context, 'ra_release_gross', None)) or self._derive_gross_from_net(ra_net, lc_ratio)
+        ra_lc_alloc = self._to_decimal(getattr(context, 'ra_release_lc_alloc', None))
+        if ra_lc_alloc == Decimal('0') and ra_gross != ra_net:
+            ra_lc_alloc = ra_gross - ra_net
+        
+        allocated_lc_exp_adj = self._to_decimal(getattr(context, 'allocated_lc_exp_adj', Decimal('0')))
+        iacf_amort_expense = self._to_decimal(getattr(context, 'iacf_amort_amount', Decimal('0')))
+        nb_initial_lc = self._to_decimal(context.nb_initial_lc if self._is_new_business_year(context) else Decimal('0'))
+        # 获取当年新增LC_预期现金流和非金融风险调整（用于亏损合同损益拆分）
+        nb_initial_lc_cf = self._to_decimal(getattr(context, 'nb_initial_lc_cf', Decimal('0')) if self._is_new_business_year(context) else Decimal('0'))
+        nb_initial_lc_ra = self._to_decimal(getattr(context, 'nb_initial_lc_ra', Decimal('0')) if self._is_new_business_year(context) else Decimal('0'))
+        
+        ifie_pl_cf_non_lc = self._to_decimal(getattr(context, 'ifie_pl_cf_non_lc', Decimal('0')))
+        ifie_pl_cf_lc = self._to_decimal(getattr(context, 'ifie_pl_cf_lc', Decimal('0')))
+        ifie_pl_ra_non_lc = self._to_decimal(getattr(context, 'ifie_pl_ra_non_lc', Decimal('0')))
+        ifie_pl_ra_lc = self._to_decimal(getattr(context, 'ifie_pl_ra_lc', Decimal('0')))
+        ifie_pl_cf = ifie_pl_cf_non_lc + ifie_pl_cf_lc
+        ifie_pl_ra = ifie_pl_ra_non_lc + ifie_pl_ra_lc
+        
+        is_new_business = self._is_new_business_year(context)
+        ifie_csm = -self._to_decimal(
+            getattr(context, 'nb_interest_csm', Decimal('0')) if is_new_business
+            else getattr(context, 'if_interest_csm', Decimal('0'))
+        )
+        
+        ifie_oci_cf_non_lc = self._to_decimal(getattr(context, 'ifie_oci_cf_non_lc', Decimal('0')))
+        ifie_oci_cf_lc = self._to_decimal(getattr(context, 'ifie_oci_cf_lc', Decimal('0')))
+        ifie_oci_ra_non_lc = self._to_decimal(getattr(context, 'ifie_oci_ra_non_lc', Decimal('0')))
+        ifie_oci_ra_lc = self._to_decimal(getattr(context, 'ifie_oci_ra_lc', Decimal('0')))
+        
+        # 未到期责任负债相关
+        lrc_bel_total = self._to_decimal(getattr(context, 'lrc_bel_total', None))
+        if lrc_bel_total is None:
+            lrc_bel_total = self._to_decimal(getattr(context, 'pv_eop_claims_current', Decimal('0'))) + \
+                self._to_decimal(getattr(context, 'pv_eop_maint_current', Decimal('0')))
+        
+        lrc_ra = self._to_decimal(getattr(context, 'lrc_ra', Decimal('0')))
+        
+        lrc_total = self._to_decimal(getattr(context, 'lrc_total', None))
+        if lrc_total is None:
+            end_csm = self._to_decimal(getattr(context, 'end_csm_final', getattr(context, 'end_csm_before_amort', Decimal('0'))))
+            lrc_total = lrc_bel_total + lrc_ra + end_csm
+        else:
+            end_csm = self._to_decimal(getattr(context, 'end_csm_final', getattr(context, 'end_csm_before_amort', Decimal('0'))))
+        
         self.logger.log_section("期末状态汇总")
         self.logger.log_text(f"**合同组状态**:")
-        self.logger.log_text(f"- 加权锁定利率: {self.cohort_state.weighted_locked_rate:.6f}")
-        self.logger.log_text(f"- 累计签单保费: {self.cohort_state.total_written_premium:,.2f}")
-        self.logger.log_text(f"- 年初CSM余额: {self.cohort_state.bop_csm:,.2f}")
-        self.logger.log_text(f"- 年初LC余额: {self.cohort_state.bop_lc:,.2f}")
-        self.logger.log_text(f"- 年初IACF余额: {self.cohort_state.bop_iacf:,.2f}")
-        self.logger.log_text(f"- 当年新增CSM: {self.cohort_state.new_csm:,.2f}")
-        self.logger.log_text(f"- 当年新增LC: {self.cohort_state.new_lc:,.2f}")
-        self.logger.log_text(f"- CSM计息: {self.cohort_state.csm_interest:,.2f}")
-        self.logger.log_text(f"- 被CSM吸收的变化: {self.cohort_state.csm_absorbed_changes:,.2f}")
-        self.logger.log_text(f"- CSM摊销: {self.cohort_state.csm_amortization:,.2f}")
-        self.logger.log_text(f"- 期末CSM余额: {self.cohort_state.eop_csm:,.2f}")
-        self.logger.log_text(f"- 期末LC余额: {self.cohort_state.eop_lc:,.2f}")
-        self.logger.log_text(f"- 期末IACF余额: {self.cohort_state.eop_iacf:,.2f}")
-        self.logger.log_text(f"- 合同组状态: **{'盈利' if self.cohort_state.is_profitable else '亏损'}**")
-        self.logger.log_text(f"- 净余额试算值: {self.cohort_state.net_trial:,.2f}")
+        self.logger.log_text(f"- policy_no: {self.policy_no}")
+        self.logger.log_text(f"- certi_no: {self.certi_no if self.certi_no else ''}")
+        self.logger.log_text(f"- year: {year}")
+        self.logger.log_text(f"- 保险合同收入_预期赔付与费用_含亏损: {self._to_number(claims_gross):,.2f}")
+        self.logger.log_text(f"- 保险合同收入_预期赔付与费用_亏损分摊: {self._to_number(claims_lc_alloc):,.2f}")
+        self.logger.log_text(f"- 保险合同收入_预期释放的非金融风险调整_含亏损: {self._to_number(ra_gross):,.2f}")
+        self.logger.log_text(f"- 保险合同收入_预期释放的非金融风险调整_亏损分摊: {self._to_number(ra_lc_alloc):,.2f}")
+        self.logger.log_text(f"- 保险合同收入_摊销的CSM: {self._to_number(getattr(context, 'csm_amort_amount', Decimal('0'))):,.2f}")
+        self.logger.log_text(f"- 保险合同收入_摊销的IACF: {self._to_number(getattr(context, 'revenue_iacf_amort', Decimal('0'))):,.2f}")
+        self.logger.log_text(f"- 保险合同收入_经验调整: {self._to_number(getattr(context, 'revenue_exp_adj', Decimal('0'))):,.2f}")
+        self.logger.log_text(f"- 赔付与费用_亏损分摊_预期现金流: {self._to_number(allocated_lc_exp_adj):,.2f}")
+        self.logger.log_text(f"- 赔付与费用_亏损分摊_非金融风险调整: 0.00")
+        self.logger.log_text(f"- 赔付与费用_摊销的IACF: {self._to_number(iacf_amort_expense):,.2f}")
+        self.logger.log_text(f"- 亏损合同损益_新增合同预期现金流_赔付与费用现金流_亏损: {self._to_number(nb_initial_lc_cf):,.2f}")
+        self.logger.log_text(f"- 亏损合同损益_新增合同非金融风险调整_亏损: {self._to_number(nb_initial_lc_ra):,.2f}")
+        self.logger.log_text(f"- 亏损合同损益_不调整CSM的预期现金流变动: 0.00")
+        self.logger.log_text(f"- 亏损合同损益_不调整CSM的非金融风险调整变动: 0.00")
+        self.logger.log_text(f"- IFIE_P&L_未到期_预期现金流_非亏损: {self._to_number(ifie_pl_cf_non_lc):,.2f}")
+        self.logger.log_text(f"- IFIE_P&L_未到期_预期现金流_亏损: {self._to_number(ifie_pl_cf_lc):,.2f}")
+        self.logger.log_text(f"- IFIE_P&L_未到期_非金融风险调整_非亏损: {self._to_number(ifie_pl_ra_non_lc):,.2f}")
+        self.logger.log_text(f"- IFIE_P&L_未到期_非金融风险调整_亏损: {self._to_number(ifie_pl_ra_lc):,.2f}")
+        self.logger.log_text(f"- IFIE_P&L_未到期_CSM: {self._to_number(ifie_csm):,.2f}")
+        self.logger.log_text(f"- IFIE_OCI_未到期_预期现金流_非亏损: {self._to_number(ifie_oci_cf_non_lc):,.2f}")
+        self.logger.log_text(f"- IFIE_OCI_未到期_预期现金流_亏损: {self._to_number(ifie_oci_cf_lc):,.2f}")
+        self.logger.log_text(f"- IFIE_OCI_未到期_非金融风险调整_非亏损: {self._to_number(ifie_oci_ra_non_lc):,.2f}")
+        self.logger.log_text(f"- IFIE_OCI_未到期_非金融风险调整_亏损: {self._to_number(ifie_oci_ra_lc):,.2f}")
+        # 未到期责任负债拆分：根据文档，亏损部分 = -期末LC余额
+        end_lc_cf = self._to_decimal(getattr(context, 'end_lc_cf', Decimal('0')))
+        end_lc_ra = self._to_decimal(getattr(context, 'end_lc_ra', Decimal('0')))
+        lrc_bel_lc = -end_lc_cf  # 未到期责任负债_预期现金流_亏损 = -期末LC余额_预期现金流
+        lrc_ra_lc = -end_lc_ra  # 未到期责任负债_非金融风险调整_亏损 = -期末LC余额_非金融风险调整
+        lrc_bel_non_lc = lrc_bel_total - lrc_bel_lc  # 非亏损部分 = 总额 - 亏损部分
+        lrc_ra_non_lc = lrc_ra - lrc_ra_lc  # 非亏损部分 = 总额 - 亏损部分
         
-        # 打印财务报表摘要
-        if context and hasattr(context, 'total_revenue') and context.total_revenue is not None:
-            self.logger.log_text(f"\n**财务报表摘要**:")
-            self.logger.log_text(f"- 保险合同收入: {context.total_revenue:,.2f}")
-            if hasattr(context, 'ifie_pl') and context.ifie_pl is not None:
-                self.logger.log_text(f"- IFIE_P&L: {context.ifie_pl:,.2f}")
-            if hasattr(context, 'ifie_oci') and context.ifie_oci is not None:
-                self.logger.log_text(f"- IFIE_OCI: {context.ifie_oci:,.2f}")
+        self.logger.log_text(f"- 未到期责任负债_预期现金流_非亏损: {self._to_number(lrc_bel_non_lc):,.2f}")
+        self.logger.log_text(f"- 未到期责任负债_预期现金流_亏损: {self._to_number(lrc_bel_lc):,.2f}")
+        self.logger.log_text(f"- 未到期责任负债_非金融风险调整_非亏损: {self._to_number(lrc_ra_non_lc):,.2f}")
+        self.logger.log_text(f"- 未到期责任负债_非金融风险调整_亏损: {self._to_number(lrc_ra_lc):,.2f}")
+        self.logger.log_text(f"- 未到期责任负债_CSM: {self._to_number(end_csm):,.2f}")
+        self.logger.log_text(f"- 未到期_调整CSM的预期现金流变动: {self._to_number(getattr(context, 'csm_absorbed', Decimal('0'))):,.2f}")
+        self.logger.log_text(f"- 未到期_调整CSM的非金融风险调整变动: 0.00")
+        self.logger.log_text(f"- 未到期_调整CSM的估计变更: {self._to_number(getattr(context, 'csm_absorbed', Decimal('0'))):,.2f}")
+        self.logger.log_text(f"- 新增合同预期现金流_保费现金流_盈利合同: {self._to_number(getattr(context, 'actual_premium', Decimal('0')) if is_new_business and nb_initial_lc >= 0 else Decimal('0')):,.2f}")
+        self.logger.log_text(f"- 新增合同预期现金流_IACF_盈利合同: {self._to_number(getattr(context, 'actual_iacf_incurred', Decimal('0')) if is_new_business and nb_initial_lc >= 0 else Decimal('0')):,.2f}")
+        self.logger.log_text(f"- 新增合同预期现金流_赔付与费用现金流_盈利合同: {self._to_number((getattr(context, 'init_fut_claim', Decimal('0')) + getattr(context, 'init_fut_maint', Decimal('0'))) if is_new_business and nb_initial_lc >= 0 else Decimal('0')):,.2f}")
+        self.logger.log_text(f"- 新增合同非金融风险调整_盈利合同: {self._to_number(getattr(context, 'init_ra', Decimal('0')) if is_new_business and nb_initial_lc >= 0 else Decimal('0')):,.2f}")
+        self.logger.log_text(f"- 新增合同CSM_盈利合同: {self._to_number(getattr(context, 'nb_initial_csm', Decimal('0')) if is_new_business and nb_initial_lc >= 0 else Decimal('0')):,.2f}")
+        self.logger.log_text(f"- 新增合同预期现金流_保费现金流_亏损合同: {self._to_number(getattr(context, 'actual_premium', Decimal('0')) if is_new_business and nb_initial_lc < 0 else Decimal('0')):,.2f}")
+        self.logger.log_text(f"- 新增合同预期现金流_IACF_亏损合同: {self._to_number(getattr(context, 'actual_iacf_incurred', Decimal('0')) if is_new_business and nb_initial_lc < 0 else Decimal('0')):,.2f}")
+        self.logger.log_text(f"- 新增合同预期现金流_赔付与费用现金流_亏损合同_非亏损: {self._to_number((getattr(context, 'init_fut_claim', Decimal('0')) + getattr(context, 'init_fut_maint', Decimal('0'))) if is_new_business and nb_initial_lc < 0 else Decimal('0')):,.2f}")
+        self.logger.log_text(f"- 新增合同非金融风险调整_亏损合同_非亏损: {self._to_number(getattr(context, 'init_ra', Decimal('0')) if is_new_business and nb_initial_lc < 0 else Decimal('0')):,.2f}")
+        self.logger.log_text(f"- 现金流_收到的保费: {self._to_number(getattr(context, 'actual_premium', Decimal('0')) if is_new_business else Decimal('0')):,.2f}")
+        self.logger.log_text(f"- 现金流_支付的获取费用: {self._to_number(getattr(context, 'actual_iacf_incurred', Decimal('0')) if is_new_business else Decimal('0')):,.2f}")
     
     @staticmethod
     def _to_decimal(value) -> Decimal:
@@ -860,6 +968,9 @@ class LifecycleSimulator:
         allocated_lc_exp_adj = self._to_decimal(getattr(context, 'allocated_lc_exp_adj', Decimal('0')))
         iacf_amort_expense = self._to_decimal(getattr(context, 'iacf_amort_amount', Decimal('0')))
         nb_initial_lc = self._to_decimal(context.nb_initial_lc if self._is_new_business_year(context) else Decimal('0'))
+        # 获取当年新增LC_预期现金流和非金融风险调整（用于亏损合同损益拆分）
+        nb_initial_lc_cf = self._to_decimal(getattr(context, 'nb_initial_lc_cf', Decimal('0')) if self._is_new_business_year(context) else Decimal('0'))
+        nb_initial_lc_ra = self._to_decimal(getattr(context, 'nb_initial_lc_ra', Decimal('0')) if self._is_new_business_year(context) else Decimal('0'))
 
         ifie_pl_cf_non_lc = self._to_decimal(getattr(context, 'ifie_pl_cf_non_lc', Decimal('0')))
         ifie_pl_cf_lc = self._to_decimal(getattr(context, 'ifie_pl_cf_lc', Decimal('0')))
@@ -898,6 +1009,14 @@ class LifecycleSimulator:
             lrc_total = lrc_bel_total + lrc_ra + end_csm
         else:
             end_csm = self._to_decimal(getattr(context, 'end_csm_final', getattr(context, 'end_csm_before_amort', Decimal('0'))))
+        
+        # 未到期责任负债拆分：根据文档，亏损部分 = -期末LC余额
+        end_lc_cf = self._to_decimal(getattr(context, 'end_lc_cf', Decimal('0')))
+        end_lc_ra = self._to_decimal(getattr(context, 'end_lc_ra', Decimal('0')))
+        lrc_bel_lc = -end_lc_cf  # 未到期责任负债_预期现金流_亏损 = -期末LC余额_预期现金流
+        lrc_ra_lc = -end_lc_ra  # 未到期责任负债_非金融风险调整_亏损 = -期末LC余额_非金融风险调整
+        lrc_bel_non_lc = lrc_bel_total - lrc_bel_lc  # 非亏损部分 = 总额 - 亏损部分
+        lrc_ra_non_lc = lrc_ra - lrc_ra_lc  # 非亏损部分 = 总额 - 亏损部分
 
         result = {
             "policy_no": self.policy_no,
@@ -913,8 +1032,8 @@ class LifecycleSimulator:
             "赔付与费用_亏损分摊_预期现金流": self._to_number(allocated_lc_exp_adj),
             "赔付与费用_亏损分摊_非金融风险调整": 0.0,  # TODO: 待实现
             "赔付与费用_摊销的IACF": self._to_number(iacf_amort_expense),
-            "亏损合同损益_新增合同预期现金流_赔付与费用现金流_亏损": self._to_number(nb_initial_lc),
-            "亏损合同损益_新增合同非金融风险调整_亏损": 0.0,  # TODO: 待实现
+            "亏损合同损益_新增合同预期现金流_赔付与费用现金流_亏损": self._to_number(nb_initial_lc_cf),
+            "亏损合同损益_新增合同非金融风险调整_亏损": self._to_number(nb_initial_lc_ra),
             "亏损合同损益_不调整CSM的预期现金流变动": 0.0,  # TODO: 待实现
             "亏损合同损益_不调整CSM的非金融风险调整变动": 0.0,  # TODO: 待实现
             "IFIE_P&L_未到期_预期现金流_非亏损": self._to_number(ifie_pl_cf_non_lc),
@@ -926,10 +1045,10 @@ class LifecycleSimulator:
             "IFIE_OCI_未到期_预期现金流_亏损": self._to_number(ifie_oci_cf_lc),
             "IFIE_OCI_未到期_非金融风险调整_非亏损": self._to_number(ifie_oci_ra_non_lc),
             "IFIE_OCI_未到期_非金融风险调整_亏损": self._to_number(ifie_oci_ra_lc),
-            "未到期责任负债_预期现金流_非亏损": self._to_number(lrc_bel_total),  # TODO: 待确定亏损/非亏损拆分口径
-            "未到期责任负债_预期现金流_亏损": 0.0,  # TODO: 待确定亏损/非亏损拆分口径
-            "未到期责任负债_非金融风险调整_非亏损": self._to_number(lrc_ra),  # TODO: 待确定亏损/非亏损拆分口径
-            "未到期责任负债_非金融风险调整_亏损": 0.0,  # TODO: 待确定亏损/非亏损拆分口径
+            "未到期责任负债_预期现金流_非亏损": self._to_number(lrc_bel_non_lc),
+            "未到期责任负债_预期现金流_亏损": self._to_number(lrc_bel_lc),
+            "未到期责任负债_非金融风险调整_非亏损": self._to_number(lrc_ra_non_lc),
+            "未到期责任负债_非金融风险调整_亏损": self._to_number(lrc_ra_lc),
             "未到期责任负债_CSM": self._to_number(end_csm),
             "未到期_调整CSM的预期现金流变动": self._to_number(getattr(context, 'csm_absorbed', Decimal('0'))),
             "未到期_调整CSM的非金融风险调整变动": 0.0,  # TODO: 待实现
@@ -1013,16 +1132,25 @@ def main():
     """
     主函数
     """
+    # 设置输出编码为UTF-8，避免Windows控制台编码问题
+    import sys
+    if sys.stdout.encoding != 'utf-8':
+        try:
+            sys.stdout.reconfigure(encoding='utf-8')
+        except (AttributeError, ValueError):
+            # Python 3.7以下或reconfigure不可用时，使用io.TextIOWrapper
+            import io
+            sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+    
     # 生成 Markdown 日志文件名（基于保单号和当前时间）
     from datetime import datetime
-    import os
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     # 确保 logs 目录存在
     logs_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'logs')
     os.makedirs(logs_dir, exist_ok=True)
     md_log_file = os.path.join(logs_dir, f"lifecycle_simulation_log_{POLICY_NO}_{timestamp}.md")
     
-    print(f"📝 日志将保存到: {md_log_file}\n")
+    print(f"[INFO] 日志将保存到: {md_log_file}\n")
     
     # 开启 dynamic_pv_mode=True，自动计算所需的 PV 数据，无需手动先跑 pv_calculator.py
     simulator = LifecycleSimulator(
@@ -1032,9 +1160,13 @@ def main():
         enable_logging=True,
         dynamic_pv_mode=True
     )
-    simulator.run()
-    
-    print(f"\n✅ 日志已保存到: {md_log_file}")
+    try:
+        simulator.run()
+        print(f"\n[SUCCESS] 日志已保存到: {md_log_file}")
+    finally:
+        # 清理资源，包括数据库连接池
+        simulator.cleanup()
+        print("[INFO] 资源已清理（包括数据库连接池）")
 
 
 if __name__ == "__main__":

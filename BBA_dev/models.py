@@ -135,15 +135,22 @@ class CohortState:
         
         公式：
         EOP_CSM = BOP_CSM + New_CSM + CSM_Interest + CSM_Absorbed_Changes + CSM_Amortization
-        EOP_LC = BOP_LC + New_LC + LC_Absorbed_Changes
+        EOP_LC = BOP_LC + New_LC + LC_IFIE + 分摊的LC + LC_Absorbed_Changes + LC_Adjust
         EOP_IACF = BOP_IACF + New_IACF + IACF_Amortization
         
-        注意：eop_iacf 应该已经从 context.eop_iacf_balance 通过 update_states_from_context() 设置，
-        因此这里不再重新计算，避免覆盖正确的值。
+        注意：
+        - eop_lc 应该已经从 context.end_lc_final 通过 update_states_from_context() 设置（包含完整的LC计量结果），
+          因此这里不再重新计算，避免覆盖正确的值。
+        - eop_iacf 应该已经从 context.eop_iacf_balance 通过 update_states_from_context() 设置，
+          因此这里不再重新计算，避免覆盖正确的值。
         """
         self.eop_csm = self.bop_csm + self.new_csm + self.csm_interest + \
                       self.csm_absorbed_changes + self.csm_amortization
-        self.eop_lc = self.bop_lc + self.new_lc + self.lc_absorbed_changes
+        # eop_lc 应该已经从 context.end_lc_final 通过 update_states_from_context() 设置
+        # 如果还没有设置（为0），则使用简化公式计算作为后备（但这种情况不应该发生）
+        if self.eop_lc == Decimal('0') and self.bop_lc != Decimal('0'):
+            # 后备计算：使用简化公式（不包含LC摊销，因为LC摊销在LC计量模块中计算）
+            self.eop_lc = self.bop_lc + self.new_lc + self.lc_absorbed_changes
         # eop_iacf 应该已经从 context.eop_iacf_balance 通过 update_states_from_context() 设置
         # 如果还没有设置（为0），则使用公式计算作为后备
         if self.eop_iacf == Decimal('0'):
@@ -154,14 +161,12 @@ class CohortState:
         self.net_trial = self.eop_csm + self.eop_lc
         
         # 步骤2：确定合同组最终状态
+        # 注意：这里不应该覆盖eop_lc，因为eop_lc已经从context.end_lc_final正确设置
+        # 合同组状态判定应该在LC计量模块中完成，这里只做状态标记
         if self.net_trial >= 0:
             self.is_profitable = True
-            self.eop_csm = self.net_trial
-            self.eop_lc = Decimal('0')
         else:
             self.is_profitable = False
-            self.eop_csm = Decimal('0')
-            self.eop_lc = self.net_trial
     
     def roll_forward(self):
         """

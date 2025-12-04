@@ -29,6 +29,43 @@ from dateutil.relativedelta import relativedelta
 from BBA_dev.models import CohortState, PolicyState, Assumptions
 from BBA_dev.utils.pv_source_loader import ensure_pv_source_data
 from BBA_dev.utils.pv_field_desc import describe_field
+
+DECIMAL_ZERO = Decimal('0')
+
+def _get_bop_csm_lc(context, cohort_state: Optional[CohortState] = None) -> Decimal:
+    """
+    获取统一的CSM/LC字段（期初余额）
+    
+    逻辑：
+    - 合并bop_csm和bop_lc为统一字段：bop_csm_lc = bop_csm + bop_lc
+    - 当盈利时：bop_csm > 0, bop_lc = 0，所以 bop_csm_lc = bop_csm（正数，走CSM逻辑）
+    - 当亏损时：bop_csm = 0, bop_lc < 0，所以 bop_csm_lc = bop_lc（负数，走LC逻辑）
+    - 根据符号判断：>=0走CSM计息计量等逻辑，<0走LC计息计量等逻辑
+    - 优先从context获取，如果没有则从cohort_state获取
+    
+    Args:
+        context: 计算上下文
+        cohort_state: 合同组状态（可选）
+    
+    Returns:
+        统一的CSM/LC字段值（>=0为CSM，<0为LC）
+    """
+    # 优先从context获取
+    bop_csm = getattr(context, 'bop_csm', None)
+    bop_lc = getattr(context, 'bop_lc', None)
+    
+    # 如果context中没有，从cohort_state获取
+    if bop_csm is None and cohort_state:
+        bop_csm = cohort_state.bop_csm
+    if bop_lc is None and cohort_state:
+        bop_lc = cohort_state.bop_lc
+    
+    # 合并为统一字段：bop_csm_lc = bop_csm + bop_lc
+    # 盈利时：bop_csm > 0, bop_lc = 0，所以 bop_csm_lc = bop_csm（正数）
+    # 亏损时：bop_csm = 0, bop_lc < 0，所以 bop_csm_lc = bop_lc（负数）
+    bop_csm_val = bop_csm if bop_csm is not None else DECIMAL_ZERO
+    bop_lc_val = bop_lc if bop_lc is not None else DECIMAL_ZERO
+    return bop_csm_val + bop_lc_val
 from BBA_dev.logic.coverage_units import (
     calculate_coverage_units_released,
     calculate_coverage_units_remaining
@@ -95,26 +132,6 @@ def _calculate_expense_allocation_ratio(context):
             "Mode": "Time-based"
         }
     return ratio, meta
-
-
-def _get_nb_initial_pv_data(context):
-    """
-    获取新增合同初始确认视角的PV数据：
-    - 默认取签单月（初始确认月）
-    - 若当前仍处于签单年度且评估月已发生变化，则优先取当前评估月的PV数据
-      （pv_calculator会在签单年年末重算"初始确认"字段）
-    """
-    if not hasattr(context, 'under_write_date') or context.under_write_date is None:
-        return None, None
-    uw_month_str = context.under_write_date.strftime('%Y%m')
-    pv_data_ini = context.pv_source_data.get_data(uw_month_str)
-    current_month_str = getattr(context, 'val_month_str', None)
-    if (current_month_str and current_month_str != uw_month_str
-            and context.year == context.under_write_date.year):
-        pv_data_curr = context.pv_source_data.get_data(current_month_str)
-        if pv_data_curr and pv_data_curr.has_field('Pvfl_Nb_Ini_Cfa_Rep_Wlk_Cla_Amt'):
-            return pv_data_curr, current_month_str
-    return pv_data_ini, uw_month_str
 
 
 def _calculate_experience_adjustment(context, logger, assumptions: Assumptions, is_new_business: bool):
@@ -243,19 +260,13 @@ def _calculate_experience_adjustment(context, logger, assumptions: Assumptions, 
     context.actual_claim_incurred = context.expected_claim_nominal
     context.actual_maint_incurred = context.expected_maint_nominal
 
-    # 获取评估月和年初月份
+    # 获取评估月
     eop_month_str = context.val_month_str
-    bop_month_str = (context.eop_date.replace(day=1) - relativedelta(months=11)).strftime('%Y%m') if hasattr(context, 'eop_date') else None
-    if bop_month_str is None:
-        val_date = datetime.strptime(eop_month_str, '%Y%m')
-        bop_date = val_date.replace(month=1, day=1)
-        bop_month_str = bop_date.strftime('%Y%m')
     
-    # 获取PV数据
-    pv_data_eop = context.pv_source_data.get_data(eop_month_str)
-    pv_data_bop = context.pv_source_data.get_data(bop_month_str) if bop_month_str else None
+    # 获取PV数据（只使用当前评估期的PV数据）
+    pv_data = context.pv_source_data.get_data(eop_month_str)
     
-    if pv_data_eop is None:
+    if pv_data is None:
         raise ValueError(f"❌ 错误: 找不到评估月 {eop_month_str} 的PV原材料数据！")
     
     # 经验调整占比（与费用分摊比例同源）
@@ -272,14 +283,10 @@ def _calculate_experience_adjustment(context, logger, assumptions: Assumptions, 
     
     # [Sec 4.3] 保费现金流经验调整
     if is_new_business:
-        # 新增合同
-        pv_data_init, pv_ini_month_str = _get_nb_initial_pv_data(context)
-        if pv_data_init is None:
-            raise ValueError(f"❌ 错误: 找不到新增合同初始确认视角的PV原材料数据！")
-        
-        new_f_end_prem = pv_data_eop.get_field('Pvfl_Nb_Eop_Cfa_Rep_Wlk_Pre_Amt')
-        new_f_init_prem = pv_data_init.get_field('Pvfl_Nb_Ini_Cfa_Rep_Wlk_Pre_Amt')
-        new_c_init_prem = pv_data_init.get_field('Pvfl_Nb_Ini_Cca_Rep_Wlk_Pre_Amt')
+        # 新增合同（从当前评估月的PV数据读取）
+        new_f_end_prem = pv_data.get_field('Pvfl_Nb_Eop_Cfa_Rep_Wlk_Pre_Amt')
+        new_f_init_prem = pv_data.get_field('Pvfl_Nb_Ini_Cfa_Rep_Wlk_Pre_Amt')
+        new_c_init_prem = pv_data.get_field('Pvfl_Nb_Ini_Cca_Rep_Wlk_Pre_Amt')
         
         # 从实际现金流模块获取实际保费（名义值，不计息）
         if hasattr(context, 'actual_cashflows') and context.actual_cashflows:
@@ -313,13 +320,10 @@ def _calculate_experience_adjustment(context, logger, assumptions: Assumptions, 
         )
     else:
         # 存量合同
-        if pv_data_bop is None:
-            raise ValueError(f"❌ 错误: 找不到年初月份 {bop_month_str} 的PV原材料数据！")
-        
-        eff_f_end_prem = pv_data_eop.get_field('Pvfl_If_Eop_Cfa_Rep_Wlk_Pre_Amt')
+        eff_f_end_prem = pv_data.get_field('Pvfl_If_Eop_Cfa_Rep_Wlk_Pre_Amt')
         eff_c_actual_prem = Decimal('0')
-        eff_f_beg_prem = pv_data_bop.get_field('Pvfl_If_Bop_Cfa_Rep_Wlk_Pre_Amt')
-        eff_c_year_prem = pv_data_bop.get_field('Pvfl_If_Bop_Cca_Rep_Wlk_Pre_Amt')
+        eff_f_beg_prem = pv_data.get_field('Pvfl_If_Bop_Cfa_Rep_Wlk_Pre_Amt')
+        eff_c_year_prem = pv_data.get_field('Pvfl_If_Bop_Cca_Rep_Wlk_Pre_Amt')
         
         prem_var_raw = (eff_f_end_prem + eff_c_actual_prem) - (eff_f_beg_prem + eff_c_year_prem)
         context.prem_var = prem_var_raw * exp_adj_ratio
@@ -345,14 +349,10 @@ def _calculate_experience_adjustment(context, logger, assumptions: Assumptions, 
 
     # [Sec 4.4] IACF 经验调整
     if is_new_business:
-        # 新增合同
-        pv_data_init, pv_ini_month_str = _get_nb_initial_pv_data(context)
-        if pv_data_init is None:
-            raise ValueError(f"❌ 错误: 找不到新增合同初始确认视角的PV原材料数据！")
-        
-        new_f_end_iacf = pv_data_eop.get_field('Pvfl_Nb_Eop_Cfa_Rep_Wlk_Acq_Amt')
-        new_f_init_iacf = pv_data_init.get_field('Pvfl_Nb_Ini_Cfa_Rep_Wlk_Acq_Amt')
-        new_c_init_iacf = pv_data_init.get_field('Pvfl_Nb_Ini_Cca_Rep_Wlk_Acq_Amt')
+        # 新增合同（从当前评估月的PV数据读取）
+        new_f_end_iacf = pv_data.get_field('Pvfl_Nb_Eop_Cfa_Rep_Wlk_Acq_Amt')
+        new_f_init_iacf = pv_data.get_field('Pvfl_Nb_Ini_Cfa_Rep_Wlk_Acq_Amt')
+        new_c_init_iacf = pv_data.get_field('Pvfl_Nb_Ini_Cca_Rep_Wlk_Acq_Amt')
         
         # 从实际现金流模块获取实际IACF（名义值，不计息）
         if hasattr(context, 'actual_cashflows') and context.actual_cashflows:
@@ -388,13 +388,10 @@ def _calculate_experience_adjustment(context, logger, assumptions: Assumptions, 
         )
     else:
         # 存量合同
-        if pv_data_bop is None:
-            raise ValueError(f"❌ 错误: 找不到年初月份 {bop_month_str} 的PV原材料数据！")
-        
-        eff_f_end_iacf = pv_data_eop.get_field('Pvfl_If_Eop_Cfa_Rep_Wlk_Acq_Amt')
+        eff_f_end_iacf = pv_data.get_field('Pvfl_If_Eop_Cfa_Rep_Wlk_Acq_Amt')
         eff_c_actual_iacf = Decimal('0')
-        eff_f_beg_iacf = pv_data_bop.get_field('Pvfl_If_Bop_Cfa_Rep_Wlk_Acq_Amt')
-        eff_c_year_iacf = pv_data_bop.get_field('Pvfl_If_Bop_Cca_Rep_Wlk_Acq_Amt')
+        eff_f_beg_iacf = pv_data.get_field('Pvfl_If_Bop_Cfa_Rep_Wlk_Acq_Amt')
+        eff_c_year_iacf = pv_data.get_field('Pvfl_If_Bop_Cca_Rep_Wlk_Acq_Amt')
         
         iacf_var_raw = (eff_f_end_iacf + eff_c_actual_iacf) - (eff_f_beg_iacf + eff_c_year_iacf)
         context.iacf_var = iacf_var_raw * exp_adj_ratio
@@ -462,21 +459,14 @@ def _calculate_csm_lc_absorption(context, logger, cohort_state: CohortState, pol
             "   请确保 initial_recognition.py 已从PV原材料数据读取RA现值。"
         )
     
-    # 获取评估月和年初月份
+    # 获取评估月
     eop_month_str = context.val_month_str
-    bop_month_str = (context.eop_date.replace(day=1) - relativedelta(months=11)).strftime('%Y%m') if hasattr(context, 'eop_date') else None
-    if bop_month_str is None:
-        val_date = datetime.strptime(eop_month_str, '%Y%m')
-        bop_date = val_date.replace(month=1, day=1)
-        bop_month_str = bop_date.strftime('%Y%m')
     
-    # 获取PV数据
-    pv_data_eop = context.pv_source_data.get_data(eop_month_str)
-    pv_data_bop = context.pv_source_data.get_data(bop_month_str) if bop_month_str else None
+    # 获取PV数据（只使用当前评估期的PV数据）
+    pv_data = context.pv_source_data.get_data(eop_month_str)
     
-    if pv_data_eop is None:
+    if pv_data is None:
         raise ValueError(f"❌ 错误: 找不到评估月 {eop_month_str} 的PV原材料数据！")
-    pv_data_init, pv_ini_month_str = _get_nb_initial_pv_data(context)
     
     # 判断是否为新增合同
     if hasattr(context, 'is_new_business'):
@@ -487,13 +477,13 @@ def _calculate_csm_lc_absorption(context, logger, cohort_state: CohortState, pol
         is_new_business = False
     
     # [Sec 5.2] 保费现金流变化
-    eff_f_end_prem = _pv_amount(pv_data_eop, 'Pvfl_If_Eop_Cfa_Rep_Wlk_Pre_Amt')
-    eff_f_beg_prem = _pv_amount(pv_data_bop, 'Pvfl_If_Bop_Cfa_Rep_Wlk_Pre_Amt')
-    eff_c_year_prem = _pv_amount(pv_data_bop, 'Pvfl_If_Bop_Cca_Rep_Wlk_Pre_Amt')
+    eff_f_end_prem = _pv_amount(pv_data, 'Pvfl_If_Eop_Cfa_Rep_Wlk_Pre_Amt')
+    eff_f_beg_prem = _pv_amount(pv_data, 'Pvfl_If_Bop_Cfa_Rep_Wlk_Pre_Amt')
+    eff_c_year_prem = _pv_amount(pv_data, 'Pvfl_If_Bop_Cca_Rep_Wlk_Pre_Amt')
     if is_new_business:
-        new_f_end_prem = _pv_amount(pv_data_eop, 'Pvfl_Nb_Eop_Cfa_Rep_Wlk_Pre_Amt')
-        new_f_init_prem = _pv_amount(pv_data_init, 'Pvfl_Nb_Ini_Cfa_Rep_Wlk_Pre_Amt')
-        new_c_init_prem = _pv_amount(pv_data_init, 'Pvfl_Nb_Ini_Cca_Rep_Wlk_Pre_Amt')
+        new_f_end_prem = _pv_amount(pv_data, 'Pvfl_Nb_Eop_Cfa_Rep_Wlk_Pre_Amt')
+        new_f_init_prem = _pv_amount(pv_data, 'Pvfl_Nb_Ini_Cfa_Rep_Wlk_Pre_Amt')
+        new_c_init_prem = _pv_amount(pv_data, 'Pvfl_Nb_Ini_Cca_Rep_Wlk_Pre_Amt')
         # 从实际现金流模块获取实际保费（名义值，不计息）
         if hasattr(context, 'actual_cashflows') and context.actual_cashflows:
             actual_prem_nb = context.actual_cashflows.get_actual_premium(context.year)
@@ -532,13 +522,13 @@ def _calculate_csm_lc_absorption(context, logger, cohort_state: CohortState, pol
     )
 
     # [Sec 5.3] IACF变化
-    eff_f_end_iacf = _pv_amount(pv_data_eop, 'Pvfl_If_Eop_Cfa_Rep_Wlk_Acq_Amt')
-    eff_f_beg_iacf = _pv_amount(pv_data_bop, 'Pvfl_If_Bop_Cfa_Rep_Wlk_Acq_Amt')
-    eff_c_year_iacf = _pv_amount(pv_data_bop, 'Pvfl_If_Bop_Cca_Rep_Wlk_Acq_Amt')
+    eff_f_end_iacf = _pv_amount(pv_data, 'Pvfl_If_Eop_Cfa_Rep_Wlk_Acq_Amt')
+    eff_f_beg_iacf = _pv_amount(pv_data, 'Pvfl_If_Bop_Cfa_Rep_Wlk_Acq_Amt')
+    eff_c_year_iacf = _pv_amount(pv_data, 'Pvfl_If_Bop_Cca_Rep_Wlk_Acq_Amt')
     if is_new_business:
-        new_f_end_iacf = _pv_amount(pv_data_eop, 'Pvfl_Nb_Eop_Cfa_Rep_Wlk_Acq_Amt')
-        new_f_init_iacf = _pv_amount(pv_data_init, 'Pvfl_Nb_Ini_Cfa_Rep_Wlk_Acq_Amt')
-        new_c_init_iacf = _pv_amount(pv_data_init, 'Pvfl_Nb_Ini_Cca_Rep_Wlk_Acq_Amt')
+        new_f_end_iacf = _pv_amount(pv_data, 'Pvfl_Nb_Eop_Cfa_Rep_Wlk_Acq_Amt')
+        new_f_init_iacf = _pv_amount(pv_data, 'Pvfl_Nb_Ini_Cfa_Rep_Wlk_Acq_Amt')
+        new_c_init_iacf = _pv_amount(pv_data, 'Pvfl_Nb_Ini_Cca_Rep_Wlk_Acq_Amt')
         # 从实际现金流模块获取实际IACF（名义值，不计息）
         if hasattr(context, 'actual_cashflows') and context.actual_cashflows:
             actual_iacf_nb = context.actual_cashflows.get_actual_iacf(context.year)
@@ -577,34 +567,61 @@ def _calculate_csm_lc_absorption(context, logger, cohort_state: CohortState, pol
     )
 
     # [Sec 5.4] 赔付现金流变化
-    eff_f_end_claim = _pv_amount(pv_data_eop, 'Pvfl_If_Eop_Cfa_Rep_Wlk_Cla_Amt')
-    eff_f_beg_claim = _pv_amount(pv_data_bop, 'Pvfl_If_Bop_Cfa_Rep_Wlk_Cla_Amt')
+    pv_field_eff_f_end_claim = 'Pvfl_If_Eop_Cfa_Rep_Wlk_Cla_Amt'
+    pv_field_eff_f_beg_claim = 'Pvfl_If_Bop_Cfa_Rep_Wlk_Cla_Amt'
+    eff_f_end_claim = _pv_amount(pv_data, pv_field_eff_f_end_claim)
+    eff_f_beg_claim = _pv_amount(pv_data, pv_field_eff_f_beg_claim)
+    
     if is_new_business:
-        new_f_end_claim = _pv_amount(pv_data_eop, 'Pvfl_Nb_Eop_Cfa_Rep_Wlk_Cla_Amt')
-        new_f_init_claim = _pv_amount(pv_data_init, 'Pvfl_Nb_Ini_Cfa_Rep_Wlk_Cla_Amt')
+        pv_field_new_f_end_claim = 'Pvfl_Nb_Eop_Cfa_Rep_Wlk_Cla_Amt'
+        pv_field_new_f_init_claim = 'Pvfl_Nb_Ini_Cfa_Rep_Wlk_Cla_Amt'
+        new_f_end_claim = _pv_amount(pv_data, pv_field_new_f_end_claim)
+        new_f_init_claim = _pv_amount(pv_data, pv_field_new_f_init_claim)
     else:
+        pv_field_new_f_end_claim = None
+        pv_field_new_f_init_claim = None
         new_f_end_claim = DECIMAL_ZERO
         new_f_init_claim = DECIMAL_ZERO
+    
     delta_claims = (eff_f_end_claim + new_f_end_claim) - (eff_f_beg_claim + new_f_init_claim)
+    
+    # 构建公式描述，使用PV字段的完整含义
+    formula_parts = []
+    formula_parts.append(f"【{describe_field(pv_field_eff_f_end_claim)}】")
+    if is_new_business:
+        formula_parts.append(f"+【{describe_field(pv_field_new_f_end_claim)}】")
+    formula_parts.append(f"-【{describe_field(pv_field_eff_f_beg_claim)}】")
+    if is_new_business:
+        formula_parts.append(f"-【{describe_field(pv_field_new_f_init_claim)}】")
+    formula_desc = "".join(formula_parts)
+    
+    # 构建数值字典，使用PV字段的完整含义作为键
+    values_dict = {
+        describe_field(pv_field_eff_f_end_claim): eff_f_end_claim,
+        describe_field(pv_field_eff_f_beg_claim): eff_f_beg_claim
+    }
+    if is_new_business:
+        values_dict[describe_field(pv_field_new_f_end_claim)] = new_f_end_claim
+        values_dict[describe_field(pv_field_new_f_init_claim)] = new_f_init_claim
+        values_dict["PV字段"] = f"{pv_field_eff_f_end_claim}, {pv_field_eff_f_beg_claim}, {pv_field_new_f_end_claim}, {pv_field_new_f_init_claim}"
+    else:
+        values_dict["PV字段"] = f"{pv_field_eff_f_end_claim}, {pv_field_eff_f_beg_claim}"
+    
     logger.log_item(
         "赔付与费用_预期赔付变化",
         "[Sec 5.4] 赔付现金流变化（统一Wlk公式）",
-        "Δ_Claims = (Eff_F_end^Cla + New_F_end^Cla) - (Eff_F_beg^Cla + New_F_init^Cla)",
-        {
-            "Eff_F_end^Cla": eff_f_end_claim,
-            "Eff_F_beg^Cla": eff_f_beg_claim,
-            "New_F_end^Cla": new_f_end_claim,
-            "New_F_init^Cla": new_f_init_claim
-        },
-        delta_claims
+        formula_desc,
+        values_dict,
+        delta_claims,
+        note="所有现值均从PV原材料数据读取，使用加权初始确认利率（Wlk）"
     )
 
     # [Sec 5.5] 维持费用现金流变化
-    eff_f_end_maint = _pv_amount(pv_data_eop, 'Pvfl_If_Eop_Cfa_Rep_Wlk_Mtn_Amt')
-    eff_f_beg_maint = _pv_amount(pv_data_bop, 'Pvfl_If_Bop_Cfa_Rep_Wlk_Mtn_Amt')
+    eff_f_end_maint = _pv_amount(pv_data, 'Pvfl_If_Eop_Cfa_Rep_Wlk_Mtn_Amt')
+    eff_f_beg_maint = _pv_amount(pv_data, 'Pvfl_If_Bop_Cfa_Rep_Wlk_Mtn_Amt')
     if is_new_business:
-        new_f_end_maint = _pv_amount(pv_data_eop, 'Pvfl_Nb_Eop_Cfa_Rep_Wlk_Mtn_Amt')
-        new_f_init_maint = _pv_amount(pv_data_init, 'Pvfl_Nb_Ini_Cfa_Rep_Wlk_Mtn_Amt')
+        new_f_end_maint = _pv_amount(pv_data, 'Pvfl_Nb_Eop_Cfa_Rep_Wlk_Mtn_Amt')
+        new_f_init_maint = _pv_amount(pv_data, 'Pvfl_Nb_Ini_Cfa_Rep_Wlk_Mtn_Amt')
     else:
         new_f_end_maint = DECIMAL_ZERO
         new_f_init_maint = DECIMAL_ZERO
@@ -641,11 +658,11 @@ def _calculate_csm_lc_absorption(context, logger, cohort_state: CohortState, pol
     )
 
     # [Sec 5.7] 非金融风险调整变化
-    eff_f_end_ra = _pv_amount(pv_data_eop, 'Pvfl_If_Eop_Cfa_Rep_Wlk_Rad_Amt')
-    eff_f_beg_ra = _pv_amount(pv_data_bop, 'Pvfl_If_Bop_Cfa_Rep_Wlk_Rad_Amt')
+    eff_f_end_ra = _pv_amount(pv_data, 'Pvfl_If_Eop_Cfa_Rep_Wlk_Rad_Amt')
+    eff_f_beg_ra = _pv_amount(pv_data, 'Pvfl_If_Bop_Cfa_Rep_Wlk_Rad_Amt')
     if is_new_business:
-        new_f_end_ra = _pv_amount(pv_data_eop, 'Pvfl_Nb_Eop_Cfa_Rep_Wlk_Rad_Amt')
-        new_f_init_ra = _pv_amount(pv_data_init, 'Pvfl_Nb_Ini_Cfa_Rep_Wlk_Rad_Amt')
+        new_f_end_ra = _pv_amount(pv_data, 'Pvfl_Nb_Eop_Cfa_Rep_Wlk_Rad_Amt')
+        new_f_init_ra = _pv_amount(pv_data, 'Pvfl_Nb_Ini_Cfa_Rep_Wlk_Rad_Amt')
     else:
         new_f_end_ra = DECIMAL_ZERO
         new_f_init_ra = DECIMAL_ZERO
@@ -683,32 +700,29 @@ def _calculate_csm_lc_absorption(context, logger, cohort_state: CohortState, pol
     # CSM/LC统一字段逻辑：使用一个字段，>=0走CSM逻辑，<0走LC逻辑
     # ==========================================================================================
     # 获取统一的CSM/LC字段（用于计算LC IFIE分摊比例）
-    bop_csm_lc = getattr(context, 'bop_csm', None)
-    if bop_csm_lc is None and cohort_state:
-        bop_csm_lc = cohort_state.bop_csm
-    if bop_csm_lc is None:
-        bop_csm_lc = Decimal('0')
+    # 修复：正确合并bop_csm和bop_lc，根据符号判断是CSM（>=0）还是LC（<0）
+    bop_csm_lc = _get_bop_csm_lc(context, cohort_state)
     
+    # 获取统一的CSM/LC字段（用于计算LC IFIE分摊比例）
+    # 修复：context.nb_initial_lc 现在直接存储为负数（亏损），不需要再转换
     nb_initial_csm_lc = context.nb_initial_csm or Decimal('0')
     if nb_initial_csm_lc == Decimal('0') and hasattr(context, 'nb_initial_lc'):
-        nb_initial_csm_lc = context.nb_initial_lc or Decimal('0')
+        nb_lc_val = context.nb_initial_lc or Decimal('0')
+        if nb_lc_val < Decimal('0'):  # LC应该是负数
+            nb_initial_csm_lc = nb_lc_val
     
     # [Sec 7.2.2] LC IFIE分摊比例（期初有效合同）
     # 注意：LC IFIE分摊比例用于后续IFIE模块，这里只计算并保存到context
     if_lc_ifie_ratio = Decimal('0')
     if bop_csm_lc < 0:
-        # 分母：预期赔付现金流初始确认现值 + 预期维持费用现金流初始确认现值 + 预期非金融风险调整初始确认现值
-        # 理解：有效合同-年初确认-预期当期/预期未来-期初现值（LCU）
-        if pv_data_bop is None:
-            denom_if = Decimal('0')
-        else:
-            pv_if_init_claims = (pv_data_bop.get_field('Pvfl_If_Bop_Cfa_Beg_Lcu_Cla_Amt', DECIMAL_ZERO) +
-                                pv_data_bop.get_field('Pvfl_If_Bop_Cca_Beg_Lcu_Cla_Amt', DECIMAL_ZERO))
-            pv_if_init_maint = (pv_data_bop.get_field('Pvfl_If_Bop_Cfa_Beg_Lcu_Mtn_Amt', DECIMAL_ZERO) +
-                               pv_data_bop.get_field('Pvfl_If_Bop_Cca_Beg_Lcu_Mtn_Amt', DECIMAL_ZERO))
-            pv_if_init_ra = (pv_data_bop.get_field('Pvfl_If_Bop_Cfa_Beg_Lcu_Rad_Amt', DECIMAL_ZERO) +
-                            pv_data_bop.get_field('Pvfl_If_Bop_Cca_Beg_Lcu_Rad_Amt', DECIMAL_ZERO))
-            denom_if = pv_if_init_claims + pv_if_init_maint + pv_if_init_ra
+        # 分母：预期赔付现金流年初现值 + 预期维持费用现金流年初现值 + 预期非金融风险调整年初现值
+        # 理解：有效合同-年初预期-预期未来-年初现值（LCU），已包含1月现金流
+        # 注意：已删除 Cca_Beg_Lcu 字段，Cfa_Beg_Lcu 已经包含了1月现金流（折现到年初）
+        # 年初现值：有效合同-年初预期-预期未来-年初现值（LCU）
+        pv_if_init_claims = pv_data.get_field('Pvfl_If_Bop_Cfa_Beg_Lcu_Cla_Amt', DECIMAL_ZERO)
+        pv_if_init_maint = pv_data.get_field('Pvfl_If_Bop_Cfa_Beg_Lcu_Mtn_Amt', DECIMAL_ZERO)
+        pv_if_init_ra = pv_data.get_field('Pvfl_If_Bop_Cfa_Beg_Lcu_Rad_Amt', DECIMAL_ZERO)
+        denom_if = pv_if_init_claims + pv_if_init_maint + pv_if_init_ra
         
         if denom_if > 0:
             if_lc_ifie_ratio = abs(bop_csm_lc) / denom_if

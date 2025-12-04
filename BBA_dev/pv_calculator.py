@@ -218,9 +218,12 @@ def calculate_pv_exact(
             
             if cf_date > valuation_date:
                 # Discounting: Future -> Present
-                # Range: (idx_val + 1) to idx_cf
-                start_step = max(1, idx_val + 1)
-                end_step = idx_cf
+                # 期数需要+1：从 (idx_val + 1 + 1) 到 (idx_cf + 1)
+                # 例如：202205签单，202206评估，202207现金流
+                # idx_val=1, idx_cf=2 → 使用 term_month=3
+                # 202208现金流：idx_cf=3 → 使用 term_month=3,4累乘
+                start_step = max(1, idx_val + 2)  # +1 for period adjustment
+                end_step = idx_cf + 1  # +1 for period adjustment
                 
                 for t in range(start_step, end_step + 1):
                     r = get_monthly_rate(rates_map, t, max_term)
@@ -237,6 +240,106 @@ def calculate_pv_exact(
         
         total_pv += amount * factor
         
+    return total_pv
+
+def calculate_pv_initial_recognition(
+    cf_df: pd.DataFrame, 
+    col_name: str, 
+    rates_df: pd.DataFrame, 
+    valuation_date: date,  # 签单月月中（15日）
+    curve_base_date: date,  # 签单日期
+    uw_date: date  # 签单日期，用于判断签单月
+) -> Decimal:
+    """
+    初始确认现值计算（折现至签单月月中）
+    
+    特殊规则：
+    - 签单月的保费和获取费用：在月中（15日），折现半个月
+    - 签单月的赔付和维持费用：在月末，折现一个月
+    - 其他月份的现金流：在月末，折现期数 = 0.5 + (月份差 - 1)
+    
+    折现逻辑：
+    - 签单月保费/获取费用（月中）：100 / (1 + 第一个月利率/2)
+    - 签单月赔付/维持费用（月末）：100 / (1 + 第一个月利率)
+    - 第二个月现金流（月末）：100 / ((1 + 第一个月利率/2) * (1 + 第二个月利率))
+    - 第三个月现金流（月末）：100 / ((1 + 第一个月利率/2) * (1 + 第二个月利率) * (1 + 第三个月利率))
+    
+    Args:
+        cf_df: Cash flow DataFrame with 'Date_Obj' column and 'YYYYMM' column.
+        col_name: Value column to discount ('Premium', 'IACF', 'Claims', 'Expenses').
+        rates_df: Rate curve (term_month -> forward_rate).
+        valuation_date: 签单月月中（15日）
+        curve_base_date: 签单日期（用于locked curve计算）
+        uw_date: 签单日期（用于判断是否为签单月）
+    """
+    total_pv = Decimal('0')
+    
+    # Pre-process rates into a fast lookup map
+    rates_map = dict(zip(rates_df['term_month'], rates_df['forward_disrate_value'].apply(Decimal)))
+    max_term = rates_df['term_month'].max() if not rates_df.empty else 0
+    
+    # 签单月标识
+    uw_year_month = (uw_date.year, uw_date.month)
+    
+    for _, row in cf_df.iterrows():
+        amount = Decimal(str(row[col_name]))
+        if amount == 0:
+            continue
+            
+        cf_date = row['Date_Obj']
+        cf_yyyymm = row['YYYYMM']
+        cf_year = int(cf_yyyymm[:4])
+        cf_month = int(cf_yyyymm[4:6])
+        cf_year_month = (cf_year, cf_month)
+        
+        # 判断是否为签单月
+        is_uw_month = (cf_year_month == uw_year_month)
+        
+        # 判断是否为保费或获取费用（需要在月中）
+        is_premium_or_iacf = (col_name in ['Premium', 'IACF'])
+        
+        # 计算折现因子
+        factor = Decimal('1.0')
+        
+        if is_uw_month:
+            # 签单月的现金流
+            if is_premium_or_iacf:
+                # 保费和获取费用：在月中，现金流就在月中，不需要折现
+                factor = Decimal('1.0')
+            else:
+                # 赔付和维持费用：在月末，折现半个月
+                # 使用第一个月的利率的一半
+                r1 = get_monthly_rate(rates_map, 1, max_term)
+                factor = Decimal('1.0') / (Decimal('1.0') + r1 / Decimal('2'))
+        else:
+            # 其他月份的现金流：在月末
+            # 计算从签单月到现金流月份的月数差
+            def get_month_idx(d):
+                rd = relativedelta(d, curve_base_date)
+                return rd.years * 12 + rd.months
+            
+            idx_cf = get_month_idx(cf_date)
+            
+            if idx_cf <= 0:
+                # 不应该发生，但为了安全
+                continue
+            
+            # 折现逻辑：
+            # 第一个月：折现半个月（因为从月中开始）
+            # 第二个月及以后：折现整月
+            # 总折现期数 = 0.5 + (idx_cf - 1) = idx_cf - 0.5
+            
+            # 第一个月：折现半个月
+            r1 = get_monthly_rate(rates_map, 1, max_term)
+            factor = Decimal('1.0') / (Decimal('1.0') + r1 / Decimal('2'))
+            
+            # 第二个月到第idx_cf个月：折现整月
+            for t in range(2, idx_cf + 1):
+                r = get_monthly_rate(rates_map, t, max_term)
+                factor /= (Decimal('1.0') + r)
+        
+        total_pv += amount * factor
+    
     return total_pv
 
 def calculate_pv_current_period_no_interest_after_occurrence(
@@ -318,8 +421,9 @@ def calculate_pv_current_period_no_interest_after_occurrence(
                 idx_cf = get_month_idx(cf_date)
                 idx_val = get_month_idx(valuation_date)
                 
-                start_step = max(1, idx_val + 1)
-                end_step = idx_cf
+                # 期数需要+1：从 (idx_val + 1 + 1) 到 (idx_cf + 1)
+                start_step = max(1, idx_val + 2)  # +1 for period adjustment
+                end_step = idx_cf + 1  # +1 for period adjustment
                 
                 for t in range(start_step, end_step + 1):
                     r = get_monthly_rate(rates_map, t, max_term)
@@ -402,7 +506,8 @@ def main():
     
     # 为了预览目的，生成一份基于期末假设的现金流
     full_cf_df_preview = projector.project_policy_flows(policy_row, assump_obj)
-    full_cf_df_preview['Date_Obj'] = pd.to_datetime(full_cf_df_preview['YYYYMM'], format='%Y%m').dt.date
+    # 将日期设置为月末（而不是月初），确保折现期数计算正确
+    full_cf_df_preview['Date_Obj'] = (pd.to_datetime(full_cf_df_preview['YYYYMM'], format='%Y%m') + pd.offsets.MonthEnd(0)).dt.date
     
     # Print CF Preview
     print("\n" + "="*50)
@@ -437,6 +542,116 @@ def main():
         rad = (cla + mtn) * assump_obj.ra_ratio
         return {f"_Pre_Amt": pre, f"_Acq_Amt": acq, f"_Cla_Amt": cla, f"_Mtn_Amt": mtn, f"_Rad_Amt": rad}
 
+    def calculate_pv_beg_lcu(
+        cf_df: pd.DataFrame,
+        col_name: str,
+        rates_df: pd.DataFrame,
+        bop_date: date
+    ) -> Decimal:
+        """
+        计算Beg_Lcu字段的特殊折现逻辑
+        
+        为什么需要重写折现函数：
+        1. 当前的calculate_pv_exact函数对于locked curve，使用(现金流日期 - 签单日期)的月数差来计算term_month
+        2. 但对于Lcu字段，我们需要的是从1月1日开始，使用上年末利率曲线折现
+        3. 这意味着折现逻辑需要从1月1日开始计算期数，而不是从签单日期开始
+        4. 例如：2023年1月的现金流，应该使用202212利率曲线的第1期折现至2023年1月1日
+        5. 如果使用calculate_pv_exact，它会从签单日期（如2022年5月）开始计算期数，导致期数错误
+        
+        Args:
+            cf_df: 现金流DataFrame（从1月1日开始的所有现金流）
+            col_name: 现金流列名（'Premium', 'IACF', 'Claims', 'Expenses'）
+            rates_df: 上年末的锁定利率曲线（如202212）
+            bop_date: 年初时点（1月1日，如2023年1月1日）
+        
+        Returns:
+            现值
+        
+        折现逻辑：
+        - 折现时点：1月1日（bop_date）
+        - 利率曲线：上年末的锁定利率曲线（如202212）
+        - 1月现金流：100 / (1 + 202212利率曲线第1期)
+        - 2月现金流：100 / ((1 + 202212利率曲线第1期) * (1 + 202212利率曲线第2期))
+        - 以此类推
+        """
+        total_pv = Decimal('0')
+        
+        # Pre-process rates into a fast lookup map
+        rates_map = dict(zip(rates_df['term_month'], rates_df['forward_disrate_value'].apply(Decimal)))
+        max_term = rates_df['term_month'].max() if not rates_df.empty else 0
+        
+        for _, row in cf_df.iterrows():
+            amount = Decimal(str(row[col_name]))
+            if amount == 0:
+                continue
+            
+            cf_date = row['Date_Obj']
+            
+            # 如果现金流日期就是折现时点，直接返回原值
+            if cf_date == bop_date:
+                total_pv += amount
+                continue
+            
+            # 计算从1月1日到现金流日期的月数差
+            rd = relativedelta(cf_date, bop_date)
+            months_diff = rd.years * 12 + rd.months
+            
+            # 计算折现因子
+            factor = Decimal('1.0')
+            
+            if months_diff > 0:
+                # 未来现金流：折现
+                # 从第1期开始，到第months_diff期
+                for t in range(1, months_diff + 1):
+                    r = get_monthly_rate(rates_map, t, max_term)
+                    factor /= (Decimal('1.0') + r)
+            elif months_diff < 0:
+                # 过去现金流：累积（理论上不应该发生，因为cf_df应该只包含1月1日及之后的现金流）
+                for t in range(1, abs(months_diff) + 1):
+                    r = get_monthly_rate(rates_map, t, max_term)
+                    factor *= (Decimal('1.0') + r)
+            
+            total_pv += amount * factor
+        
+        return total_pv
+    
+    def calc_all_beg_lcu(cf_subset, bop_date, prev_year_end_month, rates_df):
+        """
+        计算Beg_Lcu字段的特殊折现逻辑
+        
+        Args:
+            cf_subset: 现金流DataFrame（从1月1日开始的所有现金流）
+            bop_date: 年初时点（1月1日）
+            prev_year_end_month: 上年末月份字符串（如"202212"），仅用于日志记录
+            rates_df: 上年末的锁定利率曲线
+        
+        Returns:
+            包含Pre, Acq, Cla, Mtn, Rad的字典
+        """
+        if cf_subset.empty:
+            return {
+                "_Pre_Amt": DECIMAL_ZERO,
+                "_Acq_Amt": DECIMAL_ZERO,
+                "_Cla_Amt": DECIMAL_ZERO,
+                "_Mtn_Amt": DECIMAL_ZERO,
+                "_Rad_Amt": DECIMAL_ZERO
+            }
+        
+        # 使用专门的折现函数
+        pre = calculate_pv_beg_lcu(cf_subset, 'Premium', rates_df, bop_date)
+        acq = calculate_pv_beg_lcu(cf_subset, 'IACF', rates_df, bop_date)
+        cla = calculate_pv_beg_lcu(cf_subset, 'Claims', rates_df, bop_date)
+        mtn = calculate_pv_beg_lcu(cf_subset, 'Expenses', rates_df, bop_date)
+        rad = (cla + mtn) * assump_obj.ra_ratio
+        
+        return {
+            "_Pre_Amt": pre,
+            "_Acq_Amt": acq,
+            "_Cla_Amt": cla,
+            "_Mtn_Amt": mtn,
+            "_Rad_Amt": rad
+        }
+    
     def calc_all_cca(cf_subset, val_d, curve_base_d, rates):
         """Helper for Cca: Past/Current -> Original Value; Future -> Discounted"""
         if USE_VECTORIZED_PV:
@@ -506,15 +721,61 @@ def main():
             # 生成对应现金流
             # 1. 基于签单时假设的现金流 (用于Nb_Ini)
             cf_uw = projector.project_policy_flows(policy_row, assump_uw)
-            cf_uw['Date_Obj'] = pd.to_datetime(cf_uw['YYYYMM'], format='%Y%m').dt.date
+            # 设置现金流日期：
+            # - 签单月的保费和获取费用：月中（15日）
+            # - 签单月的赔付和维持费用：月末
+            # - 其他月份：月末
+            def set_cf_dates_for_initial_recognition(cf_df, uw_date, col_name):
+                """
+                为初始确认现值设置现金流日期
+                根据现金流类型（Premium/IACF vs Claims/Expenses）设置不同的日期
+                """
+                cf_df = cf_df.copy()
+                uw_year_month = (uw_date.year, uw_date.month)
+                
+                # 判断是否为保费或获取费用
+                is_premium_or_iacf = (col_name in ['Premium', 'IACF'])
+                
+                # 创建日期列
+                date_list = []
+                for _, row in cf_df.iterrows():
+                    yyyymm = row['YYYYMM']
+                    cf_year = int(yyyymm[:4])
+                    cf_month = int(yyyymm[4:6])
+                    cf_year_month = (cf_year, cf_month)
+                    
+                    if cf_year_month == uw_year_month:
+                        # 签单月
+                        if is_premium_or_iacf:
+                            # 保费和获取费用：月中（15日）
+                            date_list.append(date(cf_year, cf_month, 15))
+                        else:
+                            # 赔付和维持费用：月末
+                            _, last_day = calendar.monthrange(cf_year, cf_month)
+                            date_list.append(date(cf_year, cf_month, last_day))
+                    else:
+                        # 其他月份：月末
+                        _, last_day = calendar.monthrange(cf_year, cf_month)
+                        date_list.append(date(cf_year, cf_month, last_day))
+                
+                cf_df['Date_Obj'] = date_list
+                return cf_df
+            
+            # 其他用途的现金流仍使用月末日期
+            cf_uw['Date_Obj'] = (pd.to_datetime(cf_uw['YYYYMM'], format='%Y%m') + pd.offsets.MonthEnd(0)).dt.date
             
             # 2. 基于上年末假设的现金流 (用于If_Bop)
             cf_prev_ye = projector.project_policy_flows(policy_row, assump_prev_ye)
-            cf_prev_ye['Date_Obj'] = pd.to_datetime(cf_prev_ye['YYYYMM'], format='%Y%m').dt.date
+            cf_prev_ye['Date_Obj'] = (pd.to_datetime(cf_prev_ye['YYYYMM'], format='%Y%m') + pd.offsets.MonthEnd(0)).dt.date
+            
+            # 保存年初现金流到bop_cf_by_year（基于上年末精算假设）
+            # 注意：只在非签单年度保存，因为签单年度没有年初预期
+            if not is_new_business:
+                bop_cf_by_year[val_month_date.year] = cf_prev_ye
             
             # 3. 基于当前评估月假设的现金流 (用于Nb_Eop / If_Eop)
             cf_val = projector.project_policy_flows(policy_row, assump_val)
-            cf_val['Date_Obj'] = pd.to_datetime(cf_val['YYYYMM'], format='%Y%m').dt.date
+            cf_val['Date_Obj'] = (pd.to_datetime(cf_val['YYYYMM'], format='%Y%m') + pd.offsets.MonthEnd(0)).dt.date
             
             # 获取折现率
             rate_val_locked_df = get_discount_factors("locked", uw_date.strftime("%Y%m"))
@@ -546,26 +807,37 @@ def main():
             # --- NB Initial Recognition (Rec) - only for new business year ---
             # 重要：Nb字段只在签单年度有值，非签单年度应该为0
             if is_new_business:
-                # 计算签单月月末（作为初始确认现值 Rec 的折现时点）
-                _, last_day_uw = calendar.monthrange(uw_date.year, uw_date.month)
-                uw_month_end = date(uw_date.year, uw_date.month, last_day_uw)
+                # 计算签单月月中（作为初始确认现值 Rec 的折现时点）
+                uw_month_mid = date(uw_date.year, uw_date.month, 15)
 
                 # 签单年度：计算新增合同的PV值
                 
-                # 1. Nb_Ini_Rec (新增-初始-初始确认现值): 折现至 签单月末 (uw_month_end)
-                # Ini_Cca (Current Period Flows: 年初至当前评估月末)
-                # 使用 calc_all_cca (当期/过去不折现)
-                res_ini_cca_rec = calc_all_cca(cf_uw_current, uw_month_end, uw_date, rate_val_locked_df)
-                for k, v in res_ini_cca_rec.items():
-                    results[f"Pvfl_Nb_Ini_Cca_Rec_Lkd{k}"] = v
-                    # 删除 Wlk 字段（未使用）
+                # 1. Nb_Ini_Rec (新增-初始-初始确认现值): 折现至 签单月月中 (uw_month_mid)
+                # 注意：已删除 Cca 字段，只保留 Cfa 字段
+                # Ini_Cfa (签单月及之后的所有现金流)
+                # 使用新的初始确认折现函数（支持月中折现）
+                # 为每种现金流类型分别设置日期（保费/IACF在月中，其他在月末）
                 
-                # Ini_Cfa (Future Period Flows: 当前评估月末之后)
-                # 使用 calc_all (精确折现)
-                res_ini_cfa_rec = calc_all(cf_uw_future, uw_month_end, uw_date, rate_val_locked_df, "")
-                for k, v in res_ini_cfa_rec.items():
-                    results[f"Pvfl_Nb_Ini_Cfa_Rec_Lkd{k}"] = v
-                    # 删除 Wlk 字段（未使用）
+                # 分别计算各个现金流类型，每种类型使用对应的日期设置
+                pre_rec = calculate_pv_initial_recognition(
+                    set_cf_dates_for_initial_recognition(cf_uw, uw_date, 'Premium'), 
+                    'Premium', rate_val_locked_df, uw_month_mid, uw_date, uw_date)
+                acq_rec = calculate_pv_initial_recognition(
+                    set_cf_dates_for_initial_recognition(cf_uw, uw_date, 'IACF'), 
+                    'IACF', rate_val_locked_df, uw_month_mid, uw_date, uw_date)
+                cla_rec = calculate_pv_initial_recognition(
+                    set_cf_dates_for_initial_recognition(cf_uw, uw_date, 'Claims'), 
+                    'Claims', rate_val_locked_df, uw_month_mid, uw_date, uw_date)
+                mtn_rec = calculate_pv_initial_recognition(
+                    set_cf_dates_for_initial_recognition(cf_uw, uw_date, 'Expenses'), 
+                    'Expenses', rate_val_locked_df, uw_month_mid, uw_date, uw_date)
+                rad_rec = (cla_rec + mtn_rec) * assump_uw.ra_ratio
+                
+                results["Pvfl_Nb_Ini_Cfa_Rec_Lkd_Pre_Amt"] = pre_rec
+                results["Pvfl_Nb_Ini_Cfa_Rec_Lkd_Acq_Amt"] = acq_rec
+                results["Pvfl_Nb_Ini_Cfa_Rec_Lkd_Cla_Amt"] = cla_rec
+                results["Pvfl_Nb_Ini_Cfa_Rec_Lkd_Mtn_Amt"] = mtn_rec
+                results["Pvfl_Nb_Ini_Cfa_Rec_Lkd_Rad_Amt"] = rad_rec
                 
                 # --- NB Rep (End of Period) - based on val_month_end ---
                 # 2. Nb_Ini_Rep (新增-初始-期末现值): 折现至 评估期末 (val_month_end)
@@ -616,9 +888,8 @@ def main():
                 nb_field_suffixes = [
                     "_Pre_Amt", "_Acq_Amt", "_Cla_Amt", "_Mtn_Amt", "_Rad_Amt"
                 ]
-                # 删除了 Wlk 和 Eop_Cca_Rep_Cur 相关前缀（未使用）
+                # 注意：已删除 Pvfl_Nb_Ini_Cca_Rec_Lkd 字段
                 nb_field_prefixes = [
-                    "Pvfl_Nb_Ini_Cca_Rec_Lkd",
                     "Pvfl_Nb_Ini_Cfa_Rec_Lkd",
                     "Pvfl_Nb_Ini_Cca_Rep_Wlk",
                     "Pvfl_Nb_Ini_Cfa_Rep_Wlk",
@@ -647,9 +918,6 @@ def main():
                 "Pvfl_If_Bop_Cfa_Rep_Wlk_Cla_Amt",
                 "Pvfl_If_Bop_Cfa_Rep_Wlk_Mtn_Amt",
                 "Pvfl_If_Bop_Cfa_Rep_Wlk_Rad_Amt",
-                "Pvfl_If_Bop_Cca_Beg_Lcu_Cla_Amt",
-                "Pvfl_If_Bop_Cca_Beg_Lcu_Mtn_Amt",
-                "Pvfl_If_Bop_Cca_Beg_Lcu_Rad_Amt",
                 "Pvfl_If_Bop_Cfa_Beg_Lcu_Cla_Amt",
                 "Pvfl_If_Bop_Cfa_Beg_Lcu_Mtn_Amt",
                 "Pvfl_If_Bop_Cfa_Beg_Lcu_Rad_Amt",
@@ -681,11 +949,14 @@ def main():
                 bop_date = date(val_month_date.year, 1, 1)
                 
                 # 获取年初现金流（基于上年年底的精算假设）
+                # 修复：确保使用基于上年末精算假设的现金流，而不是当前评估月假设
                 if val_month_date.year in bop_cf_by_year:
                     cf_bop = bop_cf_by_year[val_month_date.year]
                 else:
-                    # 如果没有年初现金流，使用当前现金流（fallback）
-                    cf_bop = cf_for_calc
+                    # 如果没有年初现金流，使用上年末假设的现金流（cf_prev_ye）
+                    # 注意：这里不应该fallback到当前现金流（cf_for_calc），因为年初预期必须基于上年末假设
+                    # cf_prev_ye在循环开始时就已生成，基于上年末精算假设（assump_prev_ye）
+                    cf_bop = cf_prev_ye
                 
                 # 年初预期当期现金流（BOP_Cca）：评估年度内的现金流
                 if not cf_bop.empty:
@@ -694,9 +965,12 @@ def main():
                         (cf_bop['Date_Obj'] <= val_month_end)
                     ]
                     cf_bop_future = cf_bop[cf_bop['Date_Obj'] > val_month_end]
+                    # Beg字段：必须包含从1月1日开始的所有现金流
+                    cf_bop_beg = cf_bop[cf_bop['Date_Obj'] >= year_start]
                 else:
                     cf_bop_current = cf_bop
                     cf_bop_future = cf_bop
+                    cf_bop_beg = cf_bop
                 
                 # 计算年初预期当期（BOP_Cca）
                 # 已过去月份（1月到评估月）：取原值（不计息）
@@ -759,31 +1033,21 @@ def main():
                 # 折现到年初时点（1月1日），使用上年年末的锁定利率曲线（Lcu）
                 # 仅针对有效合同年初预期（If_Bop），且仅在年初（is_bop）时计算
                 # 注意：这里已经在 is_bop 且 not is_new_business 的分支中，所以不需要再次判断
-                # 获取上年年末的锁定利率曲线（上年12月31日）
-                # 注意：Lcu使用的是上年年末的锁定利率曲线
-                # 锁定利率曲线在签单日确定后保持不变，所以使用签单日的锁定利率曲线
-                rate_prev_year_locked_df = get_discount_factors("locked", uw_date.strftime("%Y%m"))
                 
                 # 年初时点（1月1日）
                 bop_date = date(val_month_date.year, 1, 1)
                 
-                # 计算年初预期当期（BOP_Cca）的年初现值（Beg_Lcu）
-                # 折现到年初时点（1月1日），使用上年年末锁定利率曲线
-                # 1月现金流折现1个月，12月现金流折现12个月
-                res_bop_cca_beg = calc_all(cf_bop_current, bop_date, uw_date, rate_prev_year_locked_df, "")
-                # 修正RA计算：使用年初时的精算假设（val_assump_obj）
-                cla_beg = res_bop_cca_beg.get("_Cla_Amt", DECIMAL_ZERO)
-                mtn_beg = res_bop_cca_beg.get("_Mtn_Amt", DECIMAL_ZERO)
-                rad_beg = (cla_beg + mtn_beg) * val_assump_obj.ra_ratio
-                res_bop_cca_beg["_Rad_Amt"] = rad_beg
-                # 只保存赔付、维费、RA字段（删除保费和IACF）
-                for k, v in res_bop_cca_beg.items():
-                    if k in ["_Cla_Amt", "_Mtn_Amt", "_Rad_Amt"]:
-                        results[f"Pvfl_If_Bop_Cca_Beg_Lcu{k}"] = v
+                # 获取上年年末的锁定利率曲线（上年12月31日）
+                # Lcu字段：使用上年年末的锁定利率曲线（如202212）
+                prev_year_end_month = date(val_month_date.year - 1, 12, 31).strftime("%Y%m")
+                rate_prev_year_locked_df = get_discount_factors("locked", prev_year_end_month)
                 
+                # 注意：已删除 Cca_Beg_Lcu 字段，因为 Cfa_Beg_Lcu 已经包含了1月现金流
                 # 计算年初预期未来（BOP_Cfa）的年初现值（Beg_Lcu）
+                # Beg字段：必须包含从1月1日开始的所有现金流
                 # 折现到年初时点（1月1日），使用上年年末锁定利率曲线
-                res_bop_cfa_beg = calc_all(cf_bop_future, bop_date, uw_date, rate_prev_year_locked_df, "")
+                # 对于Lcu字段，需要特殊处理折现逻辑：从1月1日开始，使用上年末利率曲线折现
+                res_bop_cfa_beg = calc_all_beg_lcu(cf_bop_beg, bop_date, prev_year_end_month, rate_prev_year_locked_df)
                 # 修正RA计算：使用年初时的精算假设（val_assump_obj）
                 cla_beg_fut = res_bop_cfa_beg.get("_Cla_Amt", DECIMAL_ZERO)
                 mtn_beg_fut = res_bop_cfa_beg.get("_Mtn_Amt", DECIMAL_ZERO)
@@ -796,8 +1060,9 @@ def main():
                 
                 # 计算年初预期未来（BOP_Cfa）的年初现值（Beg_Wlk）- 赔付、维费、RA
                 # 折现到年初时点（1月1日），使用签单日的锁定利率曲线（加权初始确认利率）
+                # Beg字段：必须包含从1月1日开始的所有现金流
                 # 这些字段用于IFIE_OCI计算（利率变化影响），必须保留！
-                res_bop_cfa_beg_wlk = calc_all(cf_bop_future, bop_date, uw_date, rate_val_locked_df, "")
+                res_bop_cfa_beg_wlk = calc_all(cf_bop_beg, bop_date, uw_date, rate_val_locked_df, "")
                 # RA计算：使用相同维度的赔付+维持费用的值*精算假设中的ra率
                 cla_beg_wlk_fut = res_bop_cfa_beg_wlk.get("_Cla_Amt", DECIMAL_ZERO)
                 mtn_beg_wlk_fut = res_bop_cfa_beg_wlk.get("_Mtn_Amt", DECIMAL_ZERO)

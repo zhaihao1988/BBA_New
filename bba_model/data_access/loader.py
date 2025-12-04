@@ -119,7 +119,7 @@ def get_assumptions(class_code, val_month_str, val_method='7', use_db_acquisitio
         assumptions_query = f"""
             SELECT 
                 {', '.join(select_fields)}
-            FROM measure_platform.conf_measure_actuarial_assumption
+            FROM zh.conf_measure_actuarial_assumption
             WHERE class_code = '{class_code}' 
               AND val_month = '{val_month_str}'
               AND val_method = '{val_method}'

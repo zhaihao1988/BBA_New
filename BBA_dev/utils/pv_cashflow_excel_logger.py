@@ -237,6 +237,10 @@ class PVCashFlowExcelLogger:
         
         cash_flows = data['cash_flows']
         if not cash_flows.empty:
+            # 获取间接理赔费用率
+            assumptions = data['assumptions']
+            claim_expense_ratio = Decimal(str(assumptions.get('claim_expense_ratio', 0)))
+            
             # 准备现金流数据
             cf_data = []
             for idx, row_data in cash_flows.iterrows():
@@ -262,12 +266,16 @@ class PVCashFlowExcelLogger:
                 else:
                     risk_mark = ""
                 
+                # 计算赔付流出（包含间接理赔费用）
+                claims_base = Decimal(str(row_data.get('Claims', 0)))
+                claims_with_expense = claims_base * (Decimal('1.0') + claim_expense_ratio)
+                
                 cf_data.append([
                     yyyymm,
                     date_str,
                     self._format_decimal(row_data.get('Premium', 0)),
                     self._format_decimal(row_data.get('IACF', 0)),
-                    self._format_decimal(row_data.get('Claims', 0)),
+                    self._format_decimal(claims_with_expense),
                     self._format_decimal(row_data.get('Expenses', 0)),
                     risk_mark,
                     "风险期内" if risk_mark == "✅" else "保修期内"
