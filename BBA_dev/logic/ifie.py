@@ -791,9 +791,9 @@ def run(context, logger, assumptions: Assumptions = None, cohort_state: CohortSt
     
     # [Sec 14.9-14.12] IFIE_OCI亏损分摊
     # 根据文档：IFIE_{OCI_CF_LC} = LC_{IFIE_CF} - IFIE_{CF_LC}
-    # 其中：LC_{IFIE_CF} = IFIE_CF中分摊到LC的总数（包括P&L和OCI）
-    #      IFIE_{CF_LC} = IFIE_P&C_CF中分摊到LC的部分（即context.ifie_pl_lc中的CF部分）
-    if USE_OCI_OPTION and hasattr(context, 'nb_lc_ratio') and context.nb_lc_ratio:
+    # 其中：LC_{IFIE_CF} = IFIE_CF中分摊到LC的总数（包括P&L和OCI）= LC分摊IFIE_预期现金流
+    #      IFIE_{CF_LC} = IFIE_P&C_CF中分摊到LC的部分（已在上面计算并保存到context.ifie_pl_cf_lc）
+    if USE_OCI_OPTION:
         # 计算IFIE_CF和IFIE_RA中分摊到LC的总数（包括P&L和OCI）
         # LC_{IFIE_CF} = IF_LC分摊IFIE_CF + NB_LC分摊IFIE_CF（来自第7章：csm_lc_measurement.py）
         # LC_{IFIE_RA} = IF_LC分摊IFIE_RA + NB_LC分摊IFIE_RA（来自第7章：csm_lc_measurement.py）
@@ -804,21 +804,13 @@ def run(context, logger, assumptions: Assumptions = None, cohort_state: CohortSt
         nb_lc_ifie_ra = getattr(context, 'nb_lc_ifie_ra', Decimal('0')) or Decimal('0')
         lc_ifie_ra = if_lc_ifie_ra + nb_lc_ifie_ra
         
-        # IFIE_P&C_CF中分摊到LC的部分
-        # 需要从IFIE_P&C_Total中拆分出CF和RA部分
-        # 简化：按比例拆分
-        if ifie_pl_total != 0:
-            ifie_pl_cf_ratio = ifie_cf / ifie_pl_total
-            ifie_pl_ra_ratio = ifie_ra / ifie_pl_total
-        else:
-            ifie_pl_cf_ratio = Decimal('0')
-            ifie_pl_ra_ratio = Decimal('0')
-        
-        ifie_cf_lc = context.ifie_pl_lc * ifie_pl_cf_ratio  # IFIE_P&C_CF中分摊到LC的部分
-        ifie_ra_lc = context.ifie_pl_lc * ifie_pl_ra_ratio  # IFIE_P&C_RA中分摊到LC的部分
+        # 获取IFIE_P&C_CF和IFIE_P&C_RA中分摊到LC的部分（已在上面计算并保存到context）
+        ifie_cf_lc = getattr(context, 'ifie_pl_cf_lc', Decimal('0')) or Decimal('0')
+        ifie_ra_lc = getattr(context, 'ifie_pl_ra_lc', Decimal('0')) or Decimal('0')
         
         # [Sec 14.9] IFIE_OCI_预期现金流_亏损
         # IFIE_{OCI_CF_LC} = LC_{IFIE_CF} - IFIE_{CF_LC}
+        # 根据文档：IFIE_OCI_预期现金流_亏损 = LC分摊IFIE_预期现金流 - IFIE_P&C_预期现金流_亏损
         context.ifie_oci_cf_lc = lc_ifie_cf - ifie_cf_lc
         
         # [Sec 14.10] IFIE_OCI_预期现金流_非亏损
@@ -827,6 +819,7 @@ def run(context, logger, assumptions: Assumptions = None, cohort_state: CohortSt
         
         # [Sec 14.11] IFIE_OCI_非金融风险调整_亏损
         # IFIE_{OCI_RA_LC} = LC_{IFIE_RA} - IFIE_{RA_LC}
+        # 根据文档：IFIE_OCI_非金融风险调整_亏损 = LC分摊IFIE_非金融风险调整 - IFIE_P&C_非金融风险调整_亏损
         context.ifie_oci_ra_lc = lc_ifie_ra - ifie_ra_lc
         
         # [Sec 14.12] IFIE_OCI_非金融风险调整_非亏损
@@ -837,12 +830,13 @@ def run(context, logger, assumptions: Assumptions = None, cohort_state: CohortSt
         context.ifie_oci_lc = context.ifie_oci_cf_lc + context.ifie_oci_ra_lc
         context.ifie_oci_non_lc = context.ifie_oci_cf_non_lc + context.ifie_oci_ra_non_lc
     else:
+        # OCI=0：不拆分，所有IFIE计入损益，IFIE_OCI_亏损为0
         context.ifie_oci_cf_lc = Decimal('0')
-        context.ifie_oci_cf_non_lc = ifie_oci_cf if USE_OCI_OPTION else Decimal('0')
+        context.ifie_oci_cf_non_lc = Decimal('0')
         context.ifie_oci_ra_lc = Decimal('0')
-        context.ifie_oci_ra_non_lc = ifie_oci_ra if USE_OCI_OPTION else Decimal('0')
+        context.ifie_oci_ra_non_lc = Decimal('0')
         context.ifie_oci_lc = Decimal('0')
-        context.ifie_oci_non_lc = ifie_oci_total
+        context.ifie_oci_non_lc = Decimal('0')
     
     # 获取LC Ratio的来源说明
     lc_ratio_source = "来自Part 5（被CSM/LC吸收的变化）- LC分摊比例"
@@ -953,7 +947,7 @@ def run(context, logger, assumptions: Assumptions = None, cohort_state: CohortSt
         )
     
     # [Sec 14.9-14.12] IFIE_OCI亏损分摊详细记录
-    if USE_OCI_OPTION and hasattr(context, 'nb_lc_ratio') and context.nb_lc_ratio:
+    if USE_OCI_OPTION:
         # 计算LC_{IFIE_CF}和LC_{IFIE_RA}（用于日志，来自第7章：csm_lc_measurement.py）
         if_lc_ifie_cf = getattr(context, 'if_lc_ifie_cf', Decimal('0')) or Decimal('0')
         nb_lc_ifie_cf = getattr(context, 'nb_lc_ifie_cf', Decimal('0')) or Decimal('0')
@@ -962,16 +956,9 @@ def run(context, logger, assumptions: Assumptions = None, cohort_state: CohortSt
         nb_lc_ifie_ra = getattr(context, 'nb_lc_ifie_ra', Decimal('0')) or Decimal('0')
         lc_ifie_ra = if_lc_ifie_ra + nb_lc_ifie_ra
         
-        # IFIE_P&C_CF和IFIE_P&C_RA中分摊到LC的部分
-        if ifie_pl_total != 0:
-            ifie_pl_cf_ratio = ifie_cf / ifie_pl_total
-            ifie_pl_ra_ratio = ifie_ra / ifie_pl_total
-        else:
-            ifie_pl_cf_ratio = Decimal('0')
-            ifie_pl_ra_ratio = Decimal('0')
-        
-        ifie_cf_lc = context.ifie_pl_lc * ifie_pl_cf_ratio
-        ifie_ra_lc = context.ifie_pl_lc * ifie_pl_ra_ratio
+        # 获取IFIE_P&C_CF和IFIE_P&C_RA中分摊到LC的部分（已在上面计算并保存到context）
+        ifie_cf_lc = getattr(context, 'ifie_pl_cf_lc', Decimal('0')) or Decimal('0')
+        ifie_ra_lc = getattr(context, 'ifie_pl_ra_lc', Decimal('0')) or Decimal('0')
         
         logger.log_item(
             "IFIE_OCI_预期现金流_亏损",
@@ -1054,12 +1041,12 @@ def run(context, logger, assumptions: Assumptions = None, cohort_state: CohortSt
         logger.log_item(
             "IFIE_OCI_亏损分摊",
             "[Sec 14.9-14.12] IFIE_OCI 分摊到亏损成分和非亏损成分",
-            f"IFIE_OCI_LC = 0（无亏损成分或OCI选择权=0）\nIFIE_OCI_Non-LC = IFIE_OCI_Total",
+            f"IFIE_OCI_LC = 0（OCI选择权=0，不拆分）\nIFIE_OCI_Non-LC = 0（所有IFIE计入损益）",
             {
                 "IFIE_OCI_Total (来自IFIE_OCI合计)": ifie_oci_total,
                 "IFIE_OCI_LC": context.ifie_oci_lc,
                 "IFIE_OCI_Non-LC": context.ifie_oci_non_lc
             },
             context.ifie_oci_non_lc,
-            note="无亏损成分或OCI选择权=0，所有IFIE_OCI计入非亏损部分"
+            note="OCI选择权=0，不拆分，所有IFIE计入损益，IFIE_OCI_亏损为0"
         )

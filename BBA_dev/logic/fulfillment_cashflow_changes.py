@@ -297,6 +297,11 @@ def _calculate_experience_adjustment(context, logger, assumptions: Assumptions, 
         else:
             new_c_actual_prem = Decimal('0')
         
+        # 如果是批减单，需要将actual_premium取反，以匹配PV数据（PV数据基于取反后的值计算）
+        is_reversal = getattr(context, 'is_reversal_policy', False)
+        if is_reversal and new_c_actual_prem != Decimal('0'):
+            new_c_actual_prem = -new_c_actual_prem
+        
         prem_var_raw = (new_f_end_prem + new_c_actual_prem) - (new_f_init_prem + new_c_init_prem)
         context.prem_var = prem_var_raw * exp_adj_ratio
         context.adj_prem = context.prem_var
@@ -362,6 +367,11 @@ def _calculate_experience_adjustment(context, logger, assumptions: Assumptions, 
             new_c_actual_iacf = context.actual_iacf_incurred if context.year == context.under_write_date.year else Decimal('0')
         else:
             new_c_actual_iacf = Decimal('0')
+        
+        # 如果是批减单，需要将actual_iacf取反，以匹配PV数据（PV数据基于取反后的值计算）
+        is_reversal = getattr(context, 'is_reversal_policy', False)
+        if is_reversal and new_c_actual_iacf != Decimal('0'):
+            new_c_actual_iacf = -new_c_actual_iacf
         
         iacf_var_raw = (new_f_end_iacf + new_c_actual_iacf) - (new_f_init_iacf + new_c_init_iacf)
         context.iacf_var = iacf_var_raw * exp_adj_ratio
@@ -492,6 +502,11 @@ def _calculate_csm_lc_absorption(context, logger, cohort_state: CohortState, pol
             actual_prem_nb = getattr(context, 'actual_premium_nb', None)
             if actual_prem_nb is None:
                 actual_prem_nb = context.actual_premium if hasattr(context, 'under_write_date') and context.year == context.under_write_date.year else DECIMAL_ZERO
+        
+        # 如果是批减单，需要将actual_premium取反，以匹配PV数据（PV数据基于取反后的值计算）
+        is_reversal = getattr(context, 'is_reversal_policy', False)
+        if is_reversal and actual_prem_nb != DECIMAL_ZERO:
+            actual_prem_nb = -actual_prem_nb
     else:
         new_f_end_prem = DECIMAL_ZERO
         new_f_init_prem = DECIMAL_ZERO
@@ -537,6 +552,11 @@ def _calculate_csm_lc_absorption(context, logger, cohort_state: CohortState, pol
             actual_iacf_nb = getattr(context, 'actual_iacf_nb', None)
             if actual_iacf_nb is None:
                 actual_iacf_nb = context.actual_iacf_incurred if hasattr(context, 'under_write_date') and context.year == context.under_write_date.year else DECIMAL_ZERO
+        
+        # 如果是批减单，需要将actual_iacf取反，以匹配PV数据（PV数据基于取反后的值计算）
+        is_reversal = getattr(context, 'is_reversal_policy', False)
+        if is_reversal and actual_iacf_nb != DECIMAL_ZERO:
+            actual_iacf_nb = -actual_iacf_nb
     else:
         new_f_end_iacf = DECIMAL_ZERO
         new_f_init_iacf = DECIMAL_ZERO

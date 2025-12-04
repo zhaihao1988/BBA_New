@@ -53,6 +53,7 @@ def run(context, logger, assumptions: Assumptions = None, cohort_state=None):
     )
 
     # 获取签单保费
+    # 注意：如果是批减单，pv_calculator.py已经将保费取反，这里读取的是取反后的值
     context.actual_premium = Decimal(context.policy_data['sum_premium_no_tax'] or 0)
     
     # 使用动态假设（从数据库读取）或默认值
@@ -91,6 +92,14 @@ def run(context, logger, assumptions: Assumptions = None, cohort_state=None):
             f"   签单日期: {context.under_write_date}\n"
             f"   请确保 pv_calculator.py 已计算该评估月的PV数据。"
         )
+    
+    # 检测批减单标记（从PV数据的metadata中读取）
+    is_reversal_policy = pv_data.metadata.get('is_reversal_policy', False)
+    context.is_reversal_policy = is_reversal_policy
+    
+    # 如果是批减单，保费和获取费用已经在pv_calculator.py中取反，这里只需要标记
+    if is_reversal_policy:
+        logger.log_text(f"⚠️  **批减单标记**: 检测到批减单（签单保费为负值），计量时已使用取反后的值，输出时将取反所有结果")
     
     from BBA_dev.utils.pv_field_desc import describe_field, format_pv_field_in_formula
     

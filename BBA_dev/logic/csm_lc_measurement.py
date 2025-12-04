@@ -1012,6 +1012,16 @@ def _calculate_lc_ifie_allocation(context, logger, cohort_state: CohortState):
     context.nb_lc_ifie_cf = nb_lc_ifie_claims
     context.nb_lc_ifie_ra = nb_lc_ifie_ra
     
+    # 保存待分摊IFIE项（用于计算LC分摊比例_合计）
+    context.if_ifie_accretion_claims = if_ifie_accretion_claims
+    context.if_ifie_accretion_ra = if_ifie_accretion_ra
+    context.if_ifie_rate_change_claims = if_ifie_rate_change_claims
+    context.if_ifie_rate_change_ra = if_ifie_rate_change_ra
+    context.nb_ifie_accretion_claims = nb_ifie_accretion_claims
+    context.nb_ifie_accretion_ra = nb_ifie_accretion_ra
+    context.nb_ifie_rate_change_claims = nb_ifie_rate_change_claims
+    context.nb_ifie_rate_change_ra = nb_ifie_rate_change_ra
+    
     logger.log_item(
         "LC分摊IFIE明细",
         "[Sec 7] LC分摊IFIE明细（文档对照）",
@@ -1356,9 +1366,6 @@ def _calculate_lc_measurement(context, logger):
     if_lc_ifie_total = getattr(context, 'if_lc_ifie_total', DECIMAL_ZERO) or DECIMAL_ZERO
     nb_lc_ifie_total = getattr(context, 'nb_lc_ifie_total', DECIMAL_ZERO) or DECIMAL_ZERO
     
-    # 获取LC分摊比例
-    lc_ratio = getattr(context, 'nb_lc_ratio', DECIMAL_ZERO) or Decimal('0')
-    
     # 获取被CSM/LC吸收的变化合计
     delta_csm_lc = getattr(context, 'exp_adj_csm_impact', DECIMAL_ZERO) or DECIMAL_ZERO
     delta_cf_total = getattr(context, 'delta_cf_total', DECIMAL_ZERO) or DECIMAL_ZERO
@@ -1377,7 +1384,82 @@ def _calculate_lc_measurement(context, logger):
     # LC分摊IFIE_合计：IF_LC分摊IFIE + NB_LC分摊IFIE
     lc_ifie_total = if_lc_ifie_total + nb_lc_ifie_total
     
-    # 分摊的LC_合计：（有效合同+新增合同的所有预期当期现金流）× LC分摊比例
+    # ==========================================================================================
+    # 计算 LC分摊比例_合计（用于计算"分摊的LC"）
+    # ==========================================================================================
+    # 分子：合同组LC（从context获取，已在合同组状态判定中计算，包含IFIE分摊）
+    cohort_lc_for_ratio = getattr(context, 'end_lc_before_amort', DECIMAL_ZERO) or DECIMAL_ZERO
+    
+    # 分母：包含IF和NB的预期现金流，以及所有IFIE相关项
+    if pv_data is None:
+        lc_allocation_ratio_total = DECIMAL_ZERO
+    else:
+        # 1. IF的预期现金流（取上年12月期末值，即年初现值LCU）
+        pv_if_beg_claims = pv_data.get_field('Pvfl_If_Bop_Cfa_Beg_Lcu_Cla_Amt', DECIMAL_ZERO)
+        pv_if_beg_maint = pv_data.get_field('Pvfl_If_Bop_Cfa_Beg_Lcu_Mtn_Amt', DECIMAL_ZERO)
+        pv_if_beg_ra = pv_data.get_field('Pvfl_If_Bop_Cfa_Beg_Lcu_Rad_Amt', DECIMAL_ZERO)
+        
+        # 2. NB的预期现金流（初始确认现值）
+        pv_nb_init_claims = pv_data.get_field('Pvfl_Nb_Ini_Cfa_Rec_Lkd_Cla_Amt', DECIMAL_ZERO)
+        pv_nb_init_maint = pv_data.get_field('Pvfl_Nb_Ini_Cfa_Rec_Lkd_Mtn_Amt', DECIMAL_ZERO)
+        pv_nb_init_ra = pv_data.get_field('Pvfl_Nb_Ini_Cfa_Rec_Lkd_Rad_Amt', DECIMAL_ZERO)
+        
+        # 3. IFIE相关项（从context获取，已在_calculate_lc_ifie_allocation中计算）
+        if_ifie_accretion_claims = getattr(context, 'if_ifie_accretion_claims', DECIMAL_ZERO) or DECIMAL_ZERO
+        nb_ifie_accretion_claims = getattr(context, 'nb_ifie_accretion_claims', DECIMAL_ZERO) or DECIMAL_ZERO
+        if_ifie_accretion_ra = getattr(context, 'if_ifie_accretion_ra', DECIMAL_ZERO) or DECIMAL_ZERO
+        nb_ifie_accretion_ra = getattr(context, 'nb_ifie_accretion_ra', DECIMAL_ZERO) or DECIMAL_ZERO
+        if_ifie_rate_change_claims = getattr(context, 'if_ifie_rate_change_claims', DECIMAL_ZERO) or DECIMAL_ZERO
+        nb_ifie_rate_change_claims = getattr(context, 'nb_ifie_rate_change_claims', DECIMAL_ZERO) or DECIMAL_ZERO
+        if_ifie_rate_change_ra = getattr(context, 'if_ifie_rate_change_ra', DECIMAL_ZERO) or DECIMAL_ZERO
+        nb_ifie_rate_change_ra = getattr(context, 'nb_ifie_rate_change_ra', DECIMAL_ZERO) or DECIMAL_ZERO
+        
+        # 计算分母合计
+        denominator_total = (
+            pv_if_beg_claims + pv_nb_init_claims +  # IF和NB的预期赔付现金流
+            pv_if_beg_maint + pv_nb_init_maint +    # IF和NB的预期维持费用现金流
+            pv_if_beg_ra + pv_nb_init_ra +          # IF和NB的预期非金融风险调整
+            if_ifie_accretion_claims + nb_ifie_accretion_claims +  # IFIE计息_赔付与费用
+            if_ifie_accretion_ra + nb_ifie_accretion_ra +          # IFIE计息_非金融风险调整
+            if_ifie_rate_change_claims + nb_ifie_rate_change_claims +  # IFIE利率变化的影响_赔付与费用
+            if_ifie_rate_change_ra + nb_ifie_rate_change_ra           # IFIE利率变化的影响_非金融风险调整
+        )
+        
+        # 计算比例
+        if cohort_lc_for_ratio < 0 and denominator_total > 0:
+            lc_allocation_ratio_total = abs(cohort_lc_for_ratio) / denominator_total
+        else:
+            lc_allocation_ratio_total = Decimal('0')
+        
+        # 记录日志
+        logger.log_item(
+            "LC分摊比例_合计",
+            "[LC计量] LC分摊比例_合计（用于计算分摊的LC）",
+            "LC分摊比例_合计 = IF(合同组LC<0, 合同组LC / (SUM(IF和NB的预期现金流 + 所有IFIE相关项)), 0)",
+            {
+                "合同组LC（分子）": cohort_lc_for_ratio,
+                "IF_预期赔付现金流（年初现值LCU）": pv_if_beg_claims,
+                "IF_预期维持费用现金流（年初现值LCU）": pv_if_beg_maint,
+                "IF_预期非金融风险调整（年初现值LCU）": pv_if_beg_ra,
+                "NB_预期赔付现金流（初始确认现值）": pv_nb_init_claims,
+                "NB_预期维持费用现金流（初始确认现值）": pv_nb_init_maint,
+                "NB_预期非金融风险调整（初始确认现值）": pv_nb_init_ra,
+                "IF_待分摊IFIE_计息_赔付与费用": if_ifie_accretion_claims,
+                "NB_待分摊IFIE_计息_赔付与费用": nb_ifie_accretion_claims,
+                "IF_待分摊IFIE_计息_非金融风险调整": if_ifie_accretion_ra,
+                "NB_待分摊IFIE_计息_非金融风险调整": nb_ifie_accretion_ra,
+                "IF_待分摊IFIE_利率变化的影响_赔付与费用": if_ifie_rate_change_claims,
+                "NB_待分摊IFIE_利率变化的影响_赔付与费用": nb_ifie_rate_change_claims,
+                "IF_待分摊IFIE_利率变化的影响_非金融风险调整": if_ifie_rate_change_ra,
+                "NB_待分摊IFIE_利率变化的影响_非金融风险调整": nb_ifie_rate_change_ra,
+                "分母合计": denominator_total,
+                "LC分摊比例_合计": lc_allocation_ratio_total
+            },
+            lc_allocation_ratio_total,
+            note="用于计算'分摊的LC'，替代原来的nb_lc_ratio"
+        )
+    
+    # 分摊的LC_合计：（有效合同+新增合同的所有预期当期现金流）× LC分摊比例_合计
     # 注意：正数表示减少LC亏损（LC余额绝对值减少），因为当现金流释放时，亏损应该被摊销
     if pv_data is None:
         allocated_lc_total = DECIMAL_ZERO
@@ -1393,7 +1475,7 @@ def _calculate_lc_measurement(context, logger):
         pv_nb_cur_ra = pv_data.get_field('Pvfl_Nb_Ini_Cca_Rep_Wlk_Rad_Amt', DECIMAL_ZERO)
         
         allocated_lc_total = (pv_if_cur_claims + pv_if_cur_maint + pv_if_cur_ra + 
-                              pv_nb_cur_claims + pv_nb_cur_maint + pv_nb_cur_ra) * lc_ratio
+                              pv_nb_cur_claims + pv_nb_cur_maint + pv_nb_cur_ra) * lc_allocation_ratio_total
     
     # 被LC吸收的变化_合计：复杂的IF条件判断
     # IF(OR(AND(合同组LC<0,SUM(合同组LC, 分摊的LC，被CSM/LC吸收的变化合计)<0),AND(合同组LC=0,SUM(合同组CSM, 被CSM/LC吸收的变化合计)<0)),
@@ -1460,7 +1542,7 @@ def _calculate_lc_measurement(context, logger):
         pv_nb_cur_claims = pv_data.get_field('Pvfl_Nb_Ini_Cca_Rep_Wlk_Cla_Amt', DECIMAL_ZERO)
         pv_nb_cur_maint = pv_data.get_field('Pvfl_Nb_Ini_Cca_Rep_Wlk_Mtn_Amt', DECIMAL_ZERO)
         
-        allocated_lc_cf = (pv_if_cur_claims + pv_if_cur_maint + pv_nb_cur_claims + pv_nb_cur_maint) * lc_ratio
+        allocated_lc_cf = (pv_if_cur_claims + pv_if_cur_maint + pv_nb_cur_claims + pv_nb_cur_maint) * lc_allocation_ratio_total
     
     # 被LC吸收的变化_预期现金流
     # IF(待调整LC余额_合计=0, -SUM(年初LC余额，当年新增LC，LC分摊IFIE，分摊的LC), 被LC吸收的变化_合计*IFERROR(预期现金流变化合计/被CSM/LC吸收的变化合计,0))
@@ -1489,6 +1571,8 @@ def _calculate_lc_measurement(context, logger):
     
     # 保存到context（供revenue模块和其他模块使用）
     context.lc_adjust_cf = lc_adjust_cf
+    context.allocated_lc_cf = allocated_lc_cf  # 保存分摊的LC_预期现金流，供revenue模块使用
+    context.allocated_lc_exp_adj_cf = allocated_lc_exp_adj_cf  # 保存被LC吸收的变化_预期现金流，用于亏损合同损益拆分
     context.end_lc_cf = end_lc_cf  # 保存期末LC余额_预期现金流，用于未到期责任负债拆分
     context.nb_initial_lc_cf = nb_initial_lc_cf  # 保存当年新增LC_预期现金流，用于亏损合同损益拆分
     
@@ -1539,7 +1623,7 @@ def _calculate_lc_measurement(context, logger):
         # 从当前评估月的PV数据读取
         pv_nb_cur_ra = pv_data.get_field('Pvfl_Nb_Ini_Cca_Rep_Wlk_Rad_Amt', DECIMAL_ZERO)
         
-        allocated_lc_ra = (pv_if_cur_ra + pv_nb_cur_ra) * lc_ratio
+        allocated_lc_ra = (pv_if_cur_ra + pv_nb_cur_ra) * lc_allocation_ratio_total
     
     # 被LC吸收的变化_非金融风险调整：被LC吸收的变化_合计 - 被LC吸收的变化_预期现金流
     # 注意：这里使用合计部分计算出的allocated_lc_exp_adj_total
@@ -1559,6 +1643,8 @@ def _calculate_lc_measurement(context, logger):
     
     # 保存到context（供revenue模块和其他模块使用）
     context.lc_adjust_ra = lc_adjust_ra
+    context.allocated_lc_ra = allocated_lc_ra  # 保存分摊的LC_非金融风险调整，供revenue模块使用
+    context.allocated_lc_exp_adj_ra = allocated_lc_exp_adj_ra  # 保存被LC吸收的变化_非金融风险调整，用于亏损合同损益拆分
     context.end_lc_ra = end_lc_ra  # 保存期末LC余额_非金融风险调整，用于未到期责任负债拆分
     context.nb_initial_lc_ra = nb_initial_lc_ra  # 保存当年新增LC_非金融风险调整，用于亏损合同损益拆分
     

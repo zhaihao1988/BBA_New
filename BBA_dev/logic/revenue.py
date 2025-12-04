@@ -76,15 +76,16 @@ def run(context, logger):
     revenue_claims_expenses_gross = pv_claims_if + pv_maint_if + pv_claims_nb + pv_maint_nb
     
     # 亏损分摊：分摊的LC_预期现金流 + LC调整_预期现金流
-    # 分摊的LC_预期现金流 = 预期赔付与费用_含亏损 × LC_Ratio
-    revenue_claims_expenses_lc_alloc_base = revenue_claims_expenses_gross * (getattr(context, 'nb_lc_ratio', Decimal('0')) or Decimal('0'))
+    # 分摊的LC_预期现金流：直接从csm_lc_measurement模块获取（已在LC计量中计算）
+    allocated_lc_cf = getattr(context, 'allocated_lc_cf', Decimal('0')) or Decimal('0')
     
     # LC调整_预期现金流：从csm_lc_measurement模块获取
-    # 注意：如果csm_lc_measurement模块中还没有计算LC调整，这里先使用占位符
     lc_adjust_cf = getattr(context, 'lc_adjust_cf', Decimal('0')) or Decimal('0')
-    revenue_claims_expenses_lc_alloc = revenue_claims_expenses_lc_alloc_base + lc_adjust_cf
+    revenue_claims_expenses_lc_alloc = allocated_lc_cf + lc_adjust_cf
     
-    context.revenue_claims_expenses_net = revenue_claims_expenses_gross - revenue_claims_expenses_lc_alloc_base
+    # 保存到context（供汇总模块使用）
+    context.revenue_claims_expenses_lc_alloc = revenue_claims_expenses_lc_alloc
+    context.revenue_claims_expenses_net = revenue_claims_expenses_gross - allocated_lc_cf
     
     # 构建公式描述
     formula_desc = (
@@ -117,16 +118,15 @@ def run(context, logger):
     logger.log_item(
         "保险合同收入_预期赔付与费用_亏损分摊",
         "分摊到亏损成分的预期赔付与费用",
-        "分摊的LC_预期现金流 + LC调整_预期现金流\n其中：\n  分摊的LC_预期现金流 = 预期赔付与费用_含亏损 × LC_Ratio\n  LC调整_预期现金流 = 从csm_lc_measurement模块获取",
+        "分摊的LC_预期现金流 + LC调整_预期现金流\n其中：\n  分摊的LC_预期现金流 = 从csm_lc_measurement模块获取（已在LC计量中计算）\n  LC调整_预期现金流 = 从csm_lc_measurement模块获取",
         {
             "预期赔付与费用_含亏损": revenue_claims_expenses_gross,
-            "LC Ratio": getattr(context, 'nb_lc_ratio', Decimal('0')) or Decimal('0'),
-            "分摊的LC_预期现金流": revenue_claims_expenses_lc_alloc_base,
+            "分摊的LC_预期现金流": allocated_lc_cf,
             "LC调整_预期现金流": lc_adjust_cf,
             "亏损分摊合计": revenue_claims_expenses_lc_alloc
         },
         revenue_claims_expenses_lc_alloc,
-        note=f"亏损分摊 = 分摊的LC_预期现金流({revenue_claims_expenses_lc_alloc_base}) + LC调整_预期现金流({lc_adjust_cf}) = {revenue_claims_expenses_lc_alloc}"
+        note=f"亏损分摊 = 分摊的LC_预期现金流({allocated_lc_cf}) + LC调整_预期现金流({lc_adjust_cf}) = {revenue_claims_expenses_lc_alloc}"
     )
     
     # 7.2 RA 释放（直接使用PV字段中的Rad_Amt）
@@ -144,14 +144,14 @@ def run(context, logger):
     ra_release_gross = ra_release_if + ra_release_nb
     
     # 亏损分摊：分摊的LC_非金融风险调整 + LC调整_非金融风险调整
-    # 分摊的LC_非金融风险调整 = RA释放_含亏损 × LC_Ratio
-    ra_release_lc_alloc_base = ra_release_gross * (getattr(context, 'nb_lc_ratio', Decimal('0')) or Decimal('0'))
+    # 分摊的LC_非金融风险调整：直接从csm_lc_measurement模块获取（已在LC计量中计算）
+    allocated_lc_ra = getattr(context, 'allocated_lc_ra', Decimal('0')) or Decimal('0')
     
     # LC调整_非金融风险调整：从csm_lc_measurement模块获取
     lc_adjust_ra = getattr(context, 'lc_adjust_ra', Decimal('0')) or Decimal('0')
-    ra_release_lc_alloc = ra_release_lc_alloc_base + lc_adjust_ra
+    ra_release_lc_alloc = allocated_lc_ra + lc_adjust_ra
     
-    context.ra_release_net = ra_release_gross - ra_release_lc_alloc_base
+    context.ra_release_net = ra_release_gross - allocated_lc_ra
     context.ra_release_gross = ra_release_gross
     context.ra_release_lc_alloc = ra_release_lc_alloc
     
@@ -182,16 +182,15 @@ def run(context, logger):
     logger.log_item(
         "保险合同收入_预期释放的非金融风险调整_亏损分摊",
         "分摊到亏损成分的非金融风险调整",
-        "分摊的LC_非金融风险调整 + LC调整_非金融风险调整\n其中：\n  分摊的LC_非金融风险调整 = RA释放_含亏损 × LC_Ratio\n  LC调整_非金融风险调整 = 从csm_lc_measurement模块获取",
+        "分摊的LC_非金融风险调整 + LC调整_非金融风险调整\n其中：\n  分摊的LC_非金融风险调整 = 从csm_lc_measurement模块获取（已在LC计量中计算）\n  LC调整_非金融风险调整 = 从csm_lc_measurement模块获取",
         {
             "RA释放_含亏损": ra_release_gross,
-            "LC Ratio": getattr(context, 'nb_lc_ratio', Decimal('0')) or Decimal('0'),
-            "分摊的LC_非金融风险调整": ra_release_lc_alloc_base,
+            "分摊的LC_非金融风险调整": allocated_lc_ra,
             "LC调整_非金融风险调整": lc_adjust_ra,
             "亏损分摊合计": ra_release_lc_alloc
         },
         ra_release_lc_alloc,
-        note=f"亏损分摊 = 分摊的LC_非金融风险调整({ra_release_lc_alloc_base}) + LC调整_非金融风险调整({lc_adjust_ra}) = {ra_release_lc_alloc}"
+        note=f"亏损分摊 = 分摊的LC_非金融风险调整({allocated_lc_ra}) + LC调整_非金融风险调整({lc_adjust_ra}) = {ra_release_lc_alloc}"
     )
     
     # 7.3 CSM 摊销（文档 Sec 8.2 & 8.9）

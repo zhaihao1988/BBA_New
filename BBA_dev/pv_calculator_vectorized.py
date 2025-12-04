@@ -36,11 +36,11 @@ class VectorizedPVCalculator:
         self.valuation_date = valuation_date
         self.is_current_curve = (curve_base_date == valuation_date)
         
-        # 转换利率为NumPy数组（使用float64保持精度）
-        self.rates_map = dict(zip(
-            rates_df['term_month'].values,
-            rates_df['forward_disrate_value'].astype(float).values
-        ))
+        # 转换利率为字典（使用float保持精度，与原始版本的Decimal逻辑对应）
+        # 原始版本使用 Decimal，这里使用 float 进行计算，最后转换为 Decimal
+        self.rates_map = {}
+        for term, rate in zip(rates_df['term_month'].values, rates_df['forward_disrate_value'].values):
+            self.rates_map[int(term)] = float(rate)
         self.max_term = int(rates_df['term_month'].max()) if not rates_df.empty else 0
         
         # 预计算累积折现因子表
@@ -50,28 +50,37 @@ class VectorizedPVCalculator:
         """
         预计算累积折现因子表
         
+        折现因子表结构：
+        - DF[0] = 1.0 (t=0时折现因子为1)
+        - DF[1] = 1 / (1 + r1) (第1期折现因子)
+        - DF[2] = 1 / ((1 + r1) * (1 + r2)) (第2期累积折现因子)
+        - DF[3] = 1 / ((1 + r1) * (1 + r2) * (1 + r3)) (第3期累积折现因子)
+        - ...
+        - DF[t] = 1 / ((1 + r1) * (1 + r2) * ... * (1 + rt))
+        
         Returns:
-            numpy数组，索引为期限，值为累积折现因子
+            numpy数组，索引为期限（从0开始），值为累积折现因子
         """
         if self.max_term == 0:
             return np.ones(1)
         
-        # 构建利率数组（term=0时利率为0）
+        # 构建利率数组（term=0时利率为0，从term=1开始）
+        # rates_array[0] = 0 (不使用)
+        # rates_array[1] = r1
+        # rates_array[2] = r2
+        # ...
         rates_array = np.zeros(self.max_term + 1)
         for term, rate in self.rates_map.items():
             if 0 < term <= self.max_term:
-                rates_array[term] = rate
-        
-        # 外推：超过最大期限使用最后一个利率
-        if self.max_term > 0:
-            last_rate = self.rates_map.get(self.max_term, 0.0)
-            # 注意：这里不需要外推，因为只计算到max_term
+                rates_array[term] = float(rate)
         
         # 计算累积折现因子：DF[t] = 1 / ((1+r1) * (1+r2) * ... * (1+rt))
-        # 使用累积乘积
+        # 使用累积乘积：cumprod(1 + rates_array[1:]) 得到 (1+r1), (1+r1)(1+r2), ...
+        # 然后取倒数得到折现因子
         discount_factors = 1.0 / np.cumprod(1.0 + rates_array[1:])
         
         # 在前面插入1.0（t=0时折现因子为1）
+        # 最终数组：DF[0]=1.0, DF[1]=1/(1+r1), DF[2]=1/((1+r1)(1+r2)), ...
         discount_factors = np.insert(discount_factors, 0, 1.0)
         
         return discount_factors
@@ -152,6 +161,9 @@ class VectorizedPVCalculator:
         n = len(dates)
         factors = np.ones(n)
         
+        # 获取最后一个利率用于外推
+        last_rate = self.rates_map.get(self.max_term, 0.0) if self.max_term > 0 else 0.0
+        
         if self.is_current_curve:
             # Current curve: term_month从1开始，直接从预计算表读取
             months_diff = self._fast_month_diff(dates, self.valuation_date)
@@ -161,28 +173,38 @@ class VectorizedPVCalculator:
                     factors[i] = 1.0
                 elif m_diff > 0:
                     # 折现：未来 -> 现在
-                    # 直接使用累积折现因子表
-                    m_abs = min(int(m_diff), self.max_term)
-                    if m_abs > 0 and m_abs < len(self._discount_factor_table):
+                    # term_month 从1开始：第1期、第2期...第months_diff期
+                    m_abs = int(m_diff)
+                    if m_abs > 0 and m_abs <= self.max_term and m_abs < len(self._discount_factor_table):
+                        # 在表范围内，直接使用
                         factors[i] = self._discount_factor_table[m_abs]
                     else:
-                        # 超出范围，手动计算
+                        # 超出范围，手动计算（支持外推）
                         factor = 1.0
                         for t in range(1, m_abs + 1):
-                            rate = self.rates_map.get(t, self.rates_map.get(self.max_term, 0.0))
+                            if t <= self.max_term:
+                                rate = self.rates_map.get(t, 0.0)
+                            else:
+                                # 外推：使用最后一个利率
+                                rate = last_rate
                             factor /= (1.0 + rate)
                         factors[i] = factor
                 else:
                     # 累积：过去 -> 现在
-                    abs_m = min(abs(int(m_diff)), self.max_term)
-                    if abs_m > 0 and abs_m < len(self._discount_factor_table):
+                    # term_month 从1开始：第1期、第2期...第|months_diff|期
+                    abs_m = abs(int(m_diff))
+                    if abs_m > 0 and abs_m <= self.max_term and abs_m < len(self._discount_factor_table):
                         # 累积因子 = 1 / 折现因子
                         factors[i] = 1.0 / self._discount_factor_table[abs_m]
                     else:
-                        # 超出范围，手动计算
+                        # 超出范围，手动计算（支持外推）
                         factor = 1.0
                         for t in range(1, abs_m + 1):
-                            rate = self.rates_map.get(t, self.rates_map.get(self.max_term, 0.0))
+                            if t <= self.max_term:
+                                rate = self.rates_map.get(t, 0.0)
+                            else:
+                                # 外推：使用最后一个利率
+                                rate = last_rate
                             factor *= (1.0 + rate)
                         factors[i] = factor
         else:
@@ -193,23 +215,56 @@ class VectorizedPVCalculator:
             for i, idx_cf in enumerate(idx_cf_array):
                 cf_date = dates[i]
                 
-                if cf_date == self.valuation_date:
+                # 倒签单情况：如果现金流在签单日期之前，不需要折现计息，直接取原值
+                if idx_cf < 0:
+                    # 签单日期之前的现金流，直接取原值（不计息）
+                    factors[i] = 1.0
+                elif cf_date == self.valuation_date:
                     factors[i] = 1.0
                 elif cf_date > self.valuation_date:
                     # 折现：未来 -> 现在
                     # 期数需要+1：从 (idx_val + 1 + 1) 到 (idx_cf + 1)
                     start_step = max(1, int(idx_val) + 2)  # +1 for period adjustment
-                    end_step = min(int(idx_cf) + 1, self.max_term)  # +1 for period adjustment
+                    end_step = int(idx_cf) + 1  # +1 for period adjustment（不限制max_term，支持外推）
+                    
                     if start_step <= end_step:
-                        # DF = DF[end] / DF[start-1]
-                        factors[i] = self._get_discount_factor_from_table(start_step - 1, end_step)
+                        # 检查是否完全在表范围内
+                        if end_step <= self.max_term and start_step - 1 >= 0 and end_step < len(self._discount_factor_table):
+                            # 在表范围内，使用表查找
+                            factors[i] = self._get_discount_factor_from_table(start_step - 1, end_step)
+                        else:
+                            # 超出范围，手动计算（支持外推）
+                            factor = 1.0
+                            for t in range(start_step, end_step + 1):
+                                if t <= self.max_term:
+                                    rate = self.rates_map.get(t, 0.0)
+                                else:
+                                    # 外推：使用最后一个利率
+                                    rate = last_rate
+                                factor /= (1.0 + rate)
+                            factors[i] = factor
                 else:
                     # 累积：过去 -> 现在
+                    # Range: (idx_cf + 1) to idx_val
                     start_step = max(1, int(idx_cf) + 1)
-                    end_step = min(int(idx_val), self.max_term)
+                    end_step = int(idx_val)  # 不限制max_term，支持外推
+                    
                     if start_step <= end_step:
-                        # 累积因子 = 1 / 折现因子
-                        factors[i] = 1.0 / self._get_discount_factor_from_table(start_step - 1, end_step)
+                        # 检查是否完全在表范围内
+                        if end_step <= self.max_term and start_step - 1 >= 0 and end_step < len(self._discount_factor_table):
+                            # 累积因子 = 1 / 折现因子
+                            factors[i] = 1.0 / self._get_discount_factor_from_table(start_step - 1, end_step)
+                        else:
+                            # 超出范围，手动计算（支持外推）
+                            factor = 1.0
+                            for t in range(start_step, end_step + 1):
+                                if t <= self.max_term:
+                                    rate = self.rates_map.get(t, 0.0)
+                                else:
+                                    # 外推：使用最后一个利率
+                                    rate = last_rate
+                                factor *= (1.0 + rate)
+                            factors[i] = factor
         
         return factors
     
@@ -218,25 +273,29 @@ class VectorizedPVCalculator:
         从预计算表中获取折现因子
         
         Args:
-            start_term: 起始期限
-            end_term: 结束期限
+            start_term: 起始期限（索引，从0开始）
+            end_term: 结束期限（索引，从0开始）
         
         Returns:
             折现因子
         """
-        if end_term <= 0 or start_term >= self.max_term:
+        if end_term <= 0 or start_term < 0:
             return 1.0
         
-        start_term = max(0, min(start_term, self.max_term))
-        end_term = max(0, min(end_term, self.max_term))
+        # 确保索引在有效范围内
+        if end_term >= len(self._discount_factor_table):
+            return 1.0
         
         if start_term >= end_term:
             return 1.0
         
         # 折现因子 = DF[end] / DF[start]
+        # 注意：折现因子表索引从0开始，DF[0]=1.0, DF[1]=1/(1+r1), DF[2]=1/((1+r1)(1+r2)), ...
         if start_term == 0:
             return self._discount_factor_table[end_term]
         else:
+            if start_term >= len(self._discount_factor_table):
+                return 1.0
             return self._discount_factor_table[end_term] / self._discount_factor_table[start_term]
     
     def calculate_pv_current_period_no_interest_after_occurrence(
@@ -246,6 +305,10 @@ class VectorizedPVCalculator:
     ) -> Decimal:
         """
         当期现金流PV计算（已发生不计息，未发生折现）
+        
+        特殊规则：
+        - 如果现金流发生在评估月或之前，使用原值（不计息）
+        - 如果现金流发生在评估月之后，折现到评估日期
         
         Args:
             cf_df: 现金流DataFrame
@@ -272,11 +335,12 @@ class VectorizedPVCalculator:
         dates = dates[non_zero_mask]
         
         # 分离已发生和未发生的现金流
+        # 注意：原始版本使用 <= 比较，表示评估月及之前的现金流都不计息
         occurred_mask = np.array([
             (d.year, d.month) <= val_year_month for d in dates
         ])
         
-        # 已发生：原值
+        # 已发生：原值（不计息）
         occurred_pv = np.sum(amounts[occurred_mask])
         
         # 未发生：折现
@@ -284,6 +348,7 @@ class VectorizedPVCalculator:
         future_dates = dates[~occurred_mask]
         
         if len(future_dates) > 0:
+            # 对于未发生的现金流，使用与 calculate_pv_exact 相同的折现逻辑
             future_factors = self._compute_discount_factors_vectorized(future_dates)
             future_pv = np.sum(future_amounts * future_factors)
         else:

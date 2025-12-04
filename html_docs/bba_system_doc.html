@@ -1,0 +1,1450 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BBA计量系统开发文档</title>
+    <style>
+        :root {
+            --primary-color: #0056b3;
+            --bg-color: #ffffff;
+            --text-color: #333333;
+            --sidebar-width: 280px;
+            --border-color: #e0e0e0;
+        }
+        
+        body {
+            display: flex;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            height: 100vh;
+            color: var(--text-color);
+            overflow: hidden;
+        }
+        
+        /* Sidebar Styles */
+        #sidebar {
+            width: var(--sidebar-width);
+            background: #f8f9fa;
+            border-right: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            flex-shrink: 0;
+        }
+        
+        .sidebar-header {
+            padding: 20px;
+            border-bottom: 1px solid var(--border-color);
+            background: #fff;
+        }
+        
+        .sidebar-header h2 {
+            margin: 0;
+            font-size: 1.2rem;
+            color: var(--primary-color);
+        }
+        
+        .nav-list {
+            padding: 10px 0;
+            overflow-y: auto;
+            flex: 1;
+        }
+        
+        .nav-item {
+            display: block;
+            padding: 12px 20px;
+            text-decoration: none;
+            color: #555;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            border-left: 4px solid transparent;
+            font-size: 0.95rem;
+        }
+        
+        .nav-item:hover {
+            background-color: #e9ecef;
+            color: var(--primary-color);
+        }
+        
+        .nav-item.active {
+            background-color: #e7f1ff;
+            color: var(--primary-color);
+            border-left-color: var(--primary-color);
+            font-weight: 600;
+        }
+        
+        /* Content Styles */
+        #content {
+            flex: 1;
+            padding: 40px 60px;
+            overflow-y: auto;
+            background-color: var(--bg-color);
+        }
+        
+        section {
+            display: none;
+            max-width: 1000px;
+            margin: 0 auto;
+            animation: fadeIn 0.3s ease-in-out;
+        }
+        
+        section.active {
+            display: block;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        h1 {
+            font-size: 2rem;
+            margin-bottom: 1.5rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 2px solid var(--border-color);
+            color: #2c3e50;
+        }
+        
+        h2 {
+            font-size: 1.5rem;
+            margin-top: 2rem;
+            margin-bottom: 1rem;
+            color: #34495e;
+        }
+        
+        h3 {
+            font-size: 1.2rem;
+            margin-top: 1.5rem;
+            margin-bottom: 0.8rem;
+            color: #495057;
+        }
+        
+        p {
+            line-height: 1.6;
+            margin-bottom: 1rem;
+        }
+        
+        /* Table Styles */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+        }
+        
+        th, td {
+            border: 1px solid #dee2e6;
+            padding: 12px 15px;
+            text-align: left;
+        }
+        
+        th {
+            background-color: #f8f9fa;
+            font-weight: 600;
+            color: #495057;
+        }
+        
+        tr:nth-child(even) {
+            background-color: #f8f9fa;
+        }
+        
+        tr:hover {
+            background-color: #f1f3f5;
+        }
+        
+        /* Code and Formula Styles */
+        code {
+            background-color: #f1f3f5;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            color: #c7254e;
+            font-size: 0.9em;
+        }
+        
+        .formula-box {
+            background-color: #f8fcfd;
+            border-left: 4px solid #17a2b8;
+            padding: 15px 20px;
+            margin: 20px 0;
+            border-radius: 0 4px 4px 0;
+        }
+        
+        .formula-title {
+            font-weight: bold;
+            color: #0c5460;
+            margin-bottom: 8px;
+            display: block;
+        }
+        
+        .field-desc {
+            color: #6c757d;
+            font-size: 0.9em;
+        }
+
+        .source-ref {
+            font-size: 0.85rem;
+            color: #6c757d;
+            margin-top: -10px;
+            margin-bottom: 20px;
+            font-style: italic;
+        }
+    </style>
+</head>
+<body>
+    <div id="sidebar">
+        <div class="sidebar-header">
+            <h2>BBA计量系统开发文档</h2>
+        </div>
+        <div class="nav-list">
+            <a class="nav-item active" onclick="showSection('step1', this)">1. 构建预期现金流</a>
+            <a class="nav-item" onclick="showSection('step2', this)">2. 获取实际现金流</a>
+            <a class="nav-item" onclick="showSection('step3', this)">3. 现值 (PV) 计算</a>
+            <a class="nav-item" onclick="showSection('step4', this)">4. 履约现金流变化</a>
+            <a class="nav-item" onclick="showSection('step5', this)">5. CSM/LC计量</a>
+            <a class="nav-item" onclick="showSection('step6', this)">6. IACF摊销</a>
+            <a class="nav-item" onclick="showSection('step7', this)">7. 保险合同收入</a>
+            <a class="nav-item" onclick="showSection('step8', this)">8. 未到期IFIE</a>
+            <a class="nav-item" onclick="showSection('step9', this)">9. 未到期责任负债</a>
+            <a class="nav-item" onclick="showSection('step10', this)">10. 计量结果与数据输出</a>
+        </div>
+    </div>
+
+    <div id="content">
+        <!-- 1. 构建预期现金流 -->
+        <section id="step1" class="active">
+            <h1>1. 构建预期现金流 (Construct Expected Cash Flows)</h1>
+            <div class="source-ref">核心代码逻辑：BBA_dev/projector.py -> CashFlowProjector.project_policy_flows</div>
+            
+            <p>
+                基于全追溯法（Full Retrospective Approach, FRA），根据保单的基础信息和精算假设，按月投射未来的预期现金流。
+                这是BBA模型计算的基础输入。
+            </p>
+
+            <h2>1.1 输入数据 (Input Data)</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th width="20%">数据来源</th>
+                        <th width="25%">字段名 (Code)</th>
+                        <th>描述 (Description)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td rowspan="6">保单数据 (Policy Data)</td>
+                        <td><code>premium</code></td>
+                        <td>总保费 (不含税)</td>
+                    </tr>
+                    <tr>
+                        <td><code>iacf_amount</code></td>
+                        <td>初始获取成本 (IACF)</td>
+                    </tr>
+                    <tr>
+                        <td><code>start_date</code></td>
+                        <td>起保日期</td>
+                    </tr>
+                    <tr>
+                        <td><code>end_date</code></td>
+                        <td>终保日期</td>
+                    </tr>
+                    <tr>
+                        <td><code>under_write_date</code></td>
+                        <td>签单日期</td>
+                    </tr>
+                    <tr>
+                        <td><code>warranty_end_date</code></td>
+                        <td>厂家保修结束日期 (延保业务特有)</td>
+                    </tr>
+                    <tr>
+                        <td rowspan="3">精算假设 (Assumptions)</td>
+                        <td><code>loss_ratio</code></td>
+                        <td>赔付率假设</td>
+                    </tr>
+                    <tr>
+                        <td><code>claim_expense_ratio</code></td>
+                        <td>间接理赔费用率假设 (Applied to Claims)</td>
+                    </tr>
+                    <tr>
+                        <td><code>maintenance_expense_ratio</code></td>
+                        <td>维持费用率假设 (Applied to Earned Premium)</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <h2>1.2 计算逻辑 (Calculation Logic)</h2>
+            
+            <div class="formula-box">
+                <span class="formula-title">1. 确定风险期间 (Risk Period)</span>
+                <p>风险期间是指保险公司实际承担风险的时间段。对于延保业务，风险通常在厂家保修期结束后开始。</p>
+                <code>Risk Start = warranty_end_date (若无则为 start_date)</code><br>
+                <code>Risk End = end_date</code>
+            </div>
+
+            <div class="formula-box">
+                <span class="formula-title">2. 计算月度满期保费 (Monthly Earned Premium)</span>
+                <p>将总保费平均分摊到风险期间的每个月。</p>
+                <code>Coverage Months = Months Between(Risk Start, Risk End) + 1</code><br>
+                <code>Monthly Earned = Premium / Coverage Months</code>
+            </div>
+
+            <div class="formula-box">
+                <span class="formula-title">3. 现金流投射 (Projection)</span>
+                <p>遍历从时间轴起点 (Timeline Start) 到终保日期 (End Date) 的每个月：</p>
+                <ul>
+                    <li>
+                        <strong>保费 (Premium):</strong> 仅在签单月 (under_write_date) 发生。<br>
+                        <code>Premium Flow = premium (if current month == uw month) else 0</code>
+                    </li>
+                    <li>
+                        <strong>获取成本 (IACF):</strong> 仅在签单月 (under_write_date) 发生。<br>
+                        <code>IACF Flow = iacf_amount (if current month == uw month) else 0</code>
+                    </li>
+                    <li>
+                        <strong>赔付 (Claims):</strong> 仅在风险期间内发生。<br>
+                        <code>Claims Flow = Monthly Earned * loss_ratio * (1 + claim_expense_ratio)</code>
+                    </li>
+                    <li>
+                        <strong>维持费用 (Expenses):</strong> 仅在风险期间内发生。<br>
+                        <code>Expenses Flow = Monthly Earned * maintenance_expense_ratio</code>
+                    </li>
+                </ul>
+            </div>
+
+            <h2>1.3 输出字段 (Output Fields)</h2>
+            <div class="formula-box" style="background-color: #fff3cd; border-left-color: #ffc107;">
+                <span class="formula-title" style="color: #856404;">⚠️ 重要说明：现金流发生时点</span>
+                <p style="margin-bottom: 0; color: #856404;">
+                    为了简化计算，模型假设所有预期现金流均发生在<strong>月末 (End of Month)</strong>。
+                    在折现计算时，需使用月末日期作为现金流发生日期。
+                </p>
+            </div>
+            <table>
+                <thead>
+                    <tr>
+                        <th>字段名 (Field Name)</th>
+                        <th>类型 (Type)</th>
+                        <th>说明 (Description)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><code>yyyymm</code></td>
+                        <td>String</td>
+                        <td>现金流发生的年月 (格式：YYYYMM)</td>
+                    </tr>
+                    <tr>
+                        <td><code>premium</code></td>
+                        <td>Float</td>
+                        <td>预期保费流入 (Premium)</td>
+                    </tr>
+                    <tr>
+                        <td><code>iacf</code></td>
+                        <td>Float</td>
+                        <td>预期获取费用流出 (IACF)</td>
+                    </tr>
+                    <tr>
+                        <td><code>claims</code></td>
+                        <td>Float</td>
+                        <td>预期赔付流出 (Claims)</td>
+                    </tr>
+                    <tr>
+                        <td><code>expenses</code></td>
+                        <td>Float</td>
+                        <td>预期维持费用流出 (Maintenance Expenses)</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <h2>1.4 数据示例 (Data Example)</h2>
+            <p>以下是一个<strong>延保业务</strong>的预期现金流投射示例，展示了“等待期”和“风险期”的区别。</p>
+            
+            <div style="background-color: #f8f9fa; padding: 15px; border-radius: 4px; border: 1px solid #dee2e6; margin-bottom: 20px;">
+                <strong>场景假设：</strong>
+                <ul style="margin-bottom: 0;">
+                    <li><strong>保单信息：</strong>签单/起保 2024-01-01，终保 2025-12-31，厂家保修至 2024-12-31。</li>
+                    <li><strong>金额信息：</strong>总保费 2400元，IACF 240元。</li>
+                    <li><strong>精算假设：</strong>赔付率 50%，维持费用率 10%。</li>
+                    <li><strong>计算逻辑：</strong>
+                        <ul>
+                            <li>风险期：2025-01-01 至 2025-12-31 (共12个月)。</li>
+                            <li>月度满期保费：2400 / 12 = 200元/月 (仅在风险期内产生)。</li>
+                            <li>月度赔付 = 200 * 50% = 100元。</li>
+                            <li>月度维持费用 = 200 * 10% = 20元。</li>
+                        </ul>
+                    </li>
+                </ul>
+            </div>
+
+            <table style="font-size: 0.9em;">
+                <thead>
+                    <tr>
+                        <th>yyyymm</th>
+                        <th>premium</th>
+                        <th>iacf</th>
+                        <th>claims</th>
+                        <th>expenses</th>
+                        <th>说明</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr style="background-color: #e8f5e9;">
+                        <td>202401</td>
+                        <td>2,400.00</td>
+                        <td>240.00</td>
+                        <td>0.00</td>
+                        <td>0.00</td>
+                        <td>签单月：确认保费和获取成本</td>
+                    </tr>
+                    <tr>
+                        <td>202402</td>
+                        <td>0.00</td>
+                        <td>0.00</td>
+                        <td>0.00</td>
+                        <td>0.00</td>
+                        <td>等待期：无现金流</td>
+                    </tr>
+                    <tr>
+                        <td>...</td>
+                        <td>...</td>
+                        <td>...</td>
+                        <td>...</td>
+                        <td>...</td>
+                        <td>...</td>
+                    </tr>
+                    <tr>
+                        <td>202412</td>
+                        <td>0.00</td>
+                        <td>0.00</td>
+                        <td>0.00</td>
+                        <td>0.00</td>
+                        <td>等待期结束</td>
+                    </tr>
+                    <tr style="background-color: #fff3e0;">
+                        <td>202501</td>
+                        <td>0.00</td>
+                        <td>0.00</td>
+                        <td>100.00</td>
+                        <td>20.00</td>
+                        <td>风险期开始：产生赔付和维持费用</td>
+                    </tr>
+                    <tr style="background-color: #fff3e0;">
+                        <td>...</td>
+                        <td>...</td>
+                        <td>...</td>
+                        <td>...</td>
+                        <td>...</td>
+                        <td>风险期持续...</td>
+                    </tr>
+                    <tr style="background-color: #fff3e0;">
+                        <td>202512</td>
+                        <td>0.00</td>
+                        <td>0.00</td>
+                        <td>100.00</td>
+                        <td>20.00</td>
+                        <td>风险期结束</td>
+                    </tr>
+                </tbody>
+            </table>
+        </section>
+
+        <!-- Placeholders for other sections -->
+        <section id="step2">
+            <h1>2. 获取实际现金流 (Get Actual Cash Flows)</h1>
+            <div class="source-ref">核心代码逻辑：BBA_dev/logic/actual_cashflows.py -> ActualCashflows</div>
+
+            <p>
+                该步骤负责获取保单实际发生的现金流数据，主要包括<strong>实际保费 (Actual Premium)</strong> 和 <strong>实际获取成本 (Actual IACF)</strong>。
+                这些数据通常直接来源于业务系统或财务系统的实际记录。
+            </p>
+
+            <h2>2.1 输入数据 (Input Data)</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>数据来源</th>
+                        <th>源字段名 (Source Field)</th>
+                        <th>描述 (Description)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>保单表 (t_pp_jl_contract)</td>
+                        <td><code>premium_cny</code> 或 <code>sum_premium_no_tax</code></td>
+                        <td>实际签单保费 (不含税)</td>
+                    </tr>
+                    <tr>
+                        <td>费用表 (summary_iacf_cost)</td>
+                        <td><code>iacf_amount</code></td>
+                        <td>实际发生的初始获取成本</td>
+                    </tr>
+                    <tr>
+                        <td>保单表</td>
+                        <td><code>under_write_date</code></td>
+                        <td>签单日期 (决定现金流归属年份)</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <h2>2.2 处理逻辑 (Processing Logic)</h2>
+            
+            <div class="formula-box">
+                <span class="formula-title">1. 发生时间判定</span>
+                <p>模型假设实际现金流仅在<strong>签单年度 (Underwriting Year)</strong> 发生。</p>
+                <code>If Valuation Year == Underwriting Year: Return Actual Value</code><br>
+                <code>Else: Return 0</code>
+            </div>
+
+            <div class="formula-box">
+                <span class="formula-title">2. 数据加载优先权</span>
+                <p>系统支持两种加载模式：</p>
+                <ul>
+                    <li><strong>直接输入：</strong>如果在初始化时提供了数值，直接使用输入值。</li>
+                    <li><strong>数据库加载：</strong>如果未提供数值，则通过 `data_loader` 从数据库读取。</li>
+                </ul>
+            </div>
+
+            <h2>2.3 输出字段 (Output Fields)</h2>
+            <div class="formula-box" style="background-color: #fff3cd; border-left-color: #ffc107;">
+                <span class="formula-title" style="color: #856404;">⚠️ 注意</span>
+                <p style="margin-bottom: 0; color: #856404;">
+                    实际现金流为<strong>名义金额 (Nominal Amount)</strong>，不包含任何利息成分。
+                </p>
+            </div>
+            <table>
+                <thead>
+                    <tr>
+                        <th>字段名 (Field Name)</th>
+                        <th>类型 (Type)</th>
+                        <th>说明 (Description)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><code>actual_premium</code></td>
+                        <td>Decimal</td>
+                        <td>实际收到保费</td>
+                    </tr>
+                    <tr>
+                        <td><code>actual_iacf</code></td>
+                        <td>Decimal</td>
+                        <td>实际支付获取成本</td>
+                    </tr>
+                    <tr>
+                        <td><code>occurrence_date</code></td>
+                        <td>Date</td>
+                        <td>现金流发生日期 (通常为签单日期)</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <h2>2.4 数据示例 (Data Example)</h2>
+            <div style="background-color: #f8f9fa; padding: 15px; border-radius: 4px; border: 1px solid #dee2e6; margin-bottom: 20px;">
+                <strong>场景假设：</strong>
+                <ul style="margin-bottom: 0;">
+                    <li><strong>保单信息：</strong>签单日期 2024-01-15。</li>
+                    <li><strong>实际金额：</strong>实际保费 2400元，实际IACF 240元。</li>
+                    <li><strong>现金流归属：</strong>均归属至签单当月的<strong>月末</strong> (2024-01-31)。</li>
+                </ul>
+            </div>
+
+            <table style="font-size: 0.9em;">
+                <thead>
+                    <tr>
+                        <th>yyyymm</th>
+                        <th>actual_premium</th>
+                        <th>actual_iacf</th>
+                        <th>说明</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr style="background-color: #e8f5e9;">
+                        <td>202401</td>
+                        <td>2,400.00</td>
+                        <td>240.00</td>
+                        <td>签单月：确认实际发生额</td>
+                    </tr>
+                    <tr>
+                        <td>202402</td>
+                        <td>0.00</td>
+                        <td>0.00</td>
+                        <td>非签单月：无实际现金流</td>
+                    </tr>
+                    <tr>
+                        <td>...</td>
+                        <td>...</td>
+                        <td>...</td>
+                        <td>...</td>
+                    </tr>
+                    <tr>
+                        <td>202501</td>
+                        <td>0.00</td>
+                        <td>0.00</td>
+                        <td>非签单年：无实际现金流</td>
+                    </tr>
+                </tbody>
+            </table>
+        </section>
+        <!-- New Step 3: PV Calculation -->
+        <section id="step3">
+            <h1>3. 现值 (PV) 计算 (Present Value Calculation)</h1>
+            <div class="source-ref">核心代码逻辑：BBA_dev/pv_calculator.py -> calculate_pv_exact / calculate_pv_current_period_no_interest_after_occurrence</div>
+            
+            <p>
+                基于第1步生成的预期现金流，结合利率曲线，计算各时点的现值 (Present Value)。
+                这是BBA模型中最核心的计算环节，支撑后续所有负债计量。
+            </p>
+
+            <h2>3.1 计算类型 (Calculation Types)</h2>
+            <p>针对不同的业务场景，系统采用了两种核心折现逻辑：</p>
+            
+            <div class="formula-box">
+                <span class="formula-title">逻辑 A: 精确折现 (Precise Discounting)</span>
+                <p><strong>适用场景：</strong>预期未来现金流 (Future Period Flows)。</p>
+                <p><strong>逻辑描述：</strong>根据现金流发生日与评估日的时间差，选择对应的利率进行折现或终值累积。</p>
+                <ul>
+                    <li><strong>折现 (Discounting):</strong> 现金流在评估日之后 (CF Date > Val Date)。<br>
+                        <code>PV = Amount / [(1+r1) * (1+r2) * ... * (1+rn)]</code>
+                    </li>
+                    <li><strong>累积 (Accumulation):</strong> 现金流在评估日之前 (CF Date < Val Date)。<br>
+                        <code>PV = Amount * [(1+r1) * (1+r2) * ... * (1+rn)]</code>
+                    </li>
+                </ul>
+            </div>
+
+            <div class="formula-box">
+                <span class="formula-title">逻辑 B: 当期不计息 (No Interest for Current Period)</span>
+                <p><strong>适用场景：</strong>预期当期现金流 (Current Period Flows) 滚动至期末。</p>
+                <p><strong>逻辑描述：</strong></p>
+                <ul>
+                    <li><strong>已发生 (Past):</strong> 如果现金流发生在评估月或之前，视为已发生，<strong>取原值，不计算利息</strong>。</li>
+                    <li><strong>未发生 (Future):</strong> 如果现金流发生在评估月之后，按逻辑 A 进行折现。</li>
+                </ul>
+                <p class="field-desc">主要用于计算 `Pvfl_Nb_Ini_Cca_Rep` (新增业务-初始确认-预期当期-期末现值) 等字段。</p>
+            </div>
+
+            <h2>3.2 利率曲线选择 (Interest Rate Curves)</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>曲线类型</th>
+                        <th>代码 (Code)</th>
+                        <th>基准日 (Base Date)</th>
+                        <th>适用场景</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>锁定曲线 (Locked Curve)</td>
+                        <td><code>Lkd</code> / <code>Wlk</code></td>
+                        <td>签单日 (Underwriting Date)</td>
+                        <td>CSM 初始确认、后续计量、利息费用计算</td>
+                    </tr>
+                    <tr>
+                        <td>当前曲线 (Current Curve)</td>
+                        <td><code>Cur</code></td>
+                        <td>评估日 (Valuation Date)</td>
+                        <td>履约现金流 (BEL) 重估、IFIE 计算</td>
+                    </tr>
+                    <tr>
+                        <td>上年末锁定曲线 (Last Year Locked)</td>
+                        <td><code>Lcu</code></td>
+                        <td>上年年末 (Last Year End)</td>
+                        <td>年初现值计算 (用于分析变动)</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <h2>3.3 字段命名规则 (Field Naming Convention)</h2>
+            <p>PV计算产生的中间变量遵循严格的组合规则：<code>Pvfl_{合同组}_{时点}_{范围}_{折现点}_{利率}_{流向}</code>。</p>
+            <p>各组段的具体含义如下：</p>
+            
+            <table>
+                <thead>
+                    <tr>
+                        <th width="15%">组段 (Segment)</th>
+                        <th width="20%">代码 (Code)</th>
+                        <th>含义 (Meaning)</th>
+                        <th>详细说明 (Note)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td rowspan="2"><strong>合同组</strong></td>
+                        <td><code>Nb</code></td>
+                        <td>新增业务 (New Business)</td>
+                        <td>仅在签单年度计算</td>
+                    </tr>
+                    <tr>
+                        <td><code>If</code></td>
+                        <td>有效业务 (In-force)</td>
+                        <td>仅在非签单年度计算 (签单次年起)</td>
+                    </tr>
+                    <tr>
+                        <td rowspan="3"><strong>精算假设选取</strong></td>
+                        <td><code>Ini</code></td>
+                        <td>初始确认 (Initial)</td>
+                        <td>使用 <strong>签单时刻</strong> 的精算假设 (仅Nb)</td>
+                    </tr>
+                    <tr>
+                        <td><code>Bop</code></td>
+                        <td>年初预期 (Beginning of Period)</td>
+                        <td>使用 <strong>上年末</strong> 的精算假设 (仅If)</td>
+                    </tr>
+                    <tr>
+                        <td><code>Eop</code></td>
+                        <td>期末预期 (End of Period)</td>
+                        <td>使用 <strong>当前评估日</strong> 的精算假设 (Nb和If均涉及)</td>
+                    </tr>
+                    <tr>
+                        <td rowspan="2"><strong>现金流范围</strong></td>
+                        <td><code>Cca</code></td>
+                        <td>预期当期 (Current Period)</td>
+                        <td><strong>年初 (1月1日) 至 当前评估期末</strong> 的现金流</td>
+                    </tr>
+                    <tr>
+                        <td><code>Cfa</code></td>
+                        <td>预期未来 (Future Period)</td>
+                        <td><strong>当前评估期末 之后</strong> 的现金流</td>
+                    </tr>
+                    <tr>
+                        <td rowspan="3"><strong>折现终点</strong></td>
+                        <td><code>Rec</code></td>
+                        <td>初始确认点 (Recognition)</td>
+                        <td>折现至签单月月末</td>
+                    </tr>
+                    <tr>
+                        <td><code>Rep</code></td>
+                        <td>期末点 (Reporting)</td>
+                        <td>折现/滚动至当前评估期末</td>
+                    </tr>
+                    <tr>
+                        <td><code>Beg</code></td>
+                        <td>年初点 (Beginning)</td>
+                        <td>折现至当年年初 (1月1日)</td>
+                    </tr>
+                    <tr>
+                        <td rowspan="3"><strong>利率曲线</strong></td>
+                        <td><code>Lkd</code></td>
+                        <td>锁定利率 (Locked)</td>
+                        <td>签单月锁定曲线</td>
+                    </tr>
+                    <tr>
+                        <td><code>Wlk</code></td>
+                        <td>加权锁定利率 (Weighted Locked)</td>
+                        <td>签单月锁定曲线 (同Lkd，用于不同场景区分)</td>
+                    </tr>
+                    <tr>
+                        <td><code>Cur</code></td>
+                        <td>当前利率 (Current)</td>
+                        <td>评估月即期曲线</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <h2>3.4 详细输出字段列表 (Detailed Output Fields)</h2>
+            <p>下表列出了PV计算模块生成的所有关键字段及其计算逻辑。字段命名格式为：<code>Pvfl_{Prefix}_{Suffix}</code>。</p>
+            
+            <div style="height: 600px; overflow-y: auto; border: 1px solid #dee2e6; border-radius: 4px;">
+                <table style="margin-top: 0; font-size: 0.85rem;">
+                    <thead style="position: sticky; top: 0; background: #f8f9fa; z-index: 1;">
+                        <tr>
+                            <th width="35%">字段前缀 (Field Prefix)</th>
+                            <th width="15%">包含后缀<br>(Suffixes)</th>
+                            <th>计算逻辑说明 (Calculation Logic)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <!-- 1. 新增业务 - 初始确认 (Rec) -->
+                        <tr style="background-color: #e3f2fd;"><td colspan="3"><strong>1. 新增业务 - 初始确认 (New Business - Initial Recognition)</strong> <br><small>仅在签单年度计算，用于确立CSM。</small></td></tr>
+                        
+                        <tr>
+                            <td><code>Pvfl_Nb_Ini_Cca_Rec_Lkd</code></td>
+                            <td>Pre, Acq, Cla, Mtn, Rad</td>
+                            <td>
+                                <strong>[初始确认-当期]</strong><br>
+                                基于<strong>签单时刻假设</strong>生成的<strong>年初至评估期末</strong>现金流。<br>
+                                折现/滚动至<strong>签单月末</strong>。<br>
+                                使用<strong>签单月锁定曲线</strong>。
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><code>Pvfl_Nb_Ini_Cfa_Rec_Lkd</code></td>
+                            <td>Pre, Acq, Cla, Mtn, Rad</td>
+                            <td>
+                                <strong>[初始确认-未来]</strong><br>
+                                基于<strong>签单时刻假设</strong>生成的<strong>评估期末后</strong>现金流。<br>
+                                折现至<strong>签单月末</strong>。<br>
+                                使用<strong>签单月锁定曲线</strong>。
+                            </td>
+                        </tr>
+
+                        <!-- 2. 新增业务 - 期末重估 (Rep) -->
+                        <tr style="background-color: #e3f2fd;"><td colspan="3"><strong>2. 新增业务 - 期末重估 (New Business - End of Period)</strong> <br><small>仅在签单年度计算，用于期末报告。</small></td></tr>
+
+                        <tr>
+                            <td><code>Pvfl_Nb_Ini_Cca_Rep_Wlk</code></td>
+                            <td>Pre, Acq, Cla, Mtn, Rad</td>
+                            <td>
+                                <strong>[初始确认滚动-当期]</strong><br>
+                                基于<strong>签单时刻假设</strong>生成的<strong>年初至评估期末</strong>现金流。<br>
+                                滚动至<strong>评估期末</strong> (用于计算利息吸附)。<br>
+                                使用<strong>签单月锁定曲线</strong>。
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><code>Pvfl_Nb_Ini_Cfa_Rep_Wlk</code></td>
+                            <td>Pre, Acq, Cla, Mtn, Rad</td>
+                            <td>
+                                <strong>[初始确认滚动-未来]</strong><br>
+                                基于<strong>签单时刻假设</strong>生成的<strong>评估期末后</strong>现金流。<br>
+                                折现至<strong>评估期末</strong>。<br>
+                                使用<strong>签单月锁定曲线</strong>。
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><code>Pvfl_Nb_Eop_Cca_Rep_Wlk</code></td>
+                            <td>Pre, Acq, Cla, Mtn, Rad</td>
+                            <td>
+                                <strong>[期末预期-当期]</strong><br>
+                                基于<strong>当前评估时刻假设</strong>生成的<strong>年初至评估期末</strong>现金流。<br>
+                                滚动至<strong>评估期末</strong>。<br>
+                                使用<strong>签单月锁定曲线</strong>。
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><code>Pvfl_Nb_Eop_Cfa_Rep_Wlk</code></td>
+                            <td>Pre, Acq, Cla, Mtn, Rad</td>
+                            <td>
+                                <strong>[期末预期-未来 (锁定利率)]</strong><br>
+                                基于<strong>当前评估时刻假设</strong>生成的<strong>评估期末后</strong>现金流。<br>
+                                折现至<strong>评估期末</strong>。<br>
+                                使用<strong>签单月锁定曲线</strong> (用于CSM调整)。
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><code>Pvfl_Nb_Eop_Cfa_Rep_Cur</code></td>
+                            <td>Pre, Acq, Cla, Mtn, Rad</td>
+                            <td>
+                                <strong>[期末预期-未来 (当前利率)]</strong><br>
+                                基于<strong>当前评估时刻假设</strong>生成的<strong>评估期末后</strong>现金流。<br>
+                                折现至<strong>评估期末</strong>。<br>
+                                使用<strong>评估月当前曲线</strong> (用于计算BEL)。
+                            </td>
+                        </tr>
+
+                        <!-- 3. 有效业务 - 年初预期 (If Bop) -->
+                        <tr style="background-color: #e8f5e9;"><td colspan="3"><strong>3. 有效业务 - 年初预期 (In-force - BOP Expected)</strong> <br><small>仅在非签单年度计算，用于预计负债释放。</small></td></tr>
+
+                        <tr>
+                            <td><code>Pvfl_If_Bop_Cca_Rep_Wlk</code></td>
+                            <td>Pre, Acq, Cla, Mtn, Rad</td>
+                            <td>
+                                <strong>[年初预期-当期]</strong><br>
+                                基于<strong>上年末假设</strong>生成的<strong>年初至评估期末</strong>现金流。<br>
+                                滚动至<strong>评估期末</strong>。<br>
+                                使用<strong>签单月锁定曲线</strong>。
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><code>Pvfl_If_Bop_Cfa_Rep_Wlk</code></td>
+                            <td>Pre, Acq, Cla, Mtn, Rad</td>
+                            <td>
+                                <strong>[年初预期-未来]</strong><br>
+                                基于<strong>上年末假设</strong>生成的<strong>评估期末后</strong>现金流。<br>
+                                折现至<strong>评估期末</strong>。<br>
+                                使用<strong>签单月锁定曲线</strong>。
+                            </td>
+                        </tr>
+
+                        <!-- 4. 有效业务 - 年初现值 (If Beg) -->
+                        <tr style="background-color: #fff3e0;"><td colspan="3"><strong>4. 有效业务 - 年初现值 (In-force - Beginning of Year PV)</strong> <br><small>仅在每年1月1日计算，用于IFIE和金融变动分析。</small></td></tr>
+
+                        <tr>
+                            <td><code>Pvfl_If_Bop_Cca_Beg_Lcu</code></td>
+                            <td>Cla, Mtn, Rad</td>
+                            <td>
+                                <strong>[年初现值-当期 (上年锁定)]</strong><br>
+                                基于<strong>上年末假设</strong>生成的<strong>年初至评估期末</strong>现金流。<br>
+                                折现至<strong>年初(1月1日)</strong>。<br>
+                                使用<strong>上年末锁定曲线</strong> (分析利率变动)。
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><code>Pvfl_If_Bop_Cfa_Beg_Lcu</code></td>
+                            <td>Cla, Mtn, Rad</td>
+                            <td>
+                                <strong>[年初现值-未来 (上年锁定)]</strong><br>
+                                基于<strong>上年末假设</strong>生成的<strong>评估期末后</strong>现金流。<br>
+                                折现至<strong>年初(1月1日)</strong>。<br>
+                                使用<strong>上年末锁定曲线</strong>。
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><code>Pvfl_If_Bop_Cfa_Beg_Wlk</code></td>
+                            <td>Cla, Mtn, Rad</td>
+                            <td>
+                                <strong>[年初现值-未来 (签单锁定)]</strong><br>
+                                基于<strong>上年末假设</strong>生成的<strong>评估期末后</strong>现金流。<br>
+                                折现至<strong>年初(1月1日)</strong>。<br>
+                                使用<strong>签单月锁定曲线</strong> (用于IFIE计算)。
+                            </td>
+                        </tr>
+
+                        <!-- 5. 有效业务 - 期末预期 (If Eop) -->
+                        <tr style="background-color: #e8f5e9;"><td colspan="3"><strong>5. 有效业务 - 期末预期 (In-force - EOP Expected)</strong> <br><small>仅在非签单年度计算，用于期末计量。</small></td></tr>
+
+                        <tr>
+                            <td><code>Pvfl_If_Eop_Cca_Rep_Wlk</code></td>
+                            <td>Pre, Acq, Cla, Mtn, Rad</td>
+                            <td>
+                                <strong>[期末预期-当期]</strong><br>
+                                基于<strong>当前评估时刻假设</strong>生成的<strong>年初至评估期末</strong>现金流。<br>
+                                滚动至<strong>评估期末</strong>。<br>
+                                使用<strong>签单月锁定曲线</strong>。
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><code>Pvfl_If_Eop_Cfa_Rep_Wlk</code></td>
+                            <td>Pre, Acq, Cla, Mtn, Rad</td>
+                            <td>
+                                <strong>[期末预期-未来 (锁定利率)]</strong><br>
+                                基于<strong>当前评估时刻假设</strong>生成的<strong>评估期末后</strong>现金流。<br>
+                                折现至<strong>评估期末</strong>。<br>
+                                使用<strong>签单月锁定曲线</strong>。
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><code>Pvfl_If_Eop_Cfa_Rep_Cur</code></td>
+                            <td>Pre, Acq, Cla, Mtn, Rad</td>
+                            <td>
+                                <strong>[期末预期-未来 (当前利率)]</strong><br>
+                                基于<strong>当前评估时刻假设</strong>生成的<strong>评估期末后</strong>现金流。<br>
+                                折现至<strong>评估期末</strong>。<br>
+                                使用<strong>评估月当前曲线</strong>。
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            <p style="margin-top: 10px; font-size: 0.9em; color: #666;">
+                <strong>后缀说明：</strong> 
+                <code>Pre</code> (保费 Premium), 
+                <code>Acq</code> (获取费用 Acquisition Cost), 
+                <code>Cla</code> (赔付 Claims), 
+                <code>Mtn</code> (维持费用 Maintenance Expenses), 
+                <code>Rad</code> (风险调整 Risk Adjustment)。
+            </p>
+        </section>
+
+        <!-- Step 4: Fulfillment Cashflow Changes -->
+        <section id="step4">
+            <h1>4. 履约现金流变化 (Fulfillment Cashflow Changes)</h1>
+            <div class="source-ref">核心代码逻辑：BBA_dev/logic/fulfillment_cashflow_changes.py</div>
+            
+            <p>
+                该步骤计算实际发生额与预期金额之间的差异（经验调整），以及假设变更带来的未来现金流现值变化。
+                这些变化将根据情况被 CSM (合同服务边际) 或 LC (亏损部分) 吸收，或直接计入当期损益。
+            </p>
+
+            <h2>4.1 经验调整 (Experience Adjustment)</h2>
+            <p>经验调整反映了<strong>当期</strong>实际现金流与预期现金流之间的差异。</p>
+            
+            <div class="formula-box">
+                <span class="formula-title">计算公式 (通用)</span>
+                <code>经验调整 = (期末预期 + 当期实际) - (初始/年初预期 + 当期预期) * 调整比例</code>
+            </div>
+
+            <h3>4.1.1 保费现金流经验调整 (Premium Experience Adjustment)</h3>
+            <ul>
+                <li><strong>新增业务 (New Business):</strong>
+                    <code>Adj_Prem = [(Nb_Eop_Cfa_Rep_Wlk_Pre + Nb_Actual_Pre) - (Nb_Ini_Cfa_Rep_Wlk_Pre + Nb_Ini_Cca_Rep_Wlk_Pre)] * Ratio</code>
+                </li>
+                <li><strong>有效业务 (In-force):</strong>
+                    <code>Adj_Prem = [(If_Eop_Cfa_Rep_Wlk_Pre + If_Actual_Pre) - (If_Bop_Cfa_Rep_Wlk_Pre + If_Bop_Cca_Rep_Wlk_Pre)] * Ratio</code>
+                </li>
+            </ul>
+
+            <h3>4.1.2 IACF 经验调整 (IACF Experience Adjustment)</h3>
+            <ul>
+                <li><strong>新增业务 (New Business):</strong>
+                    <code>Adj_IACF = [(Nb_Eop_Cfa_Rep_Wlk_Acq + Nb_Actual_Acq) - (Nb_Ini_Cfa_Rep_Wlk_Acq + Nb_Ini_Cca_Rep_Wlk_Acq)] * Ratio</code>
+                </li>
+                <li><strong>有效业务 (In-force):</strong>
+                    <code>Adj_IACF = [(If_Eop_Cfa_Rep_Wlk_Acq + If_Actual_Acq) - (If_Bop_Cfa_Rep_Wlk_Acq + If_Bop_Cca_Rep_Wlk_Acq)] * Ratio</code>
+                </li>
+            </ul>
+            
+            <p style="font-size: 0.9em; color: #666;">
+                注：<code>Ratio</code> 为经验调整分摊比例，通常基于覆盖单元 (Coverage Units) 计算。
+                实际金额 (Actual) 为名义值，不计息。
+            </p>
+
+            <h2>4.2 被 CSM/LC 吸收的变化 (Changes Absorbed by CSM/LC)</h2>
+            <p>
+                这部分反映了由于精算假设变更（如退保率、费用率变化）导致的<strong>未来</strong>现金流现值的变化。
+                所有计算均使用<strong>锁定利率 (Locked Rate, Wlk)</strong>，以剔除金融假设变化的影响。
+            </p>
+
+            <h3>4.2.1 各项现金流变化明细</h3>
+            
+            <table style="font-size: 0.8rem;">
+                <thead>
+                    <tr>
+                        <th width="15%">项目 (Item)</th>
+                        <th>计算公式 (Formula)</th>
+                        <th width="20%">说明 (Note)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>保费变化</strong><br>(Δ_Prem)</td>
+                        <td>
+                            <code>(Pvfl_If_Eop_Cfa_Rep_Wlk_Pre + Pvfl_Nb_Eop_Cfa_Rep_Wlk_Pre)</code><br>
+                            <code>- (Pvfl_If_Bop_Cfa_Rep_Wlk_Pre + Pvfl_Nb_Ini_Cfa_Rep_Wlk_Pre)</code><br>
+                            <code>+ (If_Actual_Pre + Nb_Actual_Pre)</code><br>
+                            <code>- (Pvfl_If_Bop_Cca_Rep_Wlk_Pre + Pvfl_Nb_Ini_Cca_Rep_Wlk_Pre)</code><br>
+                            <code>- Adj_Prem</code>
+                        </td>
+                        <td>扣除经验调整后的纯假设变更影响</td>
+                    </tr>
+                    <tr>
+                        <td><strong>IACF 变化</strong><br>(Δ_IACF)</td>
+                        <td>
+                            <code>(Pvfl_If_Eop_Cfa_Rep_Wlk_Acq + Pvfl_Nb_Eop_Cfa_Rep_Wlk_Acq)</code><br>
+                            <code>- (Pvfl_If_Bop_Cfa_Rep_Wlk_Acq + Pvfl_Nb_Ini_Cfa_Rep_Wlk_Acq)</code><br>
+                            <code>+ (If_Actual_Acq + Nb_Actual_Acq)</code><br>
+                            <code>- (Pvfl_If_Bop_Cca_Rep_Wlk_Acq + Pvfl_Nb_Ini_Cca_Rep_Wlk_Acq)</code><br>
+                            <code>- Adj_IACF</code>
+                        </td>
+                        <td>同上</td>
+                    </tr>
+                    <tr>
+                        <td><strong>赔付变化</strong><br>(Δ_Claims)</td>
+                        <td>
+                            <code>(Pvfl_If_Eop_Cfa_Rep_Wlk_Cla + Pvfl_Nb_Eop_Cfa_Rep_Wlk_Cla)</code><br>
+                            <code>- (Pvfl_If_Bop_Cfa_Rep_Wlk_Cla + Pvfl_Nb_Ini_Cfa_Rep_Wlk_Cla)</code>
+                        </td>
+                        <td>仅涉及未来现金流现值的变动</td>
+                    </tr>
+                    <tr>
+                        <td><strong>维持费用变化</strong><br>(Δ_Maint)</td>
+                        <td>
+                            <code>(Pvfl_If_Eop_Cfa_Rep_Wlk_Mtn + Pvfl_Nb_Eop_Cfa_Rep_Wlk_Mtn)</code><br>
+                            <code>- (Pvfl_If_Bop_Cfa_Rep_Wlk_Mtn + Pvfl_Nb_Ini_Cfa_Rep_Wlk_Mtn)</code>
+                        </td>
+                        <td>同上</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <h3>4.2.2 汇总与吸收 (Aggregation & Absorption)</h3>
+            
+            <div class="formula-box">
+                <span class="formula-title">1. 预期现金流变化合计 (Total Expected CF Change)</span>
+                <p>汇总所有现金流成分的变化，注意符号方向（流入增加为正，流出增加为负）。</p>
+                <code>Δ_CF_Total = Δ_Prem - Δ_IACF - Δ_Claims - Δ_Maint</code>
+            </div>
+
+            <div class="formula-box">
+                <span class="formula-title">2. 非金融风险调整变化 (Δ_RA)</span>
+                <p>非金融风险调整 (Risk Adjustment) 的变动。</p>
+                <code>Δ_RA = (Pvfl_If_Eop_Cfa_Rep_Wlk_Rad + Pvfl_Nb_Eop_Cfa_Rep_Wlk_Rad) - (Pvfl_If_Bop_Cfa_Rep_Wlk_Rad + Pvfl_Nb_Ini_Cfa_Rep_Wlk_Rad)</code>
+            </div>
+
+            <div class="formula-box" style="border-left-color: #28a745; background-color: #f1f8e9;">
+                <span class="formula-title" style="color: #2e7d32;">3. 被 CSM/LC 吸收的变化合计 (Total Absorbed)</span>
+                <p>最终影响 CSM 或 LC 的总金额。</p>
+                <code>Δ_CSM/LC = Δ_CF_Total - Δ_RA</code>
+            </div>
+
+            <h3>4.2.3 分摊逻辑 (Allocation Logic)</h3>
+            <p>计算出的 <code>Δ_CSM/LC</code> 需要根据合同组当前的亏损状态 (Loss Component Ratio) 进行分摊：</p>
+            <ul>
+                <li><strong>被 LC 吸收 (Absorbed by LC):</strong> <code>Δ_CSM/LC * LC_Ratio</code></li>
+                <li><strong>被 CSM 吸收 (Absorbed by CSM):</strong> <code>Δ_CSM/LC * (1 - LC_Ratio)</code></li>
+            </ul>
+        </section>
+
+        <!-- Placeholders for other sections -->
+        <!-- Step 5: CSM/LC Measurement -->
+        <section id="step5">
+            <h1>5. CSM/LC 计量 (CSM/LC Measurement)</h1>
+            <div class="source-ref">核心代码逻辑：BBA_dev/logic/csm_lc_measurement.py</div>
+            
+            <p>
+                本步骤处理合同服务边际 (CSM) 和亏损成分 (LC) 的后续计量，包括计息、IFIE 分摊、合同组状态判定以及期末摊销。
+            </p>
+
+            <h2>5.1 CSM 计息 (CSM Interest Accretion)</h2>
+            <p>使用<strong>加权锁定利率 (Weighted Locked Rate, Wlk)</strong> 计算 CSM 的利息增长。Wlk 曲线确定方式：若有 <code>rate_locked_month</code> 则取对应月的锁定曲线，否则取签单月 (UW Month) 的锁定曲线。</p>
+            
+            <table style="font-size: 0.9em;">
+                <thead>
+                    <tr>
+                        <th width="25%">项目 (Item)</th>
+                        <th>详细逻辑与公式 (Logic & Formula)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>IF_年初CSM余额</strong></td>
+                        <td>直接取自输入数据（如 <code>cohort_state.bop_csm</code>，若>=0）。</td>
+                    </tr>
+                    <tr>
+                        <td><strong>当年新增合同CSM</strong></td>
+                        <td>
+                            <code>Max(0, PV_Prem - (PV_IACF + PV_Claims + PV_Maint) - PV_RA)</code><br>
+                            <strong>PV 数据来源 (PV Source Fields):</strong><br>
+                            所有字段基于 <code>Nb</code> (新增业务) + <code>Ini</code> (初始确认视角) + <code>Rec</code> (初始确认时点) + <code>Lkd</code> (初始锁定利率)。<br>
+                            <ul style="margin: 5px 0; padding-left: 20px;">
+                                <li><strong>PV_Prem:</strong> <code>Pvfl_Nb_Ini_Cca_Rec_Lkd_Pre_Amt + Pvfl_Nb_Ini_Cfa_Rec_Lkd_Pre_Amt</code></li>
+                                <li><strong>PV_IACF:</strong> <code>Pvfl_Nb_Ini_Cca_Rec_Lkd_Acq_Amt + Pvfl_Nb_Ini_Cfa_Rec_Lkd_Acq_Amt</code></li>
+                                <li><strong>PV_Claims:</strong> <code>Pvfl_Nb_Ini_Cca_Rec_Lkd_Cla_Amt + Pvfl_Nb_Ini_Cfa_Rec_Lkd_Cla_Amt</code></li>
+                                <li><strong>PV_Maint:</strong> <code>Pvfl_Nb_Ini_Cca_Rec_Lkd_Mtn_Amt + Pvfl_Nb_Ini_Cfa_Rec_Lkd_Mtn_Amt</code></li>
+                                <li><strong>PV_RA:</strong> <code>Pvfl_Nb_Ini_Cca_Rec_Lkd_Rad_Amt + Pvfl_Nb_Ini_Cfa_Rec_Lkd_Rad_Amt</code></li>
+                            </ul>
+                            <strong>说明:</strong> <code>Cca</code> (Current) 代表签单当年内的现金流，<code>Cfa</code> (Future) 代表签单当年以后的现金流。两者之和构成了该保单全生命周期的现金流现值。
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>期初有效合同CSM计息</strong></td>
+                        <td>
+                            <code>Interest = IF_年初CSM余额 * Factor</code><br>
+                            <strong>通俗解释（原理）：</strong><br>
+                            CSM 像一个银行账户，从“签单日”开始锁定利率并累积利息。我们要计算的是“今年这一年”（从年初到期末）产生了多少利息。<br>
+                            计算方法是：先算出从签单日持有到“期末”的总本息倍数，再除以从签单日持有到“年初”的总本息倍数，得到的差额就是今年的利率。<br>
+                            <br>
+                            <strong>举例说明：</strong><br>
+                            <ul>
+                                <li><strong>签单日 (T_UW):</strong> 2022年1月1日</li>
+                                <li><strong>年初 (T_Start):</strong> 2023年1月1日（距签单12个月）</li>
+                                <li><strong>期末 (T_End):</strong> 2023年12月31日（距签单24个月）</li>
+                                <li><strong>查锁定曲线：</strong>
+                                    <ul>
+                                        <li>第12个月的累积因子 (Rate_Start_Acc) = 1.03 (即累积增长3%)</li>
+                                        <li>第24个月的累积因子 (Rate_End_Acc) = 1.0609 (即累积增长6.09%)</li>
+                                    </ul>
+                                </li>
+                                <li><strong>计算 Factor：</strong> <code>1.0609 / 1.03 - 1 = 0.03 (3%)</code></li>
+                                <li><strong>结论：</strong> 今年的利息 = 年初余额 × 3%</li>
+                            </ul>
+                            <br>
+                            <strong>详细公式：</strong><br>
+                            1. <code>Term_Start</code> = (年初日期 - 签单日期) 的月数。<br>
+                            2. <code>Term_End</code> = (评估日期 - 签单日期) 的月数。<br>
+                            3. <code>Factor = (1 + Rate_End_Acc) / (1 + Rate_Start_Acc) - 1</code>。<br>
+                            <span style="font-size:0.85em; color:#666;">注：Rate_Acc 指从签单日开始累积到该期限的复利因子。</span>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>新增合同CSM计息</strong></td>
+                        <td>
+                            <code>Interest = 当年新增合同CSM * Factor</code><br>
+                            <strong>Factor 计算：</strong><br>
+                            1. Start_Term = 1 (初始确认时), End_Term = (UW_Date 到 评估期末) 的月数。<br>
+                            2. 查 Wlk 曲线计算 Factor，逻辑同上。
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>IF_计息后CSM</strong></td>
+                        <td><code>IF_年初CSM余额 + 期初有效合同CSM计息</code></td>
+                    </tr>
+                    <tr>
+                        <td><strong>NB_计息后CSM</strong></td>
+                        <td><code>当年新增合同CSM + 新增合同CSM计息</code></td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <h2>5.2 LC 分摊 IFIE (LC IFIE Allocation)</h2>
+            <p>计算归属于亏损成分 (LC) 的保险财务收益或费用 (IFIE)。逻辑核心：LC 承担部分利息费用和利率变动损益。</p>
+            
+            <h3>5.2.1 有效业务 (In-force)</h3>
+            <table style="font-size: 0.85rem;">
+                <thead><tr><th width="35%">项目</th><th>详细逻辑与公式</th></tr></thead>
+                <tbody>
+                    <tr>
+                        <td><strong>IF_年初LC</strong></td>
+                        <td>取自输入数据 <code>cohort_state.bop_csm</code>（若<0 取绝对值）。</td>
+                    </tr>
+                    <tr>
+                        <td><strong>IF_LC IFIE分摊比例</strong></td>
+                        <td>
+                            <code>Ratio = |IF_年初LC| / Denom</code><br>
+                            <strong>分母 (Denom)：</strong> <code>Pvfl_If_Bop_Cfa_Beg_Lcu_{Cla+Mtn+Rad} + Pvfl_If_Bop_Cca_Beg_Lcu_{Cla+Mtn+Rad}</code><br>
+                            含义：年初时刻，基于上年末锁定利率 (Lcu) 计算的未来现金流现值总和。
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>IF_待分摊IFIE_计息_赔付与费用</strong></td>
+                        <td>
+                            <code>(Pvfl_If_Bop_Cfa_Rep_Wlk_{Cla+Mtn} + Pvfl_If_Bop_Cca_Rep_Wlk_{Cla+Mtn}) - (Pvfl_If_Bop_Cfa_Beg_Wlk_{Cla+Mtn})</code><br>
+                            含义：期末Wlk现值 - 年初Wlk现值（纯利息累积部分）。
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>IF_待分摊IFIE_计息_非金融风险调整</strong></td>
+                        <td>
+                            <code>(Pvfl_If_Bop_Cfa_Rep_Wlk_Rad + Pvfl_If_Bop_Cca_Rep_Wlk_Rad) - (Pvfl_If_Bop_Cfa_Beg_Wlk_Rad)</code>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>IF_待分摊IFIE_利率变化的影响_赔付与费用</strong></td>
+                        <td>
+                            <code>Term_End_Diff - Term_Beg_Diff</code><br>
+                            <code>Term_End_Diff = Pvfl_If_Eop_Cfa_Rep_Cur_{Cla+Mtn} - Pvfl_If_Eop_Cfa_Rep_Wlk_{Cla+Mtn}</code><br>
+                            <code>Term_Beg_Diff = Pvfl_If_Bop_Cfa_Beg_Lcu_{Cla+Mtn} - Pvfl_If_Bop_Cfa_Beg_Wlk_{Cla+Mtn}</code><br>
+                            含义：期末利率差 - 年初利率差。
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>IF_待分摊IFIE_利率变化的影响_非金融风险调整</strong></td>
+                        <td>同上，将后缀 <code>{Cla+Mtn}</code> 替换为 <code>Rad</code>。</td>
+                    </tr>
+                    <tr>
+                        <td><strong>IF_LC分摊IFIE_赔付与费用</strong></td>
+                        <td><code>(IF_待分摊IFIE_计息_赔付与费用 + IF_待分摊IFIE_利率变化的影响_赔付与费用) * IF_LC IFIE分摊比例</code></td>
+                    </tr>
+                    <tr>
+                        <td><strong>IF_LC分摊IFIE_非金融风险调整</strong></td>
+                        <td><code>(IF_待分摊IFIE_计息_非金融风险调整 + IF_待分摊IFIE_利率变化的影响_非金融风险调整) * IF_LC IFIE分摊比例</code></td>
+                    </tr>
+                    <tr>
+                        <td><strong>IF_LC分摊IFIE</strong></td>
+                        <td>上述两项之和。</td>
+                    </tr>
+                    <tr>
+                        <td><strong>IF_分摊后IFIE后LC</strong></td>
+                        <td><code>IF_年初LC + IF_LC分摊IFIE</code>（注意符号：LC通常为负值，IFIE为损益影响）。</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <h3>5.2.2 新增业务 (New Business)</h3>
+            <table style="font-size: 0.85rem;">
+                <thead><tr><th width="35%">项目</th><th>详细逻辑与公式</th></tr></thead>
+                <tbody>
+                    <tr>
+                        <td><strong>NB_新增LC</strong></td>
+                        <td>取自初始确认结果 <code>nb_initial_lc</code>（若<0 取绝对值，通常记录为负数）。</td>
+                    </tr>
+                    <tr>
+                        <td><strong>NB_LC IFIE分摊比例</strong></td>
+                        <td>
+                            <code>Ratio = |NB_新增LC| / Denom</code><br>
+                            <strong>分母 (Denom)：</strong> <code>Pvfl_Nb_Ini_Cfa_Rec_Lkd_{Cla+Mtn+Rad}</code><br>
+                            含义：初始确认时刻，基于当月初始利率 (Lkd) 计算的未来现金流现值总和。
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>NB_待分摊IFIE_计息_赔付与费用</strong></td>
+                        <td>
+                            <code>(Pvfl_Nb_Ini_Cfa_Rep_Wlk_{Cla+Mtn} + Pvfl_Nb_Ini_Cca_Rep_Wlk_{Cla+Mtn}) - (Pvfl_Nb_Ini_Cfa_Rec_Lkd_{Cla+Mtn})</code><br>
+                            含义：期末Wlk现值 - 初始Lkd现值（注意：初始Lkd即为Wlk起点）。
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>NB_待分摊IFIE_计息_非金融风险调整</strong></td>
+                        <td>同上，将后缀 <code>{Cla+Mtn}</code> 替换为 <code>Rad</code>。</td>
+                    </tr>
+                    <tr>
+                        <td><strong>NB_待分摊IFIE_利率变化的影响_赔付与费用</strong></td>
+                        <td>
+                            <code>Pvfl_Nb_Eop_Cfa_Rep_Cur_{Cla+Mtn} - Pvfl_Nb_Eop_Cfa_Rep_Wlk_{Cla+Mtn}</code><br>
+                            含义：新增业务仅计算期末时刻的利率差（初始时刻Cur=Lkd，差额为0）。
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>NB_待分摊IFIE_利率变化的影响_非金融风险调整</strong></td>
+                        <td>同上，将后缀 <code>{Cla+Mtn}</code> 替换为 <code>Rad</code>。</td>
+                    </tr>
+                    <tr>
+                        <td><strong>NB_LC分摊IFIE_赔付与费用</strong></td>
+                        <td><code>(NB_待分摊IFIE_计息_赔付与费用 + NB_待分摊IFIE_利率变化的影响_赔付与费用) * NB_LC IFIE分摊比例</code></td>
+                    </tr>
+                    <tr>
+                        <td><strong>NB_LC分摊IFIE_非金融风险调整</strong></td>
+                        <td><code>(NB_待分摊IFIE_计息_非金融风险调整 + NB_待分摊IFIE_利率变化的影响_非金融风险调整) * NB_LC IFIE分摊比例</code></td>
+                    </tr>
+                    <tr>
+                        <td><strong>NB_LC分摊IFIE</strong></td>
+                        <td>上述两项之和。</td>
+                    </tr>
+                    <tr>
+                        <td><strong>NB_分摊后IFIE后LC</strong></td>
+                        <td><code>NB_新增LC + NB_LC分摊IFIE</code>。</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <h2>5.3 合同组 CSM/LC 判断 (Cohort Status Determination)</h2>
+            
+            <div class="formula-box">
+                <span class="formula-title">净余额试算 (Net Trial Balance)</span>
+                <p>
+                    <strong>公式：</strong> <code>Net_Trial = IF_计息后CSM + NB_计息后CSM + IF_分摊后IFIE后LC + NB_分摊后IFIE后LC</code><br>
+                    <strong>说明：</strong> 此时汇总了期初余额、新增业务、利息累积和 IFIE 分摊，<strong>尚未包含</strong>当期履约现金流的变化（经验调整和假设变更）。
+                </p>
+            </div>
+
+            <table style="font-size: 0.9em;">
+                <thead><tr><th>判定结果</th><th>详细逻辑</th></tr></thead>
+                <tbody>
+                    <tr>
+                        <td><strong>合同组CSM</strong></td>
+                        <td>
+                            <code>IF Net_Trial >= 0 THEN Cohort_CSM = Net_Trial ELSE 0</code><br>
+                            若为正，表示合同组当前处于盈利状态。
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>合同组LC</strong></td>
+                        <td>
+                            <code>IF Net_Trial < 0 THEN Cohort_LC = Net_Trial ELSE 0</code><br>
+                            若为负，表示合同组当前处于亏损状态。
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <h2>5.4 LC 计量 (LC Measurement)</h2>
+            <p>计算期末 LC 余额，需考虑当期履约现金流变化中被 LC 吸收的部分。分为三个部分分别计算。</p>
+            
+            <div style="overflow-x: auto;">
+                <table style="font-size: 0.85rem; min-width: 800px;">
+                    <thead>
+                        <tr>
+                            <th>项目</th>
+                            <th>预期现金流部分 (Expected CF)</th>
+                            <th>非金融风险调整部分 (RA)</th>
+                            <th>合计 (Total)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>年初LC余额</strong></td>
+                            <td><code>= 年初LC余额_合计</code> (简化假设全部归属CF)</td>
+                            <td><code>0</code></td>
+                            <td><code>cohort_state.bop_csm</code> (若<0)</td>
+                        </tr>
+                        <tr>
+                            <td><strong>当年新增LC</strong></td>
+                            <td><code>NB_新增LC_合计 * Ratio_CF</code><br>Ratio_CF = PV_Init_CF / (PV_Init_CF + PV_Init_RA)</td>
+                            <td><code>NB_新增LC_合计 - NB_新增LC_CF</code></td>
+                            <td><code>nb_initial_lc</code> (若<0)</td>
+                        </tr>
+                        <tr>
+                            <td><strong>LC分摊IFIE</strong></td>
+                            <td><code>IF_LC分摊IFIE_CF + NB_LC分摊IFIE_CF</code></td>
+                            <td><code>IF_LC分摊IFIE_RA + NB_LC分摊IFIE_RA</code></td>
+                            <td><code>LC分摊IFIE_CF + LC分摊IFIE_RA</code></td>
+                        </tr>
+                        <tr>
+                            <td><strong>分摊的LC</strong><br>(Allocated LC)</td>
+                            <td><code>-((Pvfl_If_Bop_Cca_Rep_Wlk_{Cla+Mtn} + Pvfl_Nb_Ini_Cca_Rep_Wlk_{Cla+Mtn}) * LC_Ratio)</code><br>含义：当期实际赔付/维费中归属于LC的部分（转出）。</td>
+                            <td><code>-((Pvfl_If_Bop_Cca_Rep_Wlk_Rad + Pvfl_Nb_Ini_Cca_Rep_Wlk_Rad) * LC_Ratio)</code></td>
+                            <td><code>分摊的LC_CF + 分摊的LC_RA</code></td>
+                        </tr>
+                        <tr>
+                            <td><strong>被LC吸收的变化</strong><br>(Absorbed by LC)</td>
+                            <td>
+                                <code>IF 待调整余额=0 THEN -SUM(前4项)</code> (强制结平)<br>
+                                <code>ELSE 被LC吸收的变化_合计 * (Δ_CF_Total / Δ_CSM_LC_Total)</code>
+                            </td>
+                            <td><code>被LC吸收的变化_合计 - 被LC吸收的变化_CF</code></td>
+                            <td>
+                                <strong>核心逻辑：</strong><br>
+                                1. 计算 <code>Sum_Test = Cohort_LC + Allocated_LC + Δ_CSM/LC_Total</code><br>
+                                2. 若 <code>(Cohort_LC<0 AND Sum_Test<0)</code> OR <code>(Cohort_LC=0 AND Sum_Test<0)</code> (维持或转为亏损):<br>
+                                &nbsp;&nbsp;&nbsp;<code>Absorbed = -(BoP_LC + NB_LC + IFIE + Allocated_LC)</code> (全额吸收直到变成0? 不对，是补齐到Sum_Test? )<br>
+                                &nbsp;&nbsp;&nbsp;<strong>修正代码逻辑：</strong> 若仍亏损，则 LC 吸收全部变化 <code>Absorbed = Δ_CSM/LC_Total</code>? 不，需考虑转回。<br>
+                                &nbsp;&nbsp;&nbsp;<strong>实际代码逻辑：</strong><br>
+                                &nbsp;&nbsp;&nbsp;若 <code>Sum_Test < 0</code> (最终亏损): <code>Absorbed = Δ_CSM/LC_Total</code><br>
+                                &nbsp;&nbsp;&nbsp;若 <code>Sum_Test >= 0</code> (转为盈利): <code>Absorbed = -(BoP_LC + NB_LC + IFIE + Allocated_LC)</code> (仅吸收至0，剩余进CSM)
+                            </td>
+                        </tr>
+                        <tr style="background-color: #e3f2fd;">
+                            <td><strong>待调整LC余额</strong></td>
+                            <td><code>Sum(上述5项_CF)</code></td>
+                            <td><code>Sum(上述5项_RA)</code></td>
+                            <td><code>Sum(上述5项_Total)</code></td>
+                        </tr>
+                        <tr>
+                            <td><strong>LC调整</strong></td>
+                            <td><code>IF CSM摊销比例>=100% THEN -待调整LC余额_CF ELSE 0</code></td>
+                            <td><code>IF CSM摊销比例>=100% THEN -待调整LC余额_RA ELSE 0</code></td>
+                            <td><code>LC调整_CF + LC调整_RA</code></td>
+                        </tr>
+                        <tr style="background-color: #e8f5e9;">
+                            <td><strong>期末LC余额</strong></td>
+                            <td><code>待调整LC余额_CF + LC调整_CF</code></td>
+                            <td><code>待调整LC余额_RA + LC调整_RA</code></td>
+                            <td><code>待调整LC余额_Total + LC调整_Total</code></td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <h2>5.5 CSM 计量 (CSM Measurement)</h2>
+            <p>计算 CSM 的摊销和期末余额。核心是确定有多少“履约现金流变化”被 CSM 吸收。</p>
+            
+            <table style="font-size: 0.9em;">
+                <thead><tr><th width="35%">项目</th><th>详细逻辑与公式</th></tr></thead>
+                <tbody>
+                    <tr><td><strong>CSM摊销比例</strong></td><td><code>Coverage_Units_Released / (Coverage_Units_Released + Coverage_Units_Remaining)</code></td></tr>
+                    <tr><td><strong>年初CSM余额</strong></td><td><code>cohort_state.bop_csm</code> (若>=0)</td></tr>
+                    <tr><td><strong>当年新增CSM</strong></td><td><code>nb_initial_csm</code> (若>=0)</td></tr>
+                    <tr><td><strong>CSM计息</strong></td><td>见 5.1 节计算结果。</td></tr>
+                    <tr><td><strong>被CSM吸收的变化</strong></td><td>
+                        <code>Δ_CSM/LC_Total - 被LC吸收的变化_合计</code><br>
+                        逻辑：总变化量中，扣除被 LC 吸收的部分，剩余的由 CSM 吸收（或增加 CSM）。
+                    </td></tr>
+                    <tr><td>&nbsp;&nbsp;└ 被CSM吸收的现金流变化</td><td><code>Δ_CF_Total - 被LC吸收的变化_CF</code></td></tr>
+                    <tr><td>&nbsp;&nbsp;└ 被CSM吸收的RA变化</td><td><code>Δ_RA_Total - 被LC吸收的变化_RA</code></td></tr>
+                    <tr><td><strong>摊销的CSM</strong></td><td>
+                        <code>CSM_Before_Amort = Sum(年初, 新增, 计息, 被CSM吸收)</code><br>
+                        <code>IF CSM_Before_Amort <= 0 THEN 0</code><br>
+                        <code>ELSE -CSM_Before_Amort * CSM摊销比例</code>
+                    </td></tr>
+                    <tr><td><strong>期末CSM余额</strong></td><td><code>CSM_Before_Amort + 摊销的CSM</code></td></tr>
+                </tbody>
+            </table>
+        </section>
+
+        <!-- Placeholders for other sections -->
+        <section id="step6"><h1>6. IACF摊销</h1><p>待更新...</p></section>
+        <section id="step6"><h1>6. IACF摊销</h1><p>待更新...</p></section>
+        <section id="step7"><h1>7. 保险合同收入</h1><p>待更新...</p></section>
+        <section id="step8"><h1>8. 未到期IFIE</h1><p>待更新...</p></section>
+        <section id="step9"><h1>9. 未到期责任负债</h1><p>待更新...</p></section>
+        <section id="step10"><h1>10. 计量结果与数据输出</h1><p>待更新...</p></section>
+    </div>
+
+    <script>
+        function showSection(id, element) {
+            // Hide all sections
+            document.querySelectorAll('section').forEach(el => {
+                el.classList.remove('active');
+            });
+            
+            // Show target section
+            document.getElementById(id).classList.add('active');
+            
+            // Update nav items
+            document.querySelectorAll('.nav-item').forEach(el => {
+                el.classList.remove('active');
+            });
+            
+            if (element) {
+                element.classList.add('active');
+            } else {
+                // Fallback if element not passed (e.g. initial load or external link)
+                const index = parseInt(id.replace('step', '')) - 1;
+                const navItems = document.querySelectorAll('.nav-item');
+                if (navItems[index]) navItems[index].classList.add('active');
+            }
+        }
+    </script>
+</body>
+</html>

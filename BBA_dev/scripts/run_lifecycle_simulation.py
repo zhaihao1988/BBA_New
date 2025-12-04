@@ -412,7 +412,8 @@ class LifecycleSimulator:
         copy_attrs = [
             'policy_data', 'actual_premium', 'init_fut_claim', 'init_fut_maint',
             'init_ra', 'total_months', 'rates_df', 'rates_df_locked', 'rates_df_eop',
-            'under_write_date', 'pv_source_data', 'policy_no', 'certi_no'  # 保留PV原材料数据、保单号和批单号
+            'under_write_date', 'pv_source_data', 'policy_no', 'certi_no',  # 保留PV原材料数据、保单号和批单号
+            'is_reversal_policy'  # 保留批减单标记
         ]
         for attr in copy_attrs:
             setattr(context, attr, getattr(prev_context, attr, None))
@@ -813,9 +814,17 @@ class LifecycleSimulator:
         
         lc_ratio = self._to_decimal(getattr(context, 'nb_lc_ratio', Decimal('0')) or Decimal('0'))
         
-        claims_net = self._to_decimal(getattr(context, 'revenue_claims_expenses_net', Decimal('0')))
-        claims_gross = self._derive_gross_from_net(claims_net, lc_ratio)
-        claims_lc_alloc = claims_gross - claims_net
+        # 优先使用revenue模块计算的值，如果没有则推导
+        claims_lc_alloc = self._to_decimal(getattr(context, 'revenue_claims_expenses_lc_alloc', None))
+        if claims_lc_alloc is None:
+            # 回退逻辑：如果revenue模块没有保存，则推导
+            claims_net = self._to_decimal(getattr(context, 'revenue_claims_expenses_net', Decimal('0')))
+            claims_gross = self._derive_gross_from_net(claims_net, lc_ratio)
+            claims_lc_alloc = claims_gross - claims_net
+        else:
+            # 使用revenue模块计算的值，同时计算gross用于其他用途
+            claims_net = self._to_decimal(getattr(context, 'revenue_claims_expenses_net', Decimal('0')))
+            claims_gross = claims_net + claims_lc_alloc
         
         ra_net = self._to_decimal(getattr(context, 'ra_release_net', Decimal('0')))
         ra_gross = self._to_decimal(getattr(context, 'ra_release_gross', None)) or self._derive_gross_from_net(ra_net, lc_ratio)
@@ -823,7 +832,12 @@ class LifecycleSimulator:
         if ra_lc_alloc == Decimal('0') and ra_gross != ra_net:
             ra_lc_alloc = ra_gross - ra_net
         
-        allocated_lc_exp_adj = self._to_decimal(getattr(context, 'allocated_lc_exp_adj', Decimal('0')))
+        # 获取分摊的LC_预期现金流和非金融风险调整（用于赔付与费用_亏损分摊）
+        allocated_lc_cf = self._to_decimal(getattr(context, 'allocated_lc_cf', Decimal('0')))
+        allocated_lc_ra = self._to_decimal(getattr(context, 'allocated_lc_ra', Decimal('0')))
+        # 获取被LC吸收的变化_预期现金流和非金融风险调整（用于亏损合同损益_不调整CSM的变动）
+        allocated_lc_exp_adj_cf = self._to_decimal(getattr(context, 'allocated_lc_exp_adj_cf', Decimal('0')))
+        allocated_lc_exp_adj_ra = self._to_decimal(getattr(context, 'allocated_lc_exp_adj_ra', Decimal('0')))
         iacf_amort_expense = self._to_decimal(getattr(context, 'iacf_amort_amount', Decimal('0')))
         nb_initial_lc = self._to_decimal(context.nb_initial_lc if self._is_new_business_year(context) else Decimal('0'))
         # 获取当年新增LC_预期现金流和非金融风险调整（用于亏损合同损益拆分）
@@ -868,56 +882,59 @@ class LifecycleSimulator:
         self.logger.log_text(f"- policy_no: {self.policy_no}")
         self.logger.log_text(f"- certi_no: {self.certi_no if self.certi_no else ''}")
         self.logger.log_text(f"- year: {year}")
-        self.logger.log_text(f"- 保险合同收入_预期赔付与费用_含亏损: {self._to_number(claims_gross):,.2f}")
-        self.logger.log_text(f"- 保险合同收入_预期赔付与费用_亏损分摊: {self._to_number(claims_lc_alloc):,.2f}")
-        self.logger.log_text(f"- 保险合同收入_预期释放的非金融风险调整_含亏损: {self._to_number(ra_gross):,.2f}")
-        self.logger.log_text(f"- 保险合同收入_预期释放的非金融风险调整_亏损分摊: {self._to_number(ra_lc_alloc):,.2f}")
-        self.logger.log_text(f"- 保险合同收入_摊销的CSM: {self._to_number(getattr(context, 'csm_amort_amount', Decimal('0'))):,.2f}")
-        self.logger.log_text(f"- 保险合同收入_摊销的IACF: {self._to_number(getattr(context, 'revenue_iacf_amort', Decimal('0'))):,.2f}")
-        self.logger.log_text(f"- 保险合同收入_经验调整: {self._to_number(getattr(context, 'revenue_exp_adj', Decimal('0'))):,.2f}")
-        self.logger.log_text(f"- 赔付与费用_亏损分摊_预期现金流: {self._to_number(allocated_lc_exp_adj):,.2f}")
-        self.logger.log_text(f"- 赔付与费用_亏损分摊_非金融风险调整: 0.00")
-        self.logger.log_text(f"- 赔付与费用_摊销的IACF: {self._to_number(iacf_amort_expense):,.2f}")
-        self.logger.log_text(f"- 亏损合同损益_新增合同预期现金流_赔付与费用现金流_亏损: {self._to_number(nb_initial_lc_cf):,.2f}")
-        self.logger.log_text(f"- 亏损合同损益_新增合同非金融风险调整_亏损: {self._to_number(nb_initial_lc_ra):,.2f}")
-        self.logger.log_text(f"- 亏损合同损益_不调整CSM的预期现金流变动: 0.00")
-        self.logger.log_text(f"- 亏损合同损益_不调整CSM的非金融风险调整变动: 0.00")
-        self.logger.log_text(f"- IFIE_P&L_未到期_预期现金流_非亏损: {self._to_number(ifie_pl_cf_non_lc):,.2f}")
-        self.logger.log_text(f"- IFIE_P&L_未到期_预期现金流_亏损: {self._to_number(ifie_pl_cf_lc):,.2f}")
-        self.logger.log_text(f"- IFIE_P&L_未到期_非金融风险调整_非亏损: {self._to_number(ifie_pl_ra_non_lc):,.2f}")
-        self.logger.log_text(f"- IFIE_P&L_未到期_非金融风险调整_亏损: {self._to_number(ifie_pl_ra_lc):,.2f}")
-        self.logger.log_text(f"- IFIE_P&L_未到期_CSM: {self._to_number(ifie_csm):,.2f}")
-        self.logger.log_text(f"- IFIE_OCI_未到期_预期现金流_非亏损: {self._to_number(ifie_oci_cf_non_lc):,.2f}")
-        self.logger.log_text(f"- IFIE_OCI_未到期_预期现金流_亏损: {self._to_number(ifie_oci_cf_lc):,.2f}")
-        self.logger.log_text(f"- IFIE_OCI_未到期_非金融风险调整_非亏损: {self._to_number(ifie_oci_ra_non_lc):,.2f}")
-        self.logger.log_text(f"- IFIE_OCI_未到期_非金融风险调整_亏损: {self._to_number(ifie_oci_ra_lc):,.2f}")
+        # 检测是否为批减单
+        is_reversal = getattr(context, 'is_reversal_policy', False)
+        
+        self.logger.log_text(f"- 保险合同收入_预期赔付与费用_含亏损: {self._apply_reversal_if_needed(claims_gross, is_reversal):,.2f}")
+        self.logger.log_text(f"- 保险合同收入_预期赔付与费用_亏损分摊: {self._apply_reversal_if_needed(claims_lc_alloc, is_reversal):,.2f}")
+        self.logger.log_text(f"- 保险合同收入_预期释放的非金融风险调整_含亏损: {self._apply_reversal_if_needed(ra_gross, is_reversal):,.2f}")
+        self.logger.log_text(f"- 保险合同收入_预期释放的非金融风险调整_亏损分摊: {self._apply_reversal_if_needed(ra_lc_alloc, is_reversal):,.2f}")
+        self.logger.log_text(f"- 保险合同收入_摊销的CSM: {self._apply_reversal_if_needed(getattr(context, 'csm_amort_amount', Decimal('0')), is_reversal):,.2f}")
+        self.logger.log_text(f"- 保险合同收入_摊销的IACF: {self._apply_reversal_if_needed(getattr(context, 'revenue_iacf_amort', Decimal('0')), is_reversal):,.2f}")
+        self.logger.log_text(f"- 保险合同收入_经验调整: {self._apply_reversal_if_needed(getattr(context, 'revenue_exp_adj', Decimal('0')), is_reversal):,.2f}")
+        self.logger.log_text(f"- 赔付与费用_亏损分摊_预期现金流: {self._apply_reversal_if_needed(allocated_lc_cf, is_reversal):,.2f}")
+        self.logger.log_text(f"- 赔付与费用_亏损分摊_非金融风险调整: {self._apply_reversal_if_needed(allocated_lc_ra, is_reversal):,.2f}")
+        self.logger.log_text(f"- 赔付与费用_摊销的IACF: {self._apply_reversal_if_needed(iacf_amort_expense, is_reversal):,.2f}")
+        self.logger.log_text(f"- 亏损合同损益_新增合同预期现金流_赔付与费用现金流_亏损: {self._apply_reversal_if_needed(nb_initial_lc_cf, is_reversal):,.2f}")
+        self.logger.log_text(f"- 亏损合同损益_新增合同非金融风险调整_亏损: {self._apply_reversal_if_needed(nb_initial_lc_ra, is_reversal):,.2f}")
+        self.logger.log_text(f"- 亏损合同损益_不调整CSM的预期现金流变动: {self._apply_reversal_if_needed(allocated_lc_exp_adj_cf, is_reversal):,.2f}")
+        self.logger.log_text(f"- 亏损合同损益_不调整CSM的非金融风险调整变动: {self._apply_reversal_if_needed(allocated_lc_exp_adj_ra, is_reversal):,.2f}")
+        self.logger.log_text(f"- IFIE_P&L_未到期_预期现金流_非亏损: {self._apply_reversal_if_needed(ifie_pl_cf_non_lc, is_reversal):,.2f}")
+        self.logger.log_text(f"- IFIE_P&L_未到期_预期现金流_亏损: {self._apply_reversal_if_needed(ifie_pl_cf_lc, is_reversal):,.2f}")
+        self.logger.log_text(f"- IFIE_P&L_未到期_非金融风险调整_非亏损: {self._apply_reversal_if_needed(ifie_pl_ra_non_lc, is_reversal):,.2f}")
+        self.logger.log_text(f"- IFIE_P&L_未到期_非金融风险调整_亏损: {self._apply_reversal_if_needed(ifie_pl_ra_lc, is_reversal):,.2f}")
+        self.logger.log_text(f"- IFIE_P&L_未到期_CSM: {self._apply_reversal_if_needed(ifie_csm, is_reversal):,.2f}")
+        self.logger.log_text(f"- IFIE_OCI_未到期_预期现金流_非亏损: {self._apply_reversal_if_needed(ifie_oci_cf_non_lc, is_reversal):,.2f}")
+        self.logger.log_text(f"- IFIE_OCI_未到期_预期现金流_亏损: {self._apply_reversal_if_needed(ifie_oci_cf_lc, is_reversal):,.2f}")
+        self.logger.log_text(f"- IFIE_OCI_未到期_非金融风险调整_非亏损: {self._apply_reversal_if_needed(ifie_oci_ra_non_lc, is_reversal):,.2f}")
+        self.logger.log_text(f"- IFIE_OCI_未到期_非金融风险调整_亏损: {self._apply_reversal_if_needed(ifie_oci_ra_lc, is_reversal):,.2f}")
         # 未到期责任负债拆分：根据文档，亏损部分 = -期末LC余额
         end_lc_cf = self._to_decimal(getattr(context, 'end_lc_cf', Decimal('0')))
         end_lc_ra = self._to_decimal(getattr(context, 'end_lc_ra', Decimal('0')))
-        lrc_bel_lc = -end_lc_cf  # 未到期责任负债_预期现金流_亏损 = -期末LC余额_预期现金流
+        lrc_bel_lc = end_lc_cf  # 未到期责任负债_预期现金流_亏损 = 期末LC余额_预期现金流（不取负号，展示负数）
         lrc_ra_lc = -end_lc_ra  # 未到期责任负债_非金融风险调整_亏损 = -期末LC余额_非金融风险调整
         lrc_bel_non_lc = lrc_bel_total - lrc_bel_lc  # 非亏损部分 = 总额 - 亏损部分
         lrc_ra_non_lc = lrc_ra - lrc_ra_lc  # 非亏损部分 = 总额 - 亏损部分
         
-        self.logger.log_text(f"- 未到期责任负债_预期现金流_非亏损: {self._to_number(lrc_bel_non_lc):,.2f}")
-        self.logger.log_text(f"- 未到期责任负债_预期现金流_亏损: {self._to_number(lrc_bel_lc):,.2f}")
-        self.logger.log_text(f"- 未到期责任负债_非金融风险调整_非亏损: {self._to_number(lrc_ra_non_lc):,.2f}")
-        self.logger.log_text(f"- 未到期责任负债_非金融风险调整_亏损: {self._to_number(lrc_ra_lc):,.2f}")
-        self.logger.log_text(f"- 未到期责任负债_CSM: {self._to_number(end_csm):,.2f}")
-        self.logger.log_text(f"- 未到期_调整CSM的预期现金流变动: {self._to_number(getattr(context, 'csm_absorbed', Decimal('0'))):,.2f}")
+        self.logger.log_text(f"- 未到期责任负债_预期现金流_非亏损: {self._apply_reversal_if_needed(lrc_bel_non_lc, is_reversal):,.2f}")
+        self.logger.log_text(f"- 未到期责任负债_预期现金流_亏损: {self._apply_reversal_if_needed(lrc_bel_lc, is_reversal):,.2f}")
+        self.logger.log_text(f"- 未到期责任负债_非金融风险调整_非亏损: {self._apply_reversal_if_needed(lrc_ra_non_lc, is_reversal):,.2f}")
+        self.logger.log_text(f"- 未到期责任负债_非金融风险调整_亏损: {self._apply_reversal_if_needed(lrc_ra_lc, is_reversal):,.2f}")
+        self.logger.log_text(f"- 未到期责任负债_CSM: {self._apply_reversal_if_needed(end_csm, is_reversal):,.2f}")
+        self.logger.log_text(f"- 未到期_调整CSM的预期现金流变动: {self._apply_reversal_if_needed(getattr(context, 'csm_absorbed', Decimal('0')), is_reversal):,.2f}")
         self.logger.log_text(f"- 未到期_调整CSM的非金融风险调整变动: 0.00")
-        self.logger.log_text(f"- 未到期_调整CSM的估计变更: {self._to_number(getattr(context, 'csm_absorbed', Decimal('0'))):,.2f}")
-        self.logger.log_text(f"- 新增合同预期现金流_保费现金流_盈利合同: {self._to_number(getattr(context, 'actual_premium', Decimal('0')) if is_new_business and nb_initial_lc >= 0 else Decimal('0')):,.2f}")
-        self.logger.log_text(f"- 新增合同预期现金流_IACF_盈利合同: {self._to_number(getattr(context, 'actual_iacf_incurred', Decimal('0')) if is_new_business and nb_initial_lc >= 0 else Decimal('0')):,.2f}")
-        self.logger.log_text(f"- 新增合同预期现金流_赔付与费用现金流_盈利合同: {self._to_number((getattr(context, 'init_fut_claim', Decimal('0')) + getattr(context, 'init_fut_maint', Decimal('0'))) if is_new_business and nb_initial_lc >= 0 else Decimal('0')):,.2f}")
-        self.logger.log_text(f"- 新增合同非金融风险调整_盈利合同: {self._to_number(getattr(context, 'init_ra', Decimal('0')) if is_new_business and nb_initial_lc >= 0 else Decimal('0')):,.2f}")
-        self.logger.log_text(f"- 新增合同CSM_盈利合同: {self._to_number(getattr(context, 'nb_initial_csm', Decimal('0')) if is_new_business and nb_initial_lc >= 0 else Decimal('0')):,.2f}")
-        self.logger.log_text(f"- 新增合同预期现金流_保费现金流_亏损合同: {self._to_number(getattr(context, 'actual_premium', Decimal('0')) if is_new_business and nb_initial_lc < 0 else Decimal('0')):,.2f}")
-        self.logger.log_text(f"- 新增合同预期现金流_IACF_亏损合同: {self._to_number(getattr(context, 'actual_iacf_incurred', Decimal('0')) if is_new_business and nb_initial_lc < 0 else Decimal('0')):,.2f}")
-        self.logger.log_text(f"- 新增合同预期现金流_赔付与费用现金流_亏损合同_非亏损: {self._to_number((getattr(context, 'init_fut_claim', Decimal('0')) + getattr(context, 'init_fut_maint', Decimal('0'))) if is_new_business and nb_initial_lc < 0 else Decimal('0')):,.2f}")
-        self.logger.log_text(f"- 新增合同非金融风险调整_亏损合同_非亏损: {self._to_number(getattr(context, 'init_ra', Decimal('0')) if is_new_business and nb_initial_lc < 0 else Decimal('0')):,.2f}")
-        self.logger.log_text(f"- 现金流_收到的保费: {self._to_number(getattr(context, 'actual_premium', Decimal('0')) if is_new_business else Decimal('0')):,.2f}")
-        self.logger.log_text(f"- 现金流_支付的获取费用: {self._to_number(getattr(context, 'actual_iacf_incurred', Decimal('0')) if is_new_business else Decimal('0')):,.2f}")
+        self.logger.log_text(f"- 未到期_调整CSM的估计变更: {self._apply_reversal_if_needed(getattr(context, 'csm_absorbed', Decimal('0')), is_reversal):,.2f}")
+        self.logger.log_text(f"- 新增合同预期现金流_保费现金流_盈利合同: {self._apply_reversal_if_needed(getattr(context, 'actual_premium', Decimal('0')) if is_new_business and nb_initial_lc >= 0 else Decimal('0'), is_reversal):,.2f}")
+        self.logger.log_text(f"- 新增合同预期现金流_IACF_盈利合同: {self._apply_reversal_if_needed(getattr(context, 'actual_iacf_incurred', Decimal('0')) if is_new_business and nb_initial_lc >= 0 else Decimal('0'), is_reversal):,.2f}")
+        self.logger.log_text(f"- 新增合同预期现金流_赔付与费用现金流_盈利合同: {self._apply_reversal_if_needed((getattr(context, 'init_fut_claim', Decimal('0')) + getattr(context, 'init_fut_maint', Decimal('0'))) if is_new_business and nb_initial_lc >= 0 else Decimal('0'), is_reversal):,.2f}")
+        self.logger.log_text(f"- 新增合同非金融风险调整_盈利合同: {self._apply_reversal_if_needed(getattr(context, 'init_ra', Decimal('0')) if is_new_business and nb_initial_lc >= 0 else Decimal('0'), is_reversal):,.2f}")
+        self.logger.log_text(f"- 新增合同CSM_盈利合同: {self._apply_reversal_if_needed(getattr(context, 'nb_initial_csm', Decimal('0')) if is_new_business and nb_initial_lc >= 0 else Decimal('0'), is_reversal):,.2f}")
+        self.logger.log_text(f"- 新增合同预期现金流_保费现金流_亏损合同: {self._apply_reversal_if_needed(getattr(context, 'actual_premium', Decimal('0')) if is_new_business and nb_initial_lc < 0 else Decimal('0'), is_reversal):,.2f}")
+        self.logger.log_text(f"- 新增合同预期现金流_IACF_亏损合同: {self._apply_reversal_if_needed(getattr(context, 'actual_iacf_incurred', Decimal('0')) if is_new_business and nb_initial_lc < 0 else Decimal('0'), is_reversal):,.2f}")
+        self.logger.log_text(f"- 新增合同预期现金流_赔付与费用现金流_亏损合同_非亏损: {self._apply_reversal_if_needed((getattr(context, 'init_fut_claim', Decimal('0')) + getattr(context, 'init_fut_maint', Decimal('0'))) if is_new_business and nb_initial_lc < 0 else Decimal('0'), is_reversal):,.2f}")
+        self.logger.log_text(f"- 新增合同非金融风险调整_亏损合同_非亏损: {self._apply_reversal_if_needed(getattr(context, 'init_ra', Decimal('0')) if is_new_business and nb_initial_lc < 0 else Decimal('0'), is_reversal):,.2f}")
+        self.logger.log_text(f"- 现金流_收到的保费: {self._apply_reversal_if_needed(getattr(context, 'actual_premium', Decimal('0')) if is_new_business else Decimal('0'), is_reversal):,.2f}")
+        self.logger.log_text(f"- 现金流_支付的获取费用: {self._apply_reversal_if_needed(getattr(context, 'actual_iacf_incurred', Decimal('0')) if is_new_business else Decimal('0'), is_reversal):,.2f}")
     
     @staticmethod
     def _to_decimal(value) -> Decimal:
@@ -933,6 +950,20 @@ class LifecycleSimulator:
     def _to_number(self, value) -> float:
         decimal_value = self._to_decimal(value)
         return float(decimal_value)
+    
+    def _apply_reversal_if_needed(self, value, is_reversal: bool) -> float:
+        """
+        如果是批减单，对数值取反；否则返回原值
+        
+        Args:
+            value: 原始数值
+            is_reversal: 是否为批减单
+            
+        Returns:
+            取反后的数值（如果是批减单）或原值
+        """
+        num = self._to_number(value)
+        return -num if is_reversal else num
 
     def _derive_gross_from_net(self, net_value: Decimal, lc_ratio: Decimal) -> Decimal:
         denominator = Decimal('1') - lc_ratio
@@ -955,9 +986,17 @@ class LifecycleSimulator:
         """
         lc_ratio = self._to_decimal(getattr(context, 'nb_lc_ratio', Decimal('0')) or Decimal('0'))
 
-        claims_net = self._to_decimal(getattr(context, 'revenue_claims_expenses_net', Decimal('0')))
-        claims_gross = self._derive_gross_from_net(claims_net, lc_ratio)
-        claims_lc_alloc = claims_gross - claims_net
+        # 优先使用revenue模块计算的值，如果没有则推导
+        claims_lc_alloc = self._to_decimal(getattr(context, 'revenue_claims_expenses_lc_alloc', None))
+        if claims_lc_alloc is None:
+            # 回退逻辑：如果revenue模块没有保存，则推导
+            claims_net = self._to_decimal(getattr(context, 'revenue_claims_expenses_net', Decimal('0')))
+            claims_gross = self._derive_gross_from_net(claims_net, lc_ratio)
+            claims_lc_alloc = claims_gross - claims_net
+        else:
+            # 使用revenue模块计算的值，同时计算gross用于其他用途
+            claims_net = self._to_decimal(getattr(context, 'revenue_claims_expenses_net', Decimal('0')))
+            claims_gross = claims_net + claims_lc_alloc
 
         ra_net = self._to_decimal(getattr(context, 'ra_release_net', Decimal('0')))
         ra_gross = self._to_decimal(getattr(context, 'ra_release_gross', None)) or self._derive_gross_from_net(ra_net, lc_ratio)
@@ -965,7 +1004,12 @@ class LifecycleSimulator:
         if ra_lc_alloc == Decimal('0') and ra_gross != ra_net:
             ra_lc_alloc = ra_gross - ra_net
 
-        allocated_lc_exp_adj = self._to_decimal(getattr(context, 'allocated_lc_exp_adj', Decimal('0')))
+        # 获取分摊的LC_预期现金流和非金融风险调整（用于赔付与费用_亏损分摊）
+        allocated_lc_cf = self._to_decimal(getattr(context, 'allocated_lc_cf', Decimal('0')))
+        allocated_lc_ra = self._to_decimal(getattr(context, 'allocated_lc_ra', Decimal('0')))
+        # 获取被LC吸收的变化_预期现金流和非金融风险调整（用于亏损合同损益_不调整CSM的变动）
+        allocated_lc_exp_adj_cf = self._to_decimal(getattr(context, 'allocated_lc_exp_adj_cf', Decimal('0')))
+        allocated_lc_exp_adj_ra = self._to_decimal(getattr(context, 'allocated_lc_exp_adj_ra', Decimal('0')))
         iacf_amort_expense = self._to_decimal(getattr(context, 'iacf_amort_amount', Decimal('0')))
         nb_initial_lc = self._to_decimal(context.nb_initial_lc if self._is_new_business_year(context) else Decimal('0'))
         # 获取当年新增LC_预期现金流和非金融风险调整（用于亏损合同损益拆分）
@@ -1013,57 +1057,60 @@ class LifecycleSimulator:
         # 未到期责任负债拆分：根据文档，亏损部分 = -期末LC余额
         end_lc_cf = self._to_decimal(getattr(context, 'end_lc_cf', Decimal('0')))
         end_lc_ra = self._to_decimal(getattr(context, 'end_lc_ra', Decimal('0')))
-        lrc_bel_lc = -end_lc_cf  # 未到期责任负债_预期现金流_亏损 = -期末LC余额_预期现金流
+        lrc_bel_lc = end_lc_cf  # 未到期责任负债_预期现金流_亏损 = 期末LC余额_预期现金流（不取负号，展示负数）
         lrc_ra_lc = -end_lc_ra  # 未到期责任负债_非金融风险调整_亏损 = -期末LC余额_非金融风险调整
         lrc_bel_non_lc = lrc_bel_total - lrc_bel_lc  # 非亏损部分 = 总额 - 亏损部分
         lrc_ra_non_lc = lrc_ra - lrc_ra_lc  # 非亏损部分 = 总额 - 亏损部分
 
+        # 检测是否为批减单
+        is_reversal = getattr(context, 'is_reversal_policy', False)
+        
         result = {
             "policy_no": self.policy_no,
             "certi_no": self.certi_no if self.certi_no else "",
             "year": year,
-            "保险合同收入_预期赔付与费用_含亏损": self._to_number(claims_gross),
-            "保险合同收入_预期赔付与费用_亏损分摊": self._to_number(claims_lc_alloc),
-            "保险合同收入_预期释放的非金融风险调整_含亏损": self._to_number(ra_gross),
-            "保险合同收入_预期释放的非金融风险调整_亏损分摊": self._to_number(ra_lc_alloc),
-            "保险合同收入_摊销的CSM": self._to_number(getattr(context, 'csm_amort_amount', Decimal('0'))),
-            "保险合同收入_摊销的IACF": self._to_number(getattr(context, 'revenue_iacf_amort', Decimal('0'))),
-            "保险合同收入_经验调整": self._to_number(getattr(context, 'revenue_exp_adj', Decimal('0'))),
-            "赔付与费用_亏损分摊_预期现金流": self._to_number(allocated_lc_exp_adj),
-            "赔付与费用_亏损分摊_非金融风险调整": 0.0,  # TODO: 待实现
-            "赔付与费用_摊销的IACF": self._to_number(iacf_amort_expense),
-            "亏损合同损益_新增合同预期现金流_赔付与费用现金流_亏损": self._to_number(nb_initial_lc_cf),
-            "亏损合同损益_新增合同非金融风险调整_亏损": self._to_number(nb_initial_lc_ra),
-            "亏损合同损益_不调整CSM的预期现金流变动": 0.0,  # TODO: 待实现
-            "亏损合同损益_不调整CSM的非金融风险调整变动": 0.0,  # TODO: 待实现
-            "IFIE_P&L_未到期_预期现金流_非亏损": self._to_number(ifie_pl_cf_non_lc),
-            "IFIE_P&L_未到期_预期现金流_亏损": self._to_number(ifie_pl_cf_lc),
-            "IFIE_P&L_未到期_非金融风险调整_非亏损": self._to_number(ifie_pl_ra_non_lc),
-            "IFIE_P&L_未到期_非金融风险调整_亏损": self._to_number(ifie_pl_ra_lc),
-            "IFIE_P&L_未到期_CSM": self._to_number(ifie_csm),
-            "IFIE_OCI_未到期_预期现金流_非亏损": self._to_number(ifie_oci_cf_non_lc),
-            "IFIE_OCI_未到期_预期现金流_亏损": self._to_number(ifie_oci_cf_lc),
-            "IFIE_OCI_未到期_非金融风险调整_非亏损": self._to_number(ifie_oci_ra_non_lc),
-            "IFIE_OCI_未到期_非金融风险调整_亏损": self._to_number(ifie_oci_ra_lc),
-            "未到期责任负债_预期现金流_非亏损": self._to_number(lrc_bel_non_lc),
-            "未到期责任负债_预期现金流_亏损": self._to_number(lrc_bel_lc),
-            "未到期责任负债_非金融风险调整_非亏损": self._to_number(lrc_ra_non_lc),
-            "未到期责任负债_非金融风险调整_亏损": self._to_number(lrc_ra_lc),
-            "未到期责任负债_CSM": self._to_number(end_csm),
-            "未到期_调整CSM的预期现金流变动": self._to_number(getattr(context, 'csm_absorbed', Decimal('0'))),
+            "保险合同收入_预期赔付与费用_含亏损": self._apply_reversal_if_needed(claims_gross, is_reversal),
+            "保险合同收入_预期赔付与费用_亏损分摊": self._apply_reversal_if_needed(claims_lc_alloc, is_reversal),
+            "保险合同收入_预期释放的非金融风险调整_含亏损": self._apply_reversal_if_needed(ra_gross, is_reversal),
+            "保险合同收入_预期释放的非金融风险调整_亏损分摊": self._apply_reversal_if_needed(ra_lc_alloc, is_reversal),
+            "保险合同收入_摊销的CSM": self._apply_reversal_if_needed(getattr(context, 'csm_amort_amount', Decimal('0')), is_reversal),
+            "保险合同收入_摊销的IACF": self._apply_reversal_if_needed(getattr(context, 'revenue_iacf_amort', Decimal('0')), is_reversal),
+            "保险合同收入_经验调整": self._apply_reversal_if_needed(getattr(context, 'revenue_exp_adj', Decimal('0')), is_reversal),
+            "赔付与费用_亏损分摊_预期现金流": self._apply_reversal_if_needed(allocated_lc_cf, is_reversal),
+            "赔付与费用_亏损分摊_非金融风险调整": self._apply_reversal_if_needed(allocated_lc_ra, is_reversal),
+            "赔付与费用_摊销的IACF": self._apply_reversal_if_needed(iacf_amort_expense, is_reversal),
+            "亏损合同损益_新增合同预期现金流_赔付与费用现金流_亏损": self._apply_reversal_if_needed(nb_initial_lc_cf, is_reversal),
+            "亏损合同损益_新增合同非金融风险调整_亏损": self._apply_reversal_if_needed(nb_initial_lc_ra, is_reversal),
+            "亏损合同损益_不调整CSM的预期现金流变动": self._apply_reversal_if_needed(allocated_lc_exp_adj_cf, is_reversal),
+            "亏损合同损益_不调整CSM的非金融风险调整变动": self._apply_reversal_if_needed(allocated_lc_exp_adj_ra, is_reversal),
+            "IFIE_P&L_未到期_预期现金流_非亏损": self._apply_reversal_if_needed(ifie_pl_cf_non_lc, is_reversal),
+            "IFIE_P&L_未到期_预期现金流_亏损": self._apply_reversal_if_needed(ifie_pl_cf_lc, is_reversal),
+            "IFIE_P&L_未到期_非金融风险调整_非亏损": self._apply_reversal_if_needed(ifie_pl_ra_non_lc, is_reversal),
+            "IFIE_P&L_未到期_非金融风险调整_亏损": self._apply_reversal_if_needed(ifie_pl_ra_lc, is_reversal),
+            "IFIE_P&L_未到期_CSM": self._apply_reversal_if_needed(ifie_csm, is_reversal),
+            "IFIE_OCI_未到期_预期现金流_非亏损": self._apply_reversal_if_needed(ifie_oci_cf_non_lc, is_reversal),
+            "IFIE_OCI_未到期_预期现金流_亏损": self._apply_reversal_if_needed(ifie_oci_cf_lc, is_reversal),
+            "IFIE_OCI_未到期_非金融风险调整_非亏损": self._apply_reversal_if_needed(ifie_oci_ra_non_lc, is_reversal),
+            "IFIE_OCI_未到期_非金融风险调整_亏损": self._apply_reversal_if_needed(ifie_oci_ra_lc, is_reversal),
+            "未到期责任负债_预期现金流_非亏损": self._apply_reversal_if_needed(lrc_bel_non_lc, is_reversal),
+            "未到期责任负债_预期现金流_亏损": self._apply_reversal_if_needed(lrc_bel_lc, is_reversal),
+            "未到期责任负债_非金融风险调整_非亏损": self._apply_reversal_if_needed(lrc_ra_non_lc, is_reversal),
+            "未到期责任负债_非金融风险调整_亏损": self._apply_reversal_if_needed(lrc_ra_lc, is_reversal),
+            "未到期责任负债_CSM": self._apply_reversal_if_needed(end_csm, is_reversal),
+            "未到期_调整CSM的预期现金流变动": self._apply_reversal_if_needed(getattr(context, 'csm_absorbed', Decimal('0')), is_reversal),
             "未到期_调整CSM的非金融风险调整变动": 0.0,  # TODO: 待实现
-            "未到期_调整CSM的估计变更": self._to_number(getattr(context, 'csm_absorbed', Decimal('0'))),  # 暂时使用csm_absorbed
-            "新增合同预期现金流_保费现金流_盈利合同": self._to_number(getattr(context, 'actual_premium', Decimal('0')) if is_new_business and nb_initial_lc >= 0 else Decimal('0')),
-            "新增合同预期现金流_IACF_盈利合同": self._to_number(getattr(context, 'actual_iacf_incurred', Decimal('0')) if is_new_business and nb_initial_lc >= 0 else Decimal('0')),
-            "新增合同预期现金流_赔付与费用现金流_盈利合同": self._to_number((getattr(context, 'init_fut_claim', Decimal('0')) + getattr(context, 'init_fut_maint', Decimal('0'))) if is_new_business and nb_initial_lc >= 0 else Decimal('0')),
-            "新增合同非金融风险调整_盈利合同": self._to_number(getattr(context, 'init_ra', Decimal('0')) if is_new_business and nb_initial_lc >= 0 else Decimal('0')),
-            "新增合同CSM_盈利合同": self._to_number(getattr(context, 'nb_initial_csm', Decimal('0')) if is_new_business and nb_initial_lc >= 0 else Decimal('0')),
-            "新增合同预期现金流_保费现金流_亏损合同": self._to_number(getattr(context, 'actual_premium', Decimal('0')) if is_new_business and nb_initial_lc < 0 else Decimal('0')),
-            "新增合同预期现金流_IACF_亏损合同": self._to_number(getattr(context, 'actual_iacf_incurred', Decimal('0')) if is_new_business and nb_initial_lc < 0 else Decimal('0')),
-            "新增合同预期现金流_赔付与费用现金流_亏损合同_非亏损": self._to_number((getattr(context, 'init_fut_claim', Decimal('0')) + getattr(context, 'init_fut_maint', Decimal('0'))) if is_new_business and nb_initial_lc < 0 else Decimal('0')),
-            "新增合同非金融风险调整_亏损合同_非亏损": self._to_number(getattr(context, 'init_ra', Decimal('0')) if is_new_business and nb_initial_lc < 0 else Decimal('0')),
-            "现金流_收到的保费": self._to_number(getattr(context, 'actual_premium', Decimal('0')) if is_new_business else Decimal('0')),
-            "现金流_支付的获取费用": self._to_number(getattr(context, 'actual_iacf_incurred', Decimal('0')) if is_new_business else Decimal('0')),
+            "未到期_调整CSM的估计变更": self._apply_reversal_if_needed(getattr(context, 'csm_absorbed', Decimal('0')), is_reversal),  # 暂时使用csm_absorbed
+            "新增合同预期现金流_保费现金流_盈利合同": self._apply_reversal_if_needed(getattr(context, 'actual_premium', Decimal('0')) if is_new_business and nb_initial_lc >= 0 else Decimal('0'), is_reversal),
+            "新增合同预期现金流_IACF_盈利合同": self._apply_reversal_if_needed(getattr(context, 'actual_iacf_incurred', Decimal('0')) if is_new_business and nb_initial_lc >= 0 else Decimal('0'), is_reversal),
+            "新增合同预期现金流_赔付与费用现金流_盈利合同": self._apply_reversal_if_needed((getattr(context, 'init_fut_claim', Decimal('0')) + getattr(context, 'init_fut_maint', Decimal('0'))) if is_new_business and nb_initial_lc >= 0 else Decimal('0'), is_reversal),
+            "新增合同非金融风险调整_盈利合同": self._apply_reversal_if_needed(getattr(context, 'init_ra', Decimal('0')) if is_new_business and nb_initial_lc >= 0 else Decimal('0'), is_reversal),
+            "新增合同CSM_盈利合同": self._apply_reversal_if_needed(getattr(context, 'nb_initial_csm', Decimal('0')) if is_new_business and nb_initial_lc >= 0 else Decimal('0'), is_reversal),
+            "新增合同预期现金流_保费现金流_亏损合同": self._apply_reversal_if_needed(getattr(context, 'actual_premium', Decimal('0')) if is_new_business and nb_initial_lc < 0 else Decimal('0'), is_reversal),
+            "新增合同预期现金流_IACF_亏损合同": self._apply_reversal_if_needed(getattr(context, 'actual_iacf_incurred', Decimal('0')) if is_new_business and nb_initial_lc < 0 else Decimal('0'), is_reversal),
+            "新增合同预期现金流_赔付与费用现金流_亏损合同_非亏损": self._apply_reversal_if_needed((getattr(context, 'init_fut_claim', Decimal('0')) + getattr(context, 'init_fut_maint', Decimal('0'))) if is_new_business and nb_initial_lc < 0 else Decimal('0'), is_reversal),
+            "新增合同非金融风险调整_亏损合同_非亏损": self._apply_reversal_if_needed(getattr(context, 'init_ra', Decimal('0')) if is_new_business and nb_initial_lc < 0 else Decimal('0'), is_reversal),
+            "现金流_收到的保费": self._apply_reversal_if_needed(getattr(context, 'actual_premium', Decimal('0')) if is_new_business else Decimal('0'), is_reversal),
+            "现金流_支付的获取费用": self._apply_reversal_if_needed(getattr(context, 'actual_iacf_incurred', Decimal('0')) if is_new_business else Decimal('0'), is_reversal),
         }
 
         return result

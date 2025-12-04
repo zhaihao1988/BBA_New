@@ -321,22 +321,24 @@ def calculate_pv_initial_recognition(
             idx_cf = get_month_idx(cf_date)
             
             if idx_cf <= 0:
-                # 不应该发生，但为了安全
-                continue
-            
-            # 折现逻辑：
-            # 第一个月：折现半个月（因为从月中开始）
-            # 第二个月及以后：折现整月
-            # 总折现期数 = 0.5 + (idx_cf - 1) = idx_cf - 0.5
-            
-            # 第一个月：折现半个月
-            r1 = get_monthly_rate(rates_map, 1, max_term)
-            factor = Decimal('1.0') / (Decimal('1.0') + r1 / Decimal('2'))
-            
-            # 第二个月到第idx_cf个月：折现整月
-            for t in range(2, idx_cf + 1):
-                r = get_monthly_rate(rates_map, t, max_term)
-                factor /= (Decimal('1.0') + r)
+                # 倒签单情况：签单日期之前的现金流不需要折现计息，直接取原值
+                # 这些现金流已经发生，在初始确认时按原值计入
+                factor = Decimal('1.0')
+            else:
+                # 签单日期之后的现金流需要折现
+                # 折现逻辑：
+                # 第一个月：折现半个月（因为从月中开始）
+                # 第二个月及以后：折现整月
+                # 总折现期数 = 0.5 + (idx_cf - 1) = idx_cf - 0.5
+                
+                # 第一个月：折现半个月
+                r1 = get_monthly_rate(rates_map, 1, max_term)
+                factor = Decimal('1.0') / (Decimal('1.0') + r1 / Decimal('2'))
+                
+                # 第二个月到第idx_cf个月：折现整月
+                for t in range(2, idx_cf + 1):
+                    r = get_monthly_rate(rates_map, t, max_term)
+                    factor /= (Decimal('1.0') + r)
         
         total_pv += amount * factor
     
@@ -421,13 +423,19 @@ def calculate_pv_current_period_no_interest_after_occurrence(
                 idx_cf = get_month_idx(cf_date)
                 idx_val = get_month_idx(valuation_date)
                 
-                # 期数需要+1：从 (idx_val + 1 + 1) 到 (idx_cf + 1)
-                start_step = max(1, idx_val + 2)  # +1 for period adjustment
-                end_step = idx_cf + 1  # +1 for period adjustment
-                
-                for t in range(start_step, end_step + 1):
-                    r = get_monthly_rate(rates_map, t, max_term)
-                    factor /= (Decimal('1.0') + r)
+                # 倒签单情况：如果现金流在签单日期之前，不需要折现计息，直接取原值
+                if idx_cf < 0:
+                    # 签单日期之前的现金流，直接取原值（不计息）
+                    factor = Decimal('1.0')
+                else:
+                    # 签单日期之后的现金流，正常折现
+                    # 期数需要+1：从 (idx_val + 1 + 1) 到 (idx_cf + 1)
+                    start_step = max(1, idx_val + 2)  # +1 for period adjustment
+                    end_step = idx_cf + 1  # +1 for period adjustment
+                    
+                    for t in range(start_step, end_step + 1):
+                        r = get_monthly_rate(rates_map, t, max_term)
+                        factor /= (Decimal('1.0') + r)
             
             total_pv += amount * factor
         
@@ -445,6 +453,27 @@ def main():
 
     uw_date = pd.to_datetime(policy_row["under_write_date"]).date()
     val_date = date(uw_date.year, 12, 31) # EOP
+    
+    # 检测批减单（签单保费为负值）
+    original_premium = Decimal(str(policy_row.get("premium", 0) or policy_row.get("sum_premium_no_tax", 0) or 0))
+    original_iacf = Decimal(str(policy_row.get("iacf_amount", 0) or 0))
+    is_reversal_policy = (original_premium < 0)
+    
+    # 如果是批减单，将保费和获取费用取反（用于计量计算）
+    if is_reversal_policy:
+        print("\n" + "="*80)
+        print("⚠️  检测到批减单（签单保费为负值）")
+        print("="*80)
+        print(f"原始签单保费: {original_premium:,.2f}")
+        print(f"原始获取费用: {original_iacf:,.2f}")
+        print(f"将使用取反后的值进行计量计算...")
+        # 取反保费和获取费用
+        policy_row["premium"] = float(-original_premium)
+        policy_row["sum_premium_no_tax"] = float(-original_premium)
+        policy_row["iacf_amount"] = float(-original_iacf)
+        print(f"计量用签单保费: {policy_row['premium']:,.2f}")
+        print(f"计量用获取费用: {policy_row['iacf_amount']:,.2f}")
+        print("="*80 + "\n")
     
     # 2. Assumptions & Rates
     assump_obj = get_real_assumptions(policy_row["class_code"], val_date.strftime("%Y%m"))
@@ -1113,6 +1142,7 @@ def main():
                     'valuation_month_label': val_month_label,
                     'rate_locked_month': uw_date.strftime("%Y%m"),
                     'rate_current_month': val_month_yyyymm,
+                    'is_reversal_policy': is_reversal_policy,  # 批减单标记
                 }
             )
             pv_source_collection.add_data(pv_data)

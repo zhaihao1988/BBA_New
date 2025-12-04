@@ -3,7 +3,7 @@ from decimal import Decimal, getcontext
 # --- 参数配置 ---
 getcontext().prec = 38
 POLICY_NO = '1835501000004501320220000001'
-CERTI_NO = None  # 批单号，如果为None则计算主单
+CERTI_NO = None # 批单号，如果为None则计算主单
 
 # 精算假设参数
 # 注意：以下参数中，除了 RATIO_IACF（获取费用率）从配置读取外，
