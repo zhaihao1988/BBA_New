@@ -175,6 +175,14 @@ def calculate_pv_exact(
     # 如果 curve_base_date == valuation_date，说明是 current curve
     is_current_curve = (curve_base_date == valuation_date)
     
+    # [FIX] 评估日期调整：
+    # 如果 valuation_date 是月初（1日），在计算月份差时将其视为上个月末（减1天）。
+    # 这样可以保证 BOP（1月1日）的折现逻辑与上年 EOP（12月31日）完全一致，
+    # 避免因 relativedelta 对整月的计算差异导致 PV 跳变。
+    val_date_for_calc = valuation_date
+    if valuation_date.day == 1:
+        val_date_for_calc = valuation_date - relativedelta(days=1)
+    
     for _, row in cf_df.iterrows():
         amount = Decimal(str(row[col_name]))
         if amount == 0:
@@ -192,7 +200,8 @@ def calculate_pv_exact(
         if is_current_curve:
             # Current curve: term_month 从1开始（从评估日期开始的第一期、第二期...）
             # 计算从评估日期到现金流日期的月数差
-            rd = relativedelta(cf_date, valuation_date)
+            # 使用调整后的 val_date_for_calc 计算 diff
+            rd = relativedelta(cf_date, val_date_for_calc)
             months_diff = rd.years * 12 + rd.months
             
             if months_diff > 0:
@@ -214,20 +223,30 @@ def calculate_pv_exact(
                 return rd.years * 12 + rd.months
             
             idx_cf = get_month_idx(cf_date)
-            idx_val = get_month_idx(valuation_date)
+            # 使用调整后的 val_date_for_calc 计算 idx_val
+            idx_val = get_month_idx(val_date_for_calc)
             
             if cf_date > valuation_date:
                 # Discounting: Future -> Present
-                # 期数需要+1：从 (idx_val + 1 + 1) 到 (idx_cf + 1)
-                # 例如：202205签单，202206评估，202207现金流
-                # idx_val=1, idx_cf=2 → 使用 term_month=3
-                # 202208现金流：idx_cf=3 → 使用 term_month=3,4累乘
-                start_step = max(1, idx_val + 2)  # +1 for period adjustment
-                end_step = idx_cf + 1  # +1 for period adjustment
-                
-                for t in range(start_step, end_step + 1):
-                    r = get_monthly_rate(rates_map, t, max_term)
+                if idx_cf == idx_val:
+                    # 同月内的现金流（如1月1日到1月31日）
+                    # 直接使用当月对应的term_month（签单月=1，之后逐月+1）
+                    # 例如：签单9月，1月现金流idx_cf=4，使用term_month=5
+                    term = idx_cf + 1
+                    r = get_monthly_rate(rates_map, term, max_term)
                     factor /= (Decimal('1.0') + r)
+                else:
+                    # 跨月折现
+                    # 期数需要+1：从 (idx_val + 1 + 1) 到 (idx_cf + 1)
+                    # 例如：202205签单，202206评估，202207现金流
+                    # idx_val=1, idx_cf=2 → 使用 term_month=3
+                    # 202208现金流：idx_cf=3 → 使用 term_month=3,4累乘
+                    start_step = max(1, idx_val + 2)  # +1 for period adjustment
+                    end_step = idx_cf + 1  # +1 for period adjustment
+                    
+                    for t in range(start_step, end_step + 1):
+                        r = get_monthly_rate(rates_map, t, max_term)
+                        factor /= (Decimal('1.0') + r)
             elif cf_date < valuation_date:
                 # Accumulation: Past -> Present
                 # Range: (idx_cf + 1) to idx_val
@@ -383,6 +402,14 @@ def calculate_pv_current_period_no_interest_after_occurrence(
     # 判断是 current curve 还是 locked curve
     is_current_curve = (curve_base_date == valuation_date)
     
+    # [FIX] 评估日期调整：
+    # 如果 valuation_date 是月初（1日），在计算月份差时将其视为上个月末（减1天）。
+    # 这样可以保证 BOP（1月1日）的折现逻辑与上年 EOP（12月31日）完全一致，
+    # 避免因 relativedelta 对整月的计算差异导致 PV 跳变。
+    val_date_for_calc = valuation_date
+    if valuation_date.day == 1:
+        val_date_for_calc = valuation_date - relativedelta(days=1)
+    
     for _, row in cf_df.iterrows():
         amount = Decimal(str(row[col_name]))
         if amount == 0:
@@ -406,7 +433,8 @@ def calculate_pv_current_period_no_interest_after_occurrence(
             
             if is_current_curve:
                 # Current curve: term_month 从1开始（从评估日期开始的第一期、第二期...）
-                rd = relativedelta(cf_date, valuation_date)
+                # 使用调整后的 val_date_for_calc 计算 diff
+                rd = relativedelta(cf_date, val_date_for_calc)
                 months_diff = rd.years * 12 + rd.months
                 
                 if months_diff > 0:
@@ -421,7 +449,8 @@ def calculate_pv_current_period_no_interest_after_occurrence(
                     return rd.years * 12 + rd.months
                 
                 idx_cf = get_month_idx(cf_date)
-                idx_val = get_month_idx(valuation_date)
+                # 使用调整后的 val_date_for_calc 计算 idx_val
+                idx_val = get_month_idx(val_date_for_calc)
                 
                 # 倒签单情况：如果现金流在签单日期之前，不需要折现计息，直接取原值
                 if idx_cf < 0:
@@ -429,13 +458,20 @@ def calculate_pv_current_period_no_interest_after_occurrence(
                     factor = Decimal('1.0')
                 else:
                     # 签单日期之后的现金流，正常折现
-                    # 期数需要+1：从 (idx_val + 1 + 1) 到 (idx_cf + 1)
-                    start_step = max(1, idx_val + 2)  # +1 for period adjustment
-                    end_step = idx_cf + 1  # +1 for period adjustment
-                    
-                    for t in range(start_step, end_step + 1):
-                        r = get_monthly_rate(rates_map, t, max_term)
+                    if idx_cf == idx_val:
+                        # 同月内的现金流
+                        term = idx_cf + 1
+                        r = get_monthly_rate(rates_map, term, max_term)
                         factor /= (Decimal('1.0') + r)
+                    else:
+                        # 跨月折现
+                        # 期数需要+1：从 (idx_val + 1 + 1) 到 (idx_cf + 1)
+                        start_step = max(1, idx_val + 2)  # +1 for period adjustment
+                        end_step = idx_cf + 1  # +1 for period adjustment
+                        
+                        for t in range(start_step, end_step + 1):
+                            r = get_monthly_rate(rates_map, t, max_term)
+                            factor /= (Decimal('1.0') + r)
             
             total_pv += amount * factor
         
@@ -609,11 +645,18 @@ def main():
         rates_map = dict(zip(rates_df['term_month'], rates_df['forward_disrate_value'].apply(Decimal)))
         max_term = rates_df['term_month'].max() if not rates_df.empty else 0
         
+        # [FIX] 评估日期调整：
+        # 如果 bop_date 是月初（1日），在计算月份差时将其视为上个月末（减1天）。
+        # 这样可以保证 BOP（1月1日）的折现逻辑与上年 EOP（12月31日）完全一致。
+        bop_date_for_calc = bop_date
+        if bop_date.day == 1:
+            bop_date_for_calc = bop_date - relativedelta(days=1)
+        
         for _, row in cf_df.iterrows():
             amount = Decimal(str(row[col_name]))
             if amount == 0:
                 continue
-            
+                
             cf_date = row['Date_Obj']
             
             # 如果现金流日期就是折现时点，直接返回原值
@@ -621,8 +664,9 @@ def main():
                 total_pv += amount
                 continue
             
-            # 计算从1月1日到现金流日期的月数差
-            rd = relativedelta(cf_date, bop_date)
+            # 计算从折现时点到现金流日期的月数差
+            # 使用调整后的 bop_date_for_calc 计算 diff
+            rd = relativedelta(cf_date, bop_date_for_calc)
             months_diff = rd.years * 12 + rd.months
             
             # 计算折现因子
@@ -1066,6 +1110,12 @@ def main():
                 # 年初时点（1月1日）
                 bop_date = date(val_month_date.year, 1, 1)
                 
+                # [修正] 为了保证与上年期末现值的一致性，Beg PV 的折现基准日应设为上年期末（12月31日）
+                # 原因：在月度离散模型中，T年末和T+1年初视为同一时刻。
+                # 如果使用 1月1日 作为基准日，relativedelta 会导致 1月31日的现金流与 1月1日 只有 0 个月差（不折现），
+                # 而 12月31日 到 1月31日 有 1 个月差（折现 1 期）。这导致了 PV 的跳变。
+                val_date_for_beg_pv = date(val_month_date.year - 1, 12, 31)
+                
                 # 获取上年年末的锁定利率曲线（上年12月31日）
                 # Lcu字段：使用上年年末的锁定利率曲线（如202212）
                 prev_year_end_month = date(val_month_date.year - 1, 12, 31).strftime("%Y%m")
@@ -1074,9 +1124,9 @@ def main():
                 # 注意：已删除 Cca_Beg_Lcu 字段，因为 Cfa_Beg_Lcu 已经包含了1月现金流
                 # 计算年初预期未来（BOP_Cfa）的年初现值（Beg_Lcu）
                 # Beg字段：必须包含从1月1日开始的所有现金流
-                # 折现到年初时点（1月1日），使用上年年末锁定利率曲线
+                # 折现到年初时点（实际使用上年末日期以保证一致性），使用上年年末锁定利率曲线
                 # 对于Lcu字段，需要特殊处理折现逻辑：从1月1日开始，使用上年末利率曲线折现
-                res_bop_cfa_beg = calc_all_beg_lcu(cf_bop_beg, bop_date, prev_year_end_month, rate_prev_year_locked_df)
+                res_bop_cfa_beg = calc_all_beg_lcu(cf_bop_beg, val_date_for_beg_pv, prev_year_end_month, rate_prev_year_locked_df)
                 # 修正RA计算：使用年初时的精算假设（val_assump_obj）
                 cla_beg_fut = res_bop_cfa_beg.get("_Cla_Amt", DECIMAL_ZERO)
                 mtn_beg_fut = res_bop_cfa_beg.get("_Mtn_Amt", DECIMAL_ZERO)
@@ -1088,10 +1138,10 @@ def main():
                         results[f"Pvfl_If_Bop_Cfa_Beg_Lcu{k}"] = v
                 
                 # 计算年初预期未来（BOP_Cfa）的年初现值（Beg_Wlk）- 赔付、维费、RA
-                # 折现到年初时点（1月1日），使用签单日的锁定利率曲线（加权初始确认利率）
+                # 折现到年初时点（实际使用上年末日期以保证一致性），使用签单日的锁定利率曲线（加权初始确认利率）
                 # Beg字段：必须包含从1月1日开始的所有现金流
                 # 这些字段用于IFIE_OCI计算（利率变化影响），必须保留！
-                res_bop_cfa_beg_wlk = calc_all(cf_bop_beg, bop_date, uw_date, rate_val_locked_df, "")
+                res_bop_cfa_beg_wlk = calc_all(cf_bop_beg, val_date_for_beg_pv, uw_date, rate_val_locked_df, "")
                 # RA计算：使用相同维度的赔付+维持费用的值*精算假设中的ra率
                 cla_beg_wlk_fut = res_bop_cfa_beg_wlk.get("_Cla_Amt", DECIMAL_ZERO)
                 mtn_beg_wlk_fut = res_bop_cfa_beg_wlk.get("_Mtn_Amt", DECIMAL_ZERO)

@@ -164,9 +164,19 @@ class VectorizedPVCalculator:
         # 获取最后一个利率用于外推
         last_rate = self.rates_map.get(self.max_term, 0.0) if self.max_term > 0 else 0.0
         
+        # [FIX] 评估日期调整：
+        # 如果 valuation_date 是月初（1日），在计算月份差时将其视为上个月末（减1天）。
+        # 这样可以保证 BOP（1月1日）的折现逻辑与上年 EOP（12月31日）完全一致，
+        # 避免因 relativedelta 对整月的计算差异导致 PV 跳变。
+        val_date_for_calc = self.valuation_date
+        if self.valuation_date.day == 1:
+            from dateutil.relativedelta import relativedelta
+            val_date_for_calc = self.valuation_date - relativedelta(days=1)
+        
         if self.is_current_curve:
             # Current curve: term_month从1开始，直接从预计算表读取
-            months_diff = self._fast_month_diff(dates, self.valuation_date)
+            # 使用调整后的 val_date_for_calc 计算 diff
+            months_diff = self._fast_month_diff(dates, val_date_for_calc)
             
             for i, m_diff in enumerate(months_diff):
                 if m_diff == 0:
@@ -210,7 +220,8 @@ class VectorizedPVCalculator:
         else:
             # Locked curve: term_month = (现金流日期 - 签单日期) 的月数差
             idx_cf_array = self._fast_month_diff(dates, self.curve_base_date)
-            idx_val = self._fast_month_diff(np.array([self.valuation_date]), self.curve_base_date)[0]
+            # 使用调整后的 val_date_for_calc 计算 idx_val
+            idx_val = self._fast_month_diff(np.array([val_date_for_calc]), self.curve_base_date)[0]
             
             for i, idx_cf in enumerate(idx_cf_array):
                 cf_date = dates[i]

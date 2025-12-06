@@ -2,7 +2,7 @@ from decimal import Decimal, getcontext
 
 # --- 参数配置 ---
 getcontext().prec = 38
-POLICY_NO = '1835501000004501320220000001'
+POLICY_NO = 'mock1'
 CERTI_NO = None # 批单号，如果为None则计算主单
 
 # 精算假设参数

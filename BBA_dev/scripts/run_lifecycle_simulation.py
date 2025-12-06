@@ -30,7 +30,7 @@ from typing import Optional, Dict, Tuple, List
 import sys
 import os
 
-# 添加项目根目录到路径（scripts 目录在 bba_model 下，需要向上两级到项目根目录）
+# 添加项目根目录到路径（scripts 目录在 BBA_dev 下，需要向上两级到项目根目录）
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 from contextlib import redirect_stdout, redirect_stderr
@@ -1126,6 +1126,8 @@ class LifecycleSimulator:
             
             # 2. 初始确认
             context = self.run_initial_recognition(initial_assumptions, initial_rates)
+            # 保存初始确认的context，用于报表生成
+            init_context = context
             
             # 3. 确定仿真年份范围
             start_year = self.policy_state.valuation_date.year
@@ -1160,6 +1162,27 @@ class LifecycleSimulator:
             excel_file_path = self.excel_logger.save()
             self.logger.log_text(f"\n✅ PV现金流明细Excel日志已保存到: {excel_file_path}")
             
+            # 7. 生成IFRS 17报表
+            try:
+                from BBA_dev.utils.generate_ifrs17_report import main as generate_report
+                
+                # 直接使用yearly_results和初始确认的context生成报表
+                html_report_path = generate_report(
+                    yearly_results=yearly_results,
+                    init_context=init_context,  # 使用初始确认后的context
+                    policy_no=self.policy_no,
+                    certi_no=self.certi_no
+                )
+                if html_report_path:
+                    self.logger.log_text(f"\n✅ IFRS 17报表已生成: {html_report_path}")
+                    print(f"\n[SUCCESS] IFRS 17报表已生成: {html_report_path}")
+            except Exception as report_error:
+                error_msg = f"\n⚠️  警告: 生成IFRS 17报表时发生错误: {report_error}"
+                print(error_msg)
+                self.logger.log_text(error_msg)
+                import traceback
+                traceback.print_exc()
+            
         except Exception as e:
             error_msg = f"\n❌ 仿真过程中发生错误: {e}"
             print(error_msg)
@@ -1189,13 +1212,12 @@ def main():
             import io
             sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
     
-    # 生成 Markdown 日志文件名（基于保单号和当前时间）
-    from datetime import datetime
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    # 生成 Markdown 日志文件名（基于保单号，不带时间戳，自动覆盖）
     # 确保 logs 目录存在
     logs_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'logs')
     os.makedirs(logs_dir, exist_ok=True)
-    md_log_file = os.path.join(logs_dir, f"lifecycle_simulation_log_{POLICY_NO}_{timestamp}.md")
+    certi_part = f"_{CERTI_NO}" if CERTI_NO else ""
+    md_log_file = os.path.join(logs_dir, f"lifecycle_simulation_log_{POLICY_NO}{certi_part}.md")
     
     print(f"[INFO] 日志将保存到: {md_log_file}\n")
     

@@ -56,13 +56,12 @@ class PVCashFlowExcelLogger:
         
         # 文件路径
         if excel_file_path is None:
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             logs_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'logs')
             os.makedirs(logs_dir, exist_ok=True)
             
-            # 文件名包含批单号
+            # 文件名包含批单号，不带时间戳，自动覆盖
             certi_part = f"_{certi_no}" if certi_no else ""
-            excel_file_path = os.path.join(logs_dir, f"pv_cashflow_detail_{policy_no}{certi_part}_{timestamp}.xlsx")
+            excel_file_path = os.path.join(logs_dir, f"pv_cashflow_detail_{policy_no}{certi_part}.xlsx")
         
         self.excel_file_path = excel_file_path
     
