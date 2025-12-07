@@ -1015,7 +1015,7 @@ class LifecycleSimulator:
         # 获取当年新增LC_预期现金流和非金融风险调整（用于亏损合同损益拆分）
         nb_initial_lc_cf = self._to_decimal(getattr(context, 'nb_initial_lc_cf', Decimal('0')) if self._is_new_business_year(context) else Decimal('0'))
         nb_initial_lc_ra = self._to_decimal(getattr(context, 'nb_initial_lc_ra', Decimal('0')) if self._is_new_business_year(context) else Decimal('0'))
-
+        
         ifie_pl_cf_non_lc = self._to_decimal(getattr(context, 'ifie_pl_cf_non_lc', Decimal('0')))
         ifie_pl_cf_lc = self._to_decimal(getattr(context, 'ifie_pl_cf_lc', Decimal('0')))
         ifie_pl_ra_non_lc = self._to_decimal(getattr(context, 'ifie_pl_ra_non_lc', Decimal('0')))
@@ -1069,6 +1069,7 @@ class LifecycleSimulator:
             "policy_no": self.policy_no,
             "certi_no": self.certi_no if self.certi_no else "",
             "year": year,
+            "nb_initial_lc": self._to_number(nb_initial_lc), # Add initial LC
             "保险合同收入_预期赔付与费用_含亏损": self._apply_reversal_if_needed(claims_gross, is_reversal),
             "保险合同收入_预期赔付与费用_亏损分摊": self._apply_reversal_if_needed(claims_lc_alloc, is_reversal),
             "保险合同收入_预期释放的非金融风险调整_含亏损": self._apply_reversal_if_needed(ra_gross, is_reversal),
@@ -1111,6 +1112,13 @@ class LifecycleSimulator:
             "新增合同非金融风险调整_亏损合同_非亏损": self._apply_reversal_if_needed(getattr(context, 'init_ra', Decimal('0')) if is_new_business and nb_initial_lc < 0 else Decimal('0'), is_reversal),
             "现金流_收到的保费": self._apply_reversal_if_needed(getattr(context, 'actual_premium', Decimal('0')) if is_new_business else Decimal('0'), is_reversal),
             "现金流_支付的获取费用": self._apply_reversal_if_needed(getattr(context, 'actual_iacf_incurred', Decimal('0')) if is_new_business else Decimal('0'), is_reversal),
+            
+            # --- 期末余额 ---
+            "closing_bel": self._apply_reversal_if_needed(lrc_bel_total, is_reversal),
+            "closing_ra": self._apply_reversal_if_needed(lrc_ra, is_reversal),
+            "closing_csm": self._apply_reversal_if_needed(end_csm, is_reversal),
+            "closing_lc": self._apply_reversal_if_needed(getattr(context, 'end_lc_final', getattr(context, 'end_lc_before_amort', Decimal('0'))), is_reversal),
+            "closing_lic": 0.0, # TODO: 待实现
         }
 
         return result
@@ -1162,20 +1170,37 @@ class LifecycleSimulator:
             excel_file_path = self.excel_logger.save()
             self.logger.log_text(f"\n✅ PV现金流明细Excel日志已保存到: {excel_file_path}")
             
-            # 7. 生成IFRS 17报表
+            # 7. 生成IFRS 17报表 (104 & 103)
             try:
-                from BBA_dev.utils.generate_ifrs17_report import main as generate_report
+                # 尝试导入新的104报表生成器，如果不存在则尝试旧的
+                try:
+                    from BBA_dev.utils.generate_ifrs17_104_report import main as generate_report_104
+                except ImportError:
+                    from BBA_dev.utils.generate_ifrs17_report import main as generate_report_104
                 
-                # 直接使用yearly_results和初始确认的context生成报表
-                html_report_path = generate_report(
+                from BBA_dev.utils.generate_ifrs17_103_report import main as generate_report_103
+                
+                # 7.1 生成104报表 (合同负债余额调节表 - 计量成分视角)
+                html_report_path_104 = generate_report_104(
                     yearly_results=yearly_results,
                     init_context=init_context,  # 使用初始确认后的context
                     policy_no=self.policy_no,
                     certi_no=self.certi_no
                 )
-                if html_report_path:
-                    self.logger.log_text(f"\n✅ IFRS 17报表已生成: {html_report_path}")
-                    print(f"\n[SUCCESS] IFRS 17报表已生成: {html_report_path}")
+                if html_report_path_104:
+                    self.logger.log_text(f"\n✅ IFRS 17 104报表已生成: {html_report_path_104}")
+                    print(f"\n[SUCCESS] IFRS 17 104报表已生成: {html_report_path_104}")
+                
+                # 7.2 生成103报表 (未到期/已发生调节表 - LRC/LIC视角)
+                html_report_path_103 = generate_report_103(
+                    yearly_results=yearly_results,
+                    policy_no=self.policy_no,
+                    certi_no=self.certi_no
+                )
+                if html_report_path_103:
+                    self.logger.log_text(f"\n✅ IFRS 17 103报表已生成: {html_report_path_103}")
+                    print(f"\n[SUCCESS] IFRS 17 103报表已生成: {html_report_path_103}")
+                    
             except Exception as report_error:
                 error_msg = f"\n⚠️  警告: 生成IFRS 17报表时发生错误: {report_error}"
                 print(error_msg)

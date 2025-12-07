@@ -202,12 +202,12 @@ def run(context, logger):
     
     # 2.8 摊销的 IACF
     iacf_balance_base = context.bop_iacf + iacf_interest_bop + context.nb_iacf_addition + context.iacf_interest_nb + context.iacf_change
-    context.iacf_amort_amount = - (iacf_balance_base * context.iacf_amort_ratio + iacf_exp_adj)
+    context.iacf_amort_amount = (iacf_balance_base * context.iacf_amort_ratio + iacf_exp_adj)
     
     logger.log_item(
         "摊销的IACF",
         "[Step 2.8] 本期摊销计入费用的金额",
-        "- (Sum(Balance+Additions+Var) * Ratio + ExpAdj)",
+        "(Sum(Balance+Additions+Var) * Ratio + ExpAdj)",
         {"Base Sum": iacf_balance_base, "Ratio": context.iacf_amort_ratio, "ExpAdj": iacf_exp_adj},
         context.iacf_amort_amount
     )
