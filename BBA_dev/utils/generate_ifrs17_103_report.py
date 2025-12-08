@@ -539,11 +539,10 @@ def generate_report_data(init_data, data_by_year):
         ifie_pl_total = (ifie_pl_cf_non_lc_raw + ifie_pl_cf_lc_log) + (ifie_pl_ra_non_lc_raw + ifie_pl_ra_lc_log) + ifie_pl_csm
         
         # Step 3: LC in report display
-        # Note: LC balance is displayed as positive (liability), but LC changes (IFIE) keep original sign
-        # If LC IFIE is negative in log, it means reduces liability, so display as negative
-        # If LC IFIE is positive in log, it means increases liability, so display as positive
+        # Note: LC balance is displayed as positive (liability), but LC changes (IFIE) need to be negated
+        # LC IFIE values in log are negative, but in report should be displayed as positive (increases liability)
         ifie_pl_lc_log_sum = ifie_pl_cf_lc_log + ifie_pl_ra_lc_log
-        ifie_pl_lc_display = ifie_pl_lc_log_sum  # Keep original sign (negative reduces, positive increases)
+        ifie_pl_lc_display = -ifie_pl_lc_log_sum  # Negate to show as positive in report
         
         # Step 4: Derive Non-LC as Total - LC (reverse derivation, ensures Non-LC + LC = Total)
         ifie_pl_non_lc = ifie_pl_total - ifie_pl_lc_display
@@ -556,9 +555,9 @@ def generate_report_data(init_data, data_by_year):
         if ifie_pl_non_lc != 0 or ifie_pl_lc_display != 0:
             # Calculate component breakdown for Non-LC (derived from Total - LC)
             # Note: We show the derived Non-LC components, not the raw log values
-            # LC components in display: keep original sign (negative reduces, positive increases)
-            ifie_pl_cf_lc_display_comp = ifie_pl_cf_lc_log  # Keep original sign
-            ifie_pl_ra_lc_display_comp = ifie_pl_ra_lc_log  # Keep original sign
+            # LC components in display: negate to show as positive in report
+            ifie_pl_cf_lc_display_comp = -ifie_pl_cf_lc_log  # Negate to show as positive
+            ifie_pl_ra_lc_display_comp = -ifie_pl_ra_lc_log  # Negate to show as positive
             ifie_pl_cf_total = ifie_pl_cf_non_lc_raw + ifie_pl_cf_lc_log
             ifie_pl_ra_total = ifie_pl_ra_non_lc_raw + ifie_pl_ra_lc_log
             ifie_pl_cf_non_lc_derived = ifie_pl_cf_total - ifie_pl_cf_lc_display_comp
@@ -641,9 +640,10 @@ def generate_report_data(init_data, data_by_year):
         ifie_oci_total = (ifie_oci_cf_non_lc_raw + ifie_oci_cf_lc_log) + (ifie_oci_ra_non_lc_raw + ifie_oci_ra_lc_log)
         
         # Step 3: LC in report display
-        # Note: LC changes (IFIE OCI) keep original sign (negative reduces, positive increases)
+        # Note: LC balance is displayed as positive (liability), but LC changes (IFIE) need to be negated
+        # LC IFIE values in log are negative, but in report should be displayed as positive (increases liability)
         ifie_oci_lc_log_sum = ifie_oci_cf_lc_log + ifie_oci_ra_lc_log
-        ifie_oci_lc_display = ifie_oci_lc_log_sum  # Keep original sign
+        ifie_oci_lc_display = -ifie_oci_lc_log_sum  # Negate to show as positive in report
         
         # Step 4: Derive Non-LC as Total - LC (reverse derivation, ensures Non-LC + LC = Total)
         ifie_oci_non_lc = ifie_oci_total - ifie_oci_lc_display
@@ -653,9 +653,9 @@ def generate_report_data(init_data, data_by_year):
         # Add explanation for IFIE OCI
         if ifie_oci_non_lc != 0 or ifie_oci_lc_display != 0:
             # Calculate component breakdown for Non-LC (derived from Total - LC)
-            # LC components in display: keep original sign
-            ifie_oci_cf_lc_display_comp = ifie_oci_cf_lc_log  # Keep original sign
-            ifie_oci_ra_lc_display_comp = ifie_oci_ra_lc_log  # Keep original sign
+            # LC components in display: negate to show as positive in report
+            ifie_oci_cf_lc_display_comp = -ifie_oci_cf_lc_log  # Negate to show as positive
+            ifie_oci_ra_lc_display_comp = -ifie_oci_ra_lc_log  # Negate to show as positive
             ifie_oci_cf_total = ifie_oci_cf_non_lc_raw + ifie_oci_cf_lc_log
             ifie_oci_ra_total = ifie_oci_ra_non_lc_raw + ifie_oci_ra_lc_log
             ifie_oci_cf_non_lc_derived = ifie_oci_cf_total - ifie_oci_cf_lc_display_comp
