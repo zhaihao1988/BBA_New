@@ -34,14 +34,10 @@ from BBA_dev.data_loader import load_full_data
 from BBA_dev.data_access.loader import get_assumptions as fetch_assumptions_from_db
 from BBA_dev.models.pv_source_data import PVSourceData, PVSourceDataCollection
 
-# 向量化计算开关（默认开启以提升性能）
-USE_VECTORIZED_PV = True
-try:
-    from BBA_dev.pv_calculator_vectorized import calculate_pv_exact_fast, calculate_pv_cca_fast
-    print("✓ 向量化PV计算模块已加载")
-except ImportError as e:
-    USE_VECTORIZED_PV = False
-    print(f"⚠ 向量化PV计算模块加载失败，将使用原始方法: {e}")
+# 向量化计算开关（当前已移除向量化模块，强制关闭）
+USE_VECTORIZED_PV = False
+calculate_pv_exact_fast = None
+calculate_pv_cca_fast = None
 
 # Setup Logging
 logger = logging.getLogger("pv_validator")
