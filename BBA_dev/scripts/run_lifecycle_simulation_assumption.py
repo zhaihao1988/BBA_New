@@ -1200,12 +1200,8 @@ class LifecycleSimulator:
             # 7. 生成IFRS 17报表 (104 & 103) - 仅在单张保单处理时生成
             if self.enable_reports:
                 try:
-                    # 尝试导入新的104报表生成器，如果不存在则尝试旧的
-                    try:
-                        from BBA_dev.utils.generate_ifrs17_104_report import main as generate_report_104
-                    except ImportError:
-                        from BBA_dev.utils.generate_ifrs17_report import main as generate_report_104
-                    
+                    # 使用新的104报表生成器
+                    from BBA_dev.utils.generate_ifrs17_104_report import main as generate_report_104
                     from BBA_dev.utils.generate_ifrs17_103_report import main as generate_report_103
                     
                     # 7.1 生成104报表 (合同负债余额调节表 - 计量成分视角)
