@@ -28,7 +28,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 # Local Imports
-from BBA_dev.projector import CashFlowProjector
+from BBA_dev.projector_assumption import CashFlowProjector
 from BBA_dev.assumptions import get_discount_factors
 from BBA_dev.data_loader import load_full_data
 from BBA_dev.data_access.loader import get_assumptions as fetch_assumptions_from_db
@@ -476,6 +476,12 @@ def main():
     
     # 2. Assumptions & Rates
     assump_obj = get_real_assumptions(policy_row["class_code"], val_date.strftime("%Y%m"))
+    
+    # 使用配置表的获取费用率更新 policy_row 中的 iacf_amount
+    # 确保后续现金流投射使用配置表的费率，而不是保单数据表中的值
+    if hasattr(assump_obj, 'acquisition_expense_ratio') and assump_obj.acquisition_expense_ratio is not None:
+        calculated_iacf = original_premium * assump_obj.acquisition_expense_ratio
+        policy_row["iacf_amount"] = float(calculated_iacf)
     
     rate_locked_df = get_discount_factors("locked", uw_date.strftime("%Y%m"))
     rate_current_df = get_discount_factors("current", val_date.strftime("%Y%m"))

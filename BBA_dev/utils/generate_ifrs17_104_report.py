@@ -16,7 +16,7 @@ def parse_decimal(text):
     return Decimal(clean_text)
 
 def format_decimal(val):
-    if abs(val) < Decimal('0.005'): return '0.00'
+    if val > -Decimal('0.005') and val < Decimal('0.005'): return '0.00'
     return f"{val:,.2f}"
 
 def convert_yearly_results_to_data_by_year(yearly_results):
@@ -97,8 +97,9 @@ def generate_report_data(init_data, data_by_year):
 
         # --- 2. Current Service ---
         # CSM Amortization
+        # 修复：保险合同收入_摊销的CSM存储的已经是负数（csm_amort_amount），表示减少CSM余额，不需要再取反
         csm_amort_val = get_d('保险合同收入_摊销的CSM')
-        csm_amort = -csm_amort_val
+        csm_amort = csm_amort_val  # 直接使用，已经是负数（减少CSM）
         add_row('4', '合同服务边际的摊销(4)', Decimal('0'), Decimal('0'), csm_amort, indent=1)
 
         # RA Release
@@ -164,7 +165,8 @@ def generate_report_data(init_data, data_by_year):
                       init_data.get('nb_init_maint', Decimal('0')) + 
                       init_data.get('nb_init_iacf', Decimal('0'))) - init_data.get('nb_init_prem', Decimal('0'))
             nb_ra = init_data.get('nb_init_ra', Decimal('0'))
-            nb_csm = Decimal('0') # Loss making contracts have CSM = 0
+            # 修复：使用初始确认的CSM值（盈利合同有CSM，亏损合同CSM=0但有LC）
+            nb_csm = init_data.get('nb_init_csm', Decimal('0'))
             
             nb_explanation = f"""
             <ul>
@@ -202,7 +204,7 @@ def generate_report_data(init_data, data_by_year):
 
         add_row('8', '当期初始确认的保险合同影响(8)', nb_bel, nb_ra, nb_csm, indent=1)
         
-        if year == 2022 or abs(nb_bel) + abs(nb_ra) + abs(nb_csm) > 0:
+        if year == 2022 or (nb_bel if nb_bel > 0 else -nb_bel) + (nb_ra if nb_ra > 0 else -nb_ra) + (nb_csm if nb_csm > 0 else -nb_csm) > 0:
             year_explanations.append({
                 "title": "8. 当期初始确认的保险合同影响",
                 "content": nb_explanation
@@ -252,7 +254,9 @@ def generate_report_data(init_data, data_by_year):
         ifie_pl_ra_lc = get_d('IFIE_P&L_未到期_非金融风险调整_亏损')
         ifie_ra = ifie_pl_ra_non_lc + ifie_pl_ra_lc
         
-        ifie_csm = get_d('IFIE_P&L_未到期_CSM')
+        # CSM计息在日志/CSV中为P&L费用（负数），报表需显示为正数（增加负债）
+        ifie_csm_log = get_d('IFIE_P&L_未到期_CSM')
+        ifie_csm = -ifie_csm_log  # 取反为正数
         add_row('17', '保险合同金融变动额(17)', ifie_pv, ifie_ra, ifie_csm)
         
         year_explanations.append({
@@ -357,7 +361,7 @@ def generate_report_data(init_data, data_by_year):
         diff_csm = calc_closing['csm'] - log_closing_csm
         
         def get_verify_status(diff):
-            if abs(diff) < Decimal('0.01'):
+            if diff > -Decimal('0.01') and diff < Decimal('0.01'):
                 return "<span style='color:green'>无差异</span>"
             return f"<span style='color:red'>差异: {format_decimal(diff)}</span>"
 
@@ -429,7 +433,7 @@ def render_html_template(rows, explanations_by_year, policy_no=None, certi_no=No
             total = row['pv'] + row['ra'] + row['csm']
             
             def fmt(val):
-                if abs(val) < Decimal('0.005'): return '<span class="zero">0.00</span>'
+                if val > -Decimal('0.005') and val < Decimal('0.005'): return '<span class="zero">0.00</span>'
                 s = "{:,.2f}".format(val)
                 if val < 0:
                     return f'<span class="negative">({s.replace("-", "")})</span>'
@@ -743,6 +747,8 @@ def main(yearly_results=None, init_context=None, output_html_path=None, policy_n
             'nb_init_claims': to_decimal(getattr(init_context, 'init_fut_claim', None)),
             'nb_init_maint': to_decimal(getattr(init_context, 'init_fut_maint', None)),
             'nb_init_ra': to_decimal(getattr(init_context, 'init_ra', None)),
+            'nb_init_csm': to_decimal(getattr(init_context, 'nb_initial_csm', None)),
+            'nb_init_lc': to_decimal(getattr(init_context, 'nb_initial_lc', None)),
         }
     else:
         # 如果没有init_context，尝试从第一个年度结果推导（如果可能）
@@ -752,6 +758,8 @@ def main(yearly_results=None, init_context=None, output_html_path=None, policy_n
             'nb_init_claims': Decimal('0'),
             'nb_init_maint': Decimal('0'),
             'nb_init_ra': Decimal('0'),
+            'nb_init_csm': Decimal('0'),
+            'nb_init_lc': Decimal('0'),
         }
     
     # 转换yearly_results为data_by_year格式

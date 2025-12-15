@@ -238,20 +238,20 @@ def run(context, logger):
     
     # CSM摊销金额（负值，表示CSM减少）
     context.csm_amort_amount = -(context.end_csm_before_amort * csm_amort_ratio)
-    # CSM摊销确认的收入（正值）
-    context.revenue_csm_amort = abs(context.csm_amort_amount)
+    # CSM摊销确认的收入（保持负号，产生收入）
+    context.revenue_csm_amort = context.csm_amort_amount
     
     logger.log_item(
         "保险合同收入_摊销的CSM",
         "[Sec 8.9] 当期确认的合同服务边际（使用覆盖单元动态比例法）",
-        "CSM_Amort_Revenue = Abs(-(CSM_beg + CSM_new + CSM_Interest + Δ_CSM) × CSM_Amort_Ratio)",
+        "CSM_Amort_Revenue = -(CSM_beg + CSM_new + CSM_Interest + Δ_CSM) × CSM_Amort_Ratio",
         {
             "CSM Balance (摊销前)": context.end_csm_before_amort,
             "摊销比例": csm_amort_ratio,
             "CSM摊销金额(负)": context.csm_amort_amount
         },
         context.revenue_csm_amort,
-        note="摊销减少CSM余额，同时增加保险合同收入"
+        note="CSM摊销产生收入，减少负债，显示为负数"
     )
     
     # 注意：end_csm_final 已经在 CSM/LC计量模块中正确计算完成（包含了被CSM吸收的变化）
@@ -259,14 +259,16 @@ def run(context, logger):
     # 原代码: context.end_csm_final = context.end_csm_before_amort + context.csm_amort_amount （已删除）
     
     # 7.4 IACF 摊销 (Revenue Impact)
-    context.revenue_iacf_amort = abs(context.iacf_amort_amount)
+    # IACF摊销确认的收入（保持负号，产生收入）
+    context.revenue_iacf_amort = context.iacf_amort_amount
     
     logger.log_item(
         "保险合同收入_IACF摊销",
         "当期回收的获取费用",
-        "Abs(IACF Amortization Expense)",
+        "-(IACF Amortization Expense)",
         {"IACF Amort Expense": context.iacf_amort_amount},
-        context.revenue_iacf_amort
+        context.revenue_iacf_amort,
+        note="IACF摊销产生收入，减少负债，显示为负数"
     )
     
     # 7.5 经验调整 (Revenue Part)

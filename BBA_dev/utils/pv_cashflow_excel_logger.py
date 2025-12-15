@@ -101,7 +101,7 @@ class PVCashFlowExcelLogger:
         if isinstance(value, Decimal):
             if value == 0:
                 return "0.00"
-            precision = 6 if abs(value) < Decimal('10') else 2
+            precision = 6 if (value > -Decimal('10') and value < Decimal('10')) else 2
             return f"{value:,.{precision}f}"
         return str(value) if value is not None else ""
     
@@ -343,6 +343,20 @@ class PVCashFlowExcelLogger:
             self._create_year_sheet(year, self.year_data[year])
         
         # 保存文件
-        self.wb.save(self.excel_file_path)
-        return self.excel_file_path
+        try:
+            self.wb.save(self.excel_file_path)
+            return self.excel_file_path
+        except PermissionError:
+            # 常见原因：文件正在被Excel打开。这里不阻断主流程，改存到新文件名。
+            from datetime import datetime
+
+            base = str(self.excel_file_path)
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            if base.lower().endswith(".xlsx"):
+                alt_path = base[:-5] + f"_{ts}.xlsx"
+            else:
+                alt_path = base + f"_{ts}.xlsx"
+
+            self.wb.save(alt_path)
+            return alt_path
 

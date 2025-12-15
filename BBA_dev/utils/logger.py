@@ -47,7 +47,7 @@ class CalculationLogger:
         """根据数值大小选择合适的精度"""
         if value == 0:
             return "0.00"
-        precision = 6 if abs(value) < Decimal('10') else 2
+        precision = 6 if (value > -Decimal('10') and value < Decimal('10')) else 2
         fmt = f"{{:,.{precision}f}}"
         return fmt.format(value)
     

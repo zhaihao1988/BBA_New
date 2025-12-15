@@ -149,25 +149,28 @@ def _calculate_experience_adjustment(context, logger, assumptions: Assumptions, 
     # 将is_new_business保存到context，供后续使用
     context.is_new_business = is_new_business
     
-    # 获取实际现金流数据（从数据库读取）
-    policy_no = getattr(context, 'policy_no', None)
-    certi_no = getattr(context, 'certi_no', None)
-    under_write_date = getattr(context, 'under_write_date', None)
-    
-    if policy_no:
-        try:
-            actual_cashflows = get_actual_cashflows(
-                policy_no=policy_no,
-                certi_no=certi_no,
-                under_write_date=under_write_date
-            )
-            # 将实际现金流保存到context，供后续使用
-            context.actual_cashflows = actual_cashflows
-        except Exception as e:
-            logger.log_text(f"⚠️  警告: 无法从数据库加载实际现金流数据: {e}，将使用context中的值")
+    # 获取实际现金流数据
+    # 如果 context.actual_cashflows 已存在，直接使用（由 lifecycle 脚本准备）
+    # 如果不存在，才从数据库读取
+    if not hasattr(context, 'actual_cashflows') or context.actual_cashflows is None:
+        policy_no = getattr(context, 'policy_no', None)
+        certi_no = getattr(context, 'certi_no', None)
+        under_write_date = getattr(context, 'under_write_date', None)
+        
+        if policy_no:
+            try:
+                actual_cashflows = get_actual_cashflows(
+                    policy_no=policy_no,
+                    certi_no=certi_no,
+                    under_write_date=under_write_date
+                )
+                # 将实际现金流保存到context，供后续使用
+                context.actual_cashflows = actual_cashflows
+            except Exception as e:
+                logger.log_text(f"⚠️  警告: 无法从数据库加载实际现金流数据: {e}，将使用context中的值")
+                context.actual_cashflows = None
+        else:
             context.actual_cashflows = None
-    else:
-        context.actual_cashflows = None
     
     # 使用动态假设（从数据库读取）或默认值
     if assumptions:
@@ -297,10 +300,7 @@ def _calculate_experience_adjustment(context, logger, assumptions: Assumptions, 
         else:
             new_c_actual_prem = Decimal('0')
         
-        # 如果是批减单，需要将actual_premium取反，以匹配PV数据（PV数据基于取反后的值计算）
-        is_reversal = getattr(context, 'is_reversal_policy', False)
-        if is_reversal and new_c_actual_prem != Decimal('0'):
-            new_c_actual_prem = -new_c_actual_prem
+        # PV原材料与计量阶段均按原始符号运行，实际保费无需为“匹配PV”而取反
         
         prem_var_raw = (new_f_end_prem + new_c_actual_prem) - (new_f_init_prem + new_c_init_prem)
         context.prem_var = prem_var_raw * exp_adj_ratio
@@ -368,10 +368,7 @@ def _calculate_experience_adjustment(context, logger, assumptions: Assumptions, 
         else:
             new_c_actual_iacf = Decimal('0')
         
-        # 如果是批减单，需要将actual_iacf取反，以匹配PV数据（PV数据基于取反后的值计算）
-        is_reversal = getattr(context, 'is_reversal_policy', False)
-        if is_reversal and new_c_actual_iacf != Decimal('0'):
-            new_c_actual_iacf = -new_c_actual_iacf
+        # PV原材料与计量阶段均按原始符号运行，实际IACF无需为“匹配PV”而取反
         
         iacf_var_raw = (new_f_end_iacf + new_c_actual_iacf) - (new_f_init_iacf + new_c_init_iacf)
         context.iacf_var = iacf_var_raw * exp_adj_ratio
@@ -503,10 +500,7 @@ def _calculate_csm_lc_absorption(context, logger, cohort_state: CohortState, pol
             if actual_prem_nb is None:
                 actual_prem_nb = context.actual_premium if hasattr(context, 'under_write_date') and context.year == context.under_write_date.year else DECIMAL_ZERO
         
-        # 如果是批减单，需要将actual_premium取反，以匹配PV数据（PV数据基于取反后的值计算）
-        is_reversal = getattr(context, 'is_reversal_policy', False)
-        if is_reversal and actual_prem_nb != DECIMAL_ZERO:
-            actual_prem_nb = -actual_prem_nb
+        # PV原材料与计量阶段均按原始符号运行，实际保费无需为“匹配PV”而取反
     else:
         new_f_end_prem = DECIMAL_ZERO
         new_f_init_prem = DECIMAL_ZERO
@@ -553,10 +547,7 @@ def _calculate_csm_lc_absorption(context, logger, cohort_state: CohortState, pol
             if actual_iacf_nb is None:
                 actual_iacf_nb = context.actual_iacf_incurred if hasattr(context, 'under_write_date') and context.year == context.under_write_date.year else DECIMAL_ZERO
         
-        # 如果是批减单，需要将actual_iacf取反，以匹配PV数据（PV数据基于取反后的值计算）
-        is_reversal = getattr(context, 'is_reversal_policy', False)
-        if is_reversal and actual_iacf_nb != DECIMAL_ZERO:
-            actual_iacf_nb = -actual_iacf_nb
+        # PV原材料与计量阶段均按原始符号运行，实际IACF无需为“匹配PV”而取反
     else:
         new_f_end_iacf = DECIMAL_ZERO
         new_f_init_iacf = DECIMAL_ZERO
@@ -724,17 +715,20 @@ def _calculate_csm_lc_absorption(context, logger, cohort_state: CohortState, pol
     bop_csm_lc = _get_bop_csm_lc(context, cohort_state)
     
     # 获取统一的CSM/LC字段（用于计算LC IFIE分摊比例）
-    # 修复：context.nb_initial_lc 现在直接存储为负数（亏损），不需要再转换
+    # 正常保单：CSM>=0，LC<0；批减单：CSM<=0，LC>0（符号逻辑相反）
+    is_reversal = getattr(context, 'is_reversal_policy', False)
     nb_initial_csm_lc = context.nb_initial_csm or Decimal('0')
     if nb_initial_csm_lc == Decimal('0') and hasattr(context, 'nb_initial_lc'):
         nb_lc_val = context.nb_initial_lc or Decimal('0')
-        if nb_lc_val < Decimal('0'):  # LC应该是负数
+        is_nb_lc = (nb_lc_val < Decimal('0')) if (not is_reversal) else (nb_lc_val > Decimal('0'))
+        if is_nb_lc:
             nb_initial_csm_lc = nb_lc_val
     
     # [Sec 7.2.2] LC IFIE分摊比例（期初有效合同）
     # 注意：LC IFIE分摊比例用于后续IFIE模块，这里只计算并保存到context
     if_lc_ifie_ratio = Decimal('0')
-    if bop_csm_lc < 0:
+    is_if_lc = (bop_csm_lc < 0) if (not is_reversal) else (bop_csm_lc > 0)
+    if is_if_lc:
         # 分母：预期赔付现金流年初现值 + 预期维持费用现金流年初现值 + 预期非金融风险调整年初现值
         # 理解：有效合同-年初预期-预期未来-年初现值（LCU），已包含1月现金流
         # 注意：已删除 Cca_Beg_Lcu 字段，Cfa_Beg_Lcu 已经包含了1月现金流（折现到年初）
@@ -743,23 +737,25 @@ def _calculate_csm_lc_absorption(context, logger, cohort_state: CohortState, pol
         pv_if_init_maint = pv_data.get_field('Pvfl_If_Bop_Cfa_Beg_Lcu_Mtn_Amt', DECIMAL_ZERO)
         pv_if_init_ra = pv_data.get_field('Pvfl_If_Bop_Cfa_Beg_Lcu_Rad_Amt', DECIMAL_ZERO)
         denom_if = pv_if_init_claims + pv_if_init_maint + pv_if_init_ra
-        
-        if denom_if > 0:
-            if_lc_ifie_ratio = abs(bop_csm_lc) / denom_if
+        denom_if_abs = denom_if.copy_abs()
+        if denom_if_abs > 0:
+            if_lc_ifie_ratio = bop_csm_lc.copy_abs() / denom_if_abs
     
     # [Sec 7.3.2] LC IFIE分摊比例（当年新增合同）
     nb_lc_ifie_ratio = Decimal('0')
-    if nb_initial_csm_lc < 0:
+    is_nb_lc = (nb_initial_csm_lc < 0) if (not is_reversal) else (nb_initial_csm_lc > 0)
+    if is_nb_lc:
         denom_nb = context.init_fut_claim + context.init_fut_maint + context.init_ra
-        if denom_nb > 0:
-            nb_lc_ifie_ratio = abs(nb_initial_csm_lc) / denom_nb
+        denom_nb_abs = denom_nb.copy_abs()
+        if denom_nb_abs > 0:
+            nb_lc_ifie_ratio = nb_initial_csm_lc.copy_abs() / denom_nb_abs
     
     # 保存LC IFIE分摊比例到context（供IFIE模块使用）
     context.nb_lc_ratio = nb_lc_ifie_ratio
     context.if_lc_ifie_ratio = if_lc_ifie_ratio
     
     # [Sec 5] 被CSM/LC吸收的变化分摊
-    # 使用统一字段逻辑：如果变化被LC吸收（nb_initial_csm_lc < 0），则分摊到LC；否则被CSM吸收
+    # 使用统一字段逻辑：如果变化被LC吸收（正常保单：<0；批减单：>0），则分摊到LC；否则被CSM吸收
     context.allocated_lc_exp_adj = delta_csm_lc * nb_lc_ifie_ratio
     context.csm_absorbed = delta_csm_lc - context.allocated_lc_exp_adj
     

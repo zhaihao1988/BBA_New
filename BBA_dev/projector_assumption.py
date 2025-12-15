@@ -70,7 +70,10 @@ class CashFlowProjector:
         """
 
         premium = Decimal(str(policy_row.get("sum_premium_no_tax", 0) or policy_row.get("premium", 0) or 0))
-        iacf_amount = Decimal(str(policy_row.get("iacf_amount", 0) or 0))
+        
+        # 使用配置表的获取费用率计算IACF，而不是使用保单数据表中的iacf_amount字段
+        acq_ratio = Decimal(str(getattr(assumptions, "acquisition_expense_ratio", 0) or 0))
+        iacf_amount = premium * acq_ratio
 
         start_date = _to_date(policy_row.get("start_date"))
         end_date = _to_date(policy_row.get("end_date"))

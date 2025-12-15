@@ -1,6 +1,7 @@
 import os
 import sys
 import time
+import signal
 import pandas as pd
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from decimal import Decimal
@@ -20,8 +21,13 @@ from BBA_dev.utils.async_csv_writer import AsyncCSVWriter
 from BBA_dev.scripts.run_batch_process import RESULT_COLUMNS
 
 
-# 定义输出文件路径 (使用新文件名以区分，避免冲突，日志目录向上两级)
-OUTPUT_FILE = os.path.join(PROJECT_ROOT, "logs", "bba_batch_results_new_202412.csv")
+# 动态输出文件路径函数
+def get_output_file_path(policy_no=None):
+    """根据是否指定保单号返回不同的输出文件名"""
+    if policy_no:
+        return os.path.join(PROJECT_ROOT, "logs", f"bba_single_policy_{policy_no}_202412.csv")
+    else:
+        return os.path.join(PROJECT_ROOT, "logs", "bba_batch_results_new_202412.csv")
 
 def process_single_policy_wrapper(args):
     """Worker 函数"""
@@ -41,7 +47,7 @@ def process_single_policy_wrapper(args):
         except Exception:
             pass  # 静默失败，避免影响主进程
 
-def run_batch_new(run_date="202412", val_method="7", max_workers=32, limit=None):
+def run_batch_new(run_date="202412", val_method="7", max_workers=32, limit=None, policy_no=None):
     start_time = time.time()
     # 检测JIT状态
     try:
@@ -50,9 +56,15 @@ def run_batch_new(run_date="202412", val_method="7", max_workers=32, limit=None)
     except:
         jit_status = "标准模式"
     
+    # 动态生成输出文件路径
+    OUTPUT_FILE = get_output_file_path(policy_no)
+    
+    # 确定运行模式
+    mode = f"单保单模式: {policy_no}" if policy_no else "全量模式"
+    
     print(f"=" * 80)
     print(f"New Batch Process (Memory Optimized) Start: {datetime.now()}")
-    print(f"Run Date: {run_date} | 性能模式: {jit_status}")
+    print(f"Run Date: {run_date} | 运行模式: {mode} | 性能模式: {jit_status}")
     print(f"Output File: {OUTPUT_FILE}")
     print(f"=" * 80)
 
@@ -71,6 +83,15 @@ def run_batch_new(run_date="202412", val_method="7", max_workers=32, limit=None)
     if df_all.empty:
         print("No policies found.")
         return
+
+    # 如果指定了保单号，只处理该保单
+    if policy_no is not None:
+        original_count = len(df_all)
+        df_all = df_all[df_all['policy_no'] == policy_no]
+        if df_all.empty:
+            print(f"错误: 未找到保单号 {policy_no} 的数据")
+            return
+        print(f"已过滤为单保单模式：{policy_no} (从 {original_count} 条记录中筛选出 {len(df_all)} 条)")
 
     total_policies = len(df_all)
     print(f"Loaded {total_policies} policies.")
@@ -202,7 +223,8 @@ def run_batch_new(run_date="202412", val_method="7", max_workers=32, limit=None)
             'written_premium': prem,
             'rates_map': rates_cache, 
             'assumptions_map': policy_assumps, 
-            'initial_spot_rate': Decimal('0.03') 
+            # 锁定利率从0开始，与旧逻辑一致（后续在初始确认中由即期利率更新）
+            'initial_spot_rate': Decimal('0') 
         }
         
         tasks.append((p_no, c_no, preloaded_data))
@@ -219,6 +241,8 @@ def run_batch_new(run_date="202412", val_method="7", max_workers=32, limit=None)
     csv_writer.start()
 
     completed_count = 0
+    executor = None
+    future_to_task = None
     
     try:
         with ProcessPoolExecutor(max_workers=max_workers) as executor:
@@ -235,6 +259,14 @@ def run_batch_new(run_date="202412", val_method="7", max_workers=32, limit=None)
                     if err:
                          print(f"Error processing {p_no}: {err}")
                     elif results:
+                        # 与旧批处理保持一致：摊销的CSM、IFIE_CSM 取反
+                        for r in results:
+                            for k in [
+                                "保险合同收入_摊销的CSM",
+                                "IFIE_P&L_未到期_CSM",
+                            ]:
+                                if k in r and r[k] is not None:
+                                    r[k] = -r[k]
                         # 写入结果
                         csv_writer.append(results, block=False)
                     
@@ -246,10 +278,48 @@ def run_batch_new(run_date="202412", val_method="7", max_workers=32, limit=None)
                         
                 except Exception as e:
                     print(f"Critical error for {p_no}: {e}")
-
+    
+    except KeyboardInterrupt:
+        print("\n>>> 收到中断信号 (Ctrl+C)，正在清理资源...")
+        # 尝试取消未完成的任务
+        if executor and future_to_task:
+            try:
+                for future in future_to_task:
+                    if not future.done():
+                        future.cancel()
+            except:
+                pass
+        raise  # 重新抛出，让外层 finally 处理
+    
+    except Exception as e:
+        print(f"\n>>> 发生异常: {e}")
+        raise  # 重新抛出，让外层 finally 处理
+    
     finally:
-        print(">>> Stopping CSV Writer...")
-        csv_writer.stop()
+        # 无论正常结束还是异常中断，都要清理资源
+        print(">>> 正在清理资源...")
+        
+        # 停止 CSV Writer
+        try:
+            csv_writer.stop()
+            print("✓ CSV Writer 已停止")
+        except Exception as e:
+            print(f"⚠️ 停止 CSV Writer 时出错: {e}")
+        
+        # 清理静态数据缓存
+        try:
+            clear_static_cache()
+            print("✓ 静态数据缓存已清空")
+        except Exception as e:
+            print(f"⚠️ 清理缓存失败: {e}")
+        
+        # 清理数据库连接池（主进程，关键！）
+        try:
+            from BBA_dev.data_access.db_utils import dispose_all_engines
+            dispose_all_engines()
+            print("✓ 主进程数据库连接已清理")
+        except Exception as e:
+            print(f"⚠️ 清理主进程数据库连接时出错: {e}")
         
     end_time = time.time()
     duration = end_time - start_time
@@ -257,30 +327,31 @@ def run_batch_new(run_date="202412", val_method="7", max_workers=32, limit=None)
     print(f"DONE. Total time: {duration:.2f}s ({duration/60:.2f} min)")
     print(f"Output: {OUTPUT_FILE}")
     print(f"=" * 80)
-    
-    # 清理静态数据缓存
-    try:
-        clear_static_cache()
-        print("✓ 静态数据缓存已清空")
-    except Exception as e:
-        print(f"⚠️ 清理缓存失败: {e}")
-    
-    # 清理数据库连接池（主进程，关键！）
-    try:
-        from BBA_dev.data_access.db_utils import dispose_all_engines
-        dispose_all_engines()
-        print("✓ 主进程数据库连接已清理")
-    except Exception as e:
-        print(f"⚠️ 清理主进程数据库连接时出错: {e}")
 
 if __name__ == "__main__":
-    # 支持命令行参数：python run_batch_process_new.py [limit]
-    limit_arg = None
-    if len(sys.argv) > 1:
+    import argparse
+    
+    parser = argparse.ArgumentParser(description='BBA批量处理脚本（新版）')
+    parser.add_argument('--limit', type=int, help='限制处理的保单数量')
+    parser.add_argument('--policy-no', type=str, help='只处理指定的保单号')
+    parser.add_argument('--run-date', type=str, default='202412', help='运行日期')
+    parser.add_argument('--val-method', type=str, default='7', help='估值方法')
+    parser.add_argument('--max-workers', type=int, default=32, help='最大工作进程数')
+    
+    # 兼容旧的参数方式（第一个参数为limit）
+    if len(sys.argv) == 2 and not any(arg.startswith('--') for arg in sys.argv[1:]):
         try:
             limit_arg = int(sys.argv[1])
-            print(f"Limit set to: {limit_arg}")
-        except:
-            pass
-            
-    run_batch_new(limit=limit_arg)
+            print(f"Limit set to: {limit_arg} (使用兼容模式)")
+            run_batch_new(limit=limit_arg)
+        except ValueError:
+            print("参数格式错误，使用新的参数格式，请参考 --help")
+    else:
+        args = parser.parse_args()
+        run_batch_new(
+            run_date=args.run_date,
+            val_method=args.val_method, 
+            max_workers=args.max_workers,
+            limit=args.limit,
+            policy_no=args.policy_no
+        )

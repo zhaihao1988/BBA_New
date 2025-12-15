@@ -54,6 +54,7 @@ from BBA_dev.logic import (
     ifie,
     lrc_closing
 )
+from BBA_dev.logic.actual_cashflows import get_actual_cashflows
 from BBA_dev.projector import CashFlowProjector
 from BBA_dev.utils.pv_field_desc import describe_field
 # 注意：所有现值计算必须从PV原材料数据读取，不允许使用旧的计算方式
@@ -150,7 +151,7 @@ class LifecycleSimulator:
         return self._pv_collection
 
     def _generate_dynamic_pv_data(self, months: List[str]) -> Tuple[PVSourceDataCollection, Optional[str]]:
-        import BBA_dev.pv_calculator as pv_calculator
+        import BBA_dev.pv_calculator_assumption as pv_calculator
 
         normalized = [m.replace('-', '') for m in months]
         buffer = io.StringIO()
@@ -592,6 +593,36 @@ class LifecycleSimulator:
         
         # 将保单添加到 context，用于后续的覆盖单元计算和合同组状态判定
         context.policies = [self.policy_state]
+        
+        # 5.0 准备实际现金流数据（使用精算假设计算的IACF）
+        # 在调用 fulfillment_cashflow_changes.run 之前，准备好 context.actual_cashflows
+        # 这样 fulfillment_cashflow_changes 就可以直接使用，不需要重复计算
+        if not hasattr(context, 'actual_cashflows') or context.actual_cashflows is None:
+            # 获取实际保费
+            actual_premium = getattr(context, 'actual_premium', None)
+            if actual_premium is None and self.policy_state:
+                actual_premium = self.policy_state.written_premium
+            
+            # 用精算假设计算实际IACF
+            if actual_premium is not None and current_assumptions and hasattr(current_assumptions, 'acquisition_expense_ratio'):
+                actual_iacf = actual_premium * current_assumptions.acquisition_expense_ratio
+            else:
+                actual_iacf = Decimal('0')
+            
+            # 调用 actual_cashflows.get_actual_cashflows，传入计算好的 IACF
+            try:
+                context.actual_cashflows = get_actual_cashflows(
+                    policy_no=context.policy_no,
+                    certi_no=context.certi_no,
+                    under_write_date=context.under_write_date,
+                    actual_premium=actual_premium,
+                    actual_iacf=actual_iacf,
+                    run_date=self.run_date,
+                    val_method=self.val_method
+                )
+            except Exception as e:
+                self.logger.log_text(f"⚠️  警告: 无法准备实际现金流数据: {e}，将使用默认值")
+                context.actual_cashflows = None
         
         # 5.1 履约现金流变化（文档第4-5节）：整合经验调整和被CSM/LC吸收的变化
         # 判断是否为新业务：签单年 = 评估年 → 新业务，签单年 < 评估年 → 有效合同

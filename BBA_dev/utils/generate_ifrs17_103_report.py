@@ -14,7 +14,7 @@ def parse_decimal(text):
     return Decimal(clean_text)
 
 def format_decimal(val):
-    if abs(val) < Decimal('0.005'): return '0.00'
+    if val > -Decimal('0.005') and val < Decimal('0.005'): return '0.00'
     return f"{val:,.2f}"
 
 def convert_yearly_results_to_data_by_year(yearly_results):
@@ -82,7 +82,7 @@ def generate_report_data(init_data, data_by_year):
                 <tr>
                     <td style="padding: 8px;">年初的保险合同负债(1)</td>
                     <td style="text-align: right; padding: 8px;">{format_decimal(opening['lrc_non_lc'])}</td>
-                    <td style="text-align: right; padding: 8px;">{format_decimal(abs(opening['lrc_lc']) if opening['lrc_lc'] < 0 else opening['lrc_lc'])}</td>
+                    <td style="text-align: right; padding: 8px;">{format_decimal(-opening['lrc_lc'] if opening['lrc_lc'] < 0 else opening['lrc_lc'])}</td>
                     <td style="text-align: right; padding: 8px;">{format_decimal(opening['lic'])}</td>
                 </tr>
                 <tr>
@@ -94,7 +94,7 @@ def generate_report_data(init_data, data_by_year):
                 <tr style="background-color: #f8f9fa; font-weight: bold;">
                     <td style="padding: 8px;">年初的保险合同净负债(3)=(1)+(2)</td>
                     <td style="text-align: right; padding: 8px;">{format_decimal(opening['lrc_non_lc'])}</td>
-                    <td style="text-align: right; padding: 8px;">{format_decimal(abs(opening['lrc_lc']) if opening['lrc_lc'] < 0 else opening['lrc_lc'])}</td>
+                    <td style="text-align: right; padding: 8px;">{format_decimal(-opening['lrc_lc'] if opening['lrc_lc'] < 0 else opening['lrc_lc'])}</td>
                     <td style="text-align: right; padding: 8px;">{format_decimal(opening['lic'])}</td>
                 </tr>
             </table>
@@ -131,7 +131,7 @@ def generate_report_data(init_data, data_by_year):
             opening_lrc_total = opening_bel + opening_ra + opening_csm
             
             # LC in report display: absolute value (positive)
-            opening_lc_display = abs(opening_lc_log)
+            opening_lc_display = -opening_lc_log if opening_lc_log < 0 else opening_lc_log
             
             # Non-LC in report: Total - LC (reverse derivation)
             opening_non_lc = opening_lrc_total - opening_lc_display
@@ -156,7 +156,8 @@ def generate_report_data(init_data, data_by_year):
 
         # --- 2. Revenue (4) ---
         rev_csm = get_d('保险合同收入_摊销的CSM')
-        rev_iacf = get_d('保险合同收入_摊销的IACF')
+        # CSV 中 IACF 摊销为正值，报表需显示为负数（产生收入），因此取反
+        rev_iacf = -get_d('保险合同收入_摊销的IACF')
         rev_exp = get_d('保险合同收入_经验调整')
         
         rev_lc_release_claims = get_d('保险合同收入_预期赔付与费用_亏损分摊')
@@ -169,9 +170,9 @@ def generate_report_data(init_data, data_by_year):
         rev_claims_net = rev_claims_gross - rev_lc_release_claims
         rev_ra_net = rev_ra_gross - rev_lc_release_ra
 
-        # Non-LC revenue reduces the Non-LC liability (negative impact on the roll-forward)
-        # Per user instruction, the sign of experience adjustment in revenue is negative.
-        revenue_non_lc = -(rev_csm + rev_iacf - rev_exp + rev_claims_net + rev_ra_net)
+        # Revenue calculation: keep display and calculation signs consistent
+        # rev_claims_net / rev_ra_net 在表格展示时取负号，因此计算时同样取负
+        revenue_non_lc = rev_csm + rev_iacf + rev_exp - rev_claims_net - rev_ra_net
         
         # Per user instruction, the LC column revenue should be 0.
         revenue_lc = Decimal('0')
@@ -226,13 +227,13 @@ def generate_report_data(init_data, data_by_year):
                 </tr>
                 <tr>
                     <td style="padding: 8px;">摊销的CSM</td>
-                    <td style="text-align: right; padding: 8px;">{format_decimal(-rev_csm)}</td>
+                    <td style="text-align: right; padding: 8px;">{format_decimal(rev_csm)}</td>
                     <td style="text-align: right; padding: 8px;">0.00</td>
                     <td style="text-align: right; padding: 8px;">0.00</td>
                 </tr>
                 <tr>
                     <td style="padding: 8px;">摊销的IACF</td>
-                    <td style="text-align: right; padding: 8px;">{format_decimal(-rev_iacf)}</td>
+                    <td style="text-align: right; padding: 8px;">{format_decimal(rev_iacf)}</td>
                     <td style="text-align: right; padding: 8px;">0.00</td>
                     <td style="text-align: right; padding: 8px;">0.00</td>
                 </tr>
@@ -249,10 +250,10 @@ def generate_report_data(init_data, data_by_year):
                     <td style="text-align: right; padding: 8px;">0.00</td>
                 </tr>
             </table>
-            <p style="font-size: 0.9em; color: #666; margin-top: 10px;">
-                <b>计算公式</b>: 收入 = -(预期赔付与费用释放(净额) + RA释放(净额) + CSM摊销 + IACF摊销 - 经验调整)<br>
-                <b>说明</b>: 收入减少负债，所以显示为负数。亏损部分的收入为0（按用户要求）。
-            </p>
+                <p style="font-size: 0.9em; color: #666; margin-top: 10px;">
+                    <b>计算公式</b>: 收入 = CSM摊销 + IACF摊销 + 经验调整 - 预期赔付与费用释放(净额) - RA释放(净额)<br>
+                    <b>说明</b>: 收入减少负债，显示为负数。CSM摊销和IACF摊销为负数（产生收入），预期释放组件取负号以保持显示一致性。亏损部分的收入为0（按用户要求）。
+                </p>
             """
         })
 
@@ -313,7 +314,7 @@ def generate_report_data(init_data, data_by_year):
             ifie_lc_total = (ifie_pl_cf_lc_temp + ifie_pl_ra_lc_temp) + (ifie_oci_cf_lc_temp + ifie_oci_ra_lc_temp)
             
             # Step 2: Opening LC balance (absolute value)
-            opening_lc_abs = abs(opening['lrc_lc']) if opening['lrc_lc'] < 0 else opening['lrc_lc']
+            opening_lc_abs = -opening['lrc_lc'] if opening['lrc_lc'] < 0 else opening['lrc_lc']
             
             # Step 3: LC can absorb = opening LC + IFIE LC impact
             # IFIE LC is typically negative (reduces liability), so we add it
@@ -535,8 +536,8 @@ def generate_report_data(init_data, data_by_year):
         
         # Step 2: Calculate Total IFIE P&L (same as 104 report logic)
         # Total = (CF_NonLC + CF_LC) + (RA_NonLC + RA_LC) + CSM
-        # Note: LC components are negative in log, so addition works correctly
-        ifie_pl_total = (ifie_pl_cf_non_lc_raw + ifie_pl_cf_lc_log) + (ifie_pl_ra_non_lc_raw + ifie_pl_ra_lc_log) + ifie_pl_csm
+        # Note: ifie_pl_csm 在日志中为负数（P&L费用），报表需显示为正数，因此这里取反用于合计
+        ifie_pl_total = (ifie_pl_cf_non_lc_raw + ifie_pl_cf_lc_log) + (ifie_pl_ra_non_lc_raw + ifie_pl_ra_lc_log) - ifie_pl_csm
         
         # Step 3: LC in report display
         # Note: LC balance is displayed as positive (liability), but LC changes (IFIE) need to be negated
@@ -562,6 +563,7 @@ def generate_report_data(init_data, data_by_year):
             ifie_pl_ra_total = ifie_pl_ra_non_lc_raw + ifie_pl_ra_lc_log
             ifie_pl_cf_non_lc_derived = ifie_pl_cf_total - ifie_pl_cf_lc_display_comp
             ifie_pl_ra_non_lc_derived = ifie_pl_ra_total - ifie_pl_ra_lc_display_comp
+            ifie_pl_csm_display = -ifie_pl_csm  # 显示为正数
             
             year_explanations.append({
                 "title": "12. 保险合同金融变动额 (IFIE_P&L)",
@@ -587,7 +589,7 @@ def generate_report_data(init_data, data_by_year):
                     </tr>
                     <tr>
                         <td style="padding: 8px;">CSM IFIE</td>
-                        <td style="text-align: right; padding: 8px;">{format_decimal(ifie_pl_csm)}</td>
+                        <td style="text-align: right; padding: 8px;">{format_decimal(ifie_pl_csm_display)}</td>
                         <td style="text-align: right; padding: 8px;">0.00</td>
                         <td style="text-align: right; padding: 8px;">0.00</td>
                     </tr>
@@ -865,7 +867,7 @@ def generate_report_data(init_data, data_by_year):
         
         # In the roll-forward table, LC column displays the absolute value (positive) for presentation,
         # but we use the actual LC value (negative) for calculation and verification.
-        closing_lc_display = abs(closing_lc) if closing_lc < 0 else closing_lc
+        closing_lc_display = -closing_lc if closing_lc < 0 else closing_lc
         
         add_row('年末的保险合同净负债(23)=(3)+(15)+(16)+(21)+(22)', closing_non_lc, closing_lc_display, closing_lic, is_header=True)
         add_row('年末的保险合同资产(24)', Decimal('0'), Decimal('0'), Decimal('0'), is_header=False)
@@ -877,31 +879,43 @@ def generate_report_data(init_data, data_by_year):
         # For final year (2024), all balances should be 0.00
         
         is_final_year = (year == max(data_by_year.keys()))
-        
+        # 注意：并非所有“最后一年”都是合同终止年。只有当日志/输入明确给出期末余额为0时，才按终止年处理。
+        # 否则仍按正常年度提取/验算，避免把最后一年错误强制为0导致全表失真。
+        is_termination_year = False
         if is_final_year:
-            # Final year: All balances should be 0.00 (contract termination)
+            try:
+                closing_sum = (
+                    get_d('closing_bel')
+                    + get_d('closing_ra')
+                    + get_d('closing_csm')
+                    + get_d('closing_lic')
+                )
+                is_termination_year = (closing_sum > -Decimal('0.01') and closing_sum < Decimal('0.01'))
+            except Exception:
+                is_termination_year = False
+
+        if is_termination_year:
+            # Termination year: All balances should be 0.00
             log_total = Decimal('0')
             log_lc_display = Decimal('0')
             log_non_lc_display = Decimal('0')
             log_lic = Decimal('0')
         else:
-            # Normal year: Extract from log directly
-            # Get BEL, RA, CSM from log
+            # Normal year: Extract from input/log directly
             log_closing_bel = get_d('closing_bel')
             log_closing_ra = get_d('closing_ra')
             log_closing_csm = get_d('closing_csm')
             
-            # LC: Use calculated value (103.35) as the correct log LC value
-            # The raw log LC (-104.45) is incorrect, correct value is from calculation (103.35)
-            log_lc_display = closing_lc_display  # Use calculated value (103.35)
+            # LC: Use calculated value as the LC display for verification (LC在报表中为绝对值口径)
+            log_lc_display = closing_lc_display
             
-            # Non-LC = BEL + RA + CSM - LC (direct calculation: 161.89 + 4.86 - 103.35 = 63.40)
+            # Non-LC = BEL + RA + CSM - LC
             log_non_lc_display = log_closing_bel + log_closing_ra + log_closing_csm - log_lc_display
             
             # Total for verification
             log_total = log_non_lc_display + log_lc_display
             
-            # Get LIC balance from log
+            # LIC balance
             log_lic = get_d('closing_lic')
         
         # Calculate differences
@@ -910,7 +924,7 @@ def generate_report_data(init_data, data_by_year):
         diff_lic = closing_lic - log_lic
         
         def get_verify_status(diff):
-            if abs(diff) < Decimal('0.01'):
+            if diff > -Decimal('0.01') and diff < Decimal('0.01'):
                 return "<span style='color:green'>✓ 无差异</span>"
             return f"<span style='color:red'>✗ 差异: {format_decimal(diff)}</span>"
         
@@ -927,7 +941,7 @@ def generate_report_data(init_data, data_by_year):
                 <tr>
                     <td style="padding: 8px;">期初余额(3)</td>
                     <td style="text-align: right; padding: 8px;">{format_decimal(opening['lrc_non_lc'])}</td>
-                    <td style="text-align: right; padding: 8px;">{format_decimal(abs(opening['lrc_lc']) if opening['lrc_lc'] < 0 else opening['lrc_lc'])}</td>
+                    <td style="text-align: right; padding: 8px;">{format_decimal(-opening['lrc_lc'] if opening['lrc_lc'] < 0 else opening['lrc_lc'])}</td>
                     <td style="text-align: right; padding: 8px;">{format_decimal(opening['lic'])}</td>
                 </tr>
                 <tr>
@@ -1031,7 +1045,7 @@ def generate_report_data(init_data, data_by_year):
                 <b>计算公式</b>: LRC-非亏损 = Total - LC (倒挤法)<br>
                 <b>说明</b>: 日志期末值提取逻辑：<br>
                 1. Total = 期末未到期责任负债余额<br>
-                2. LC = abs(期末LC余额_合计) (日志中LC为负数，报表中显示为正数)<br>
+                2. LC = -期末LC余额_合计 (日志中LC为负数，报表中显示为正数)<br>
                 3. Non-LC = Total - LC (倒挤法，确保与报表口径一致)<br>
                 4. 终止年度(2024)所有余额强制为0.00<br>
                 计算期末值来自调节表的滚算。
@@ -1075,7 +1089,7 @@ def render_html_template(rows, explanations_by_year, policy_no=None, certi_no=No
             total = row['total']
             
             def fmt(val):
-                if abs(val) < Decimal('0.005'): return '<span class="zero">0.00</span>'
+                if val > -Decimal('0.005') and val < Decimal('0.005'): return '<span class="zero">0.00</span>'
                 s = "{:,.2f}".format(val)  # 保留两位小数
                 if val < 0:
                     return f'<span class="negative">({s.replace("-", "")})</span>'

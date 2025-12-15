@@ -113,14 +113,17 @@ class ActualCashflows:
                 self.actual_premium = Decimal('0')
             
             # 读取实际IACF（从data_loader合并后的iacf_amount字段）
-            if 'iacf_amount' in policy_row:
-                iacf_value = policy_row['iacf_amount']
-                if iacf_value is not None and not (isinstance(iacf_value, float) and (iacf_value != iacf_value)):  # 排除NaN
-                    self.actual_iacf = Decimal(str(iacf_value))
+            # 如果 self.actual_iacf 已经设置（通过传入参数），保留传入值，不从数据库读取
+            if self.actual_iacf is None:
+                if 'iacf_amount' in policy_row:
+                    iacf_value = policy_row['iacf_amount']
+                    if iacf_value is not None and not (isinstance(iacf_value, float) and (iacf_value != iacf_value)):  # 排除NaN
+                        self.actual_iacf = Decimal(str(iacf_value))
+                    else:
+                        self.actual_iacf = Decimal('0')
                 else:
                     self.actual_iacf = Decimal('0')
-            else:
-                self.actual_iacf = Decimal('0')
+            # 如果 self.actual_iacf 已设置，保留传入值（不覆盖）
             
             # 如果签单日期未设置，从数据库读取
             if self.under_write_date is None and 'under_write_date' in policy_row:

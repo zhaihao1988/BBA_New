@@ -97,9 +97,12 @@ def run(context, logger, assumptions: Assumptions = None, cohort_state=None):
     is_reversal_policy = pv_data.metadata.get('is_reversal_policy', False)
     context.is_reversal_policy = is_reversal_policy
     
-    # 如果是批减单，保费和获取费用已经在pv_calculator.py中取反，这里只需要标记
+    # 批减单：本次口径为“全链路不取反”，只使用批减单标记来翻转 CSM/LC 及 LC 触发条件的判定符号
     if is_reversal_policy:
-        logger.log_text(f"⚠️  **批减单标记**: 检测到批减单（签单保费为负值），计量时已使用取反后的值，输出时将取反所有结果")
+        logger.log_text(
+            "⚠️  **批减单标记**: 检测到批减单（签单保费为负值）。"
+            "本次口径：PV/计量全程按原始符号不取反；仅在CSM/LC及所有LC触发条件上按批减单反号规则判定（<=0为CSM，>0为LC），输出阶段不再取反。"
+        )
     
     from BBA_dev.utils.pv_field_desc import describe_field, format_pv_field_in_formula
     
@@ -203,12 +206,16 @@ def run(context, logger, assumptions: Assumptions = None, cohort_state=None):
     context.nb_initial_csm = Decimal('0')
     context.nb_initial_lc = Decimal('0')
     
+    is_reversal = getattr(context, 'is_reversal_policy', False)
     csm_status = ""
-    if margin >= 0:
+    # 正常保单：>=0 为CSM，<0 为LC
+    # 批减单：符号逻辑相反（<=0 为CSM，>0 为LC），且取值保持原符号（CSM为负，LC为正）
+    if (not is_reversal and margin >= 0) or (is_reversal and margin <= 0):
         context.nb_initial_csm = margin
+        context.nb_initial_lc = Decimal('0')
         csm_status = "Profitable (CSM)"
     else:
-        # 修复：LC应该是负数（亏损），直接存储margin（负数），而不是-margin（正数）
+        context.nb_initial_csm = Decimal('0')
         context.nb_initial_lc = margin
         csm_status = "Onerous (Loss Component) - 立即确认亏损"
 

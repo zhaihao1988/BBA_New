@@ -33,6 +33,259 @@ from BBA_dev.logic.coverage_units import calculate_csm_amortization_ratio
 DECIMAL_ZERO = Decimal('0')
 
 
+def _format_for_log(value: Any) -> str:
+    """统一格式化输出"""
+    if isinstance(value, Decimal):
+        if value == 0:
+            return "0.00"
+        precision = 6 if (value > -Decimal('10') and value < Decimal('10')) else 2
+        return f"{value:,.{precision}f}"
+    return str(value)
+
+
+def _log_lc_measurement_cf_details(
+    logger,
+    bop_lc_cf,
+    nb_initial_lc_total,
+    nb_initial_lc_cf,
+    pv_data,
+    if_lc_ifie_cf,
+    nb_lc_ifie_cf,
+    lc_ifie_cf,
+    pv_if_cur_claims,
+    pv_if_cur_maint,
+    pv_nb_cur_claims,
+    pv_nb_cur_maint,
+    lc_allocation_ratio_total,
+    allocated_lc_cf,
+    lc_balance_to_adjust_total,
+    bop_lc_total,
+    nb_initial_lc_total_for_sum,
+    lc_ifie_total,
+    allocated_lc_total,
+    delta_csm_lc,
+    delta_cf_total,
+    allocated_lc_exp_adj_total,
+    allocated_lc_exp_adj_cf,
+    lc_balance_to_adjust_cf,
+    csm_amort_ratio,
+    lc_adjust_cf,
+    end_lc_cf,
+):
+    """记录LC计量_预期现金流的详细计算过程"""
+
+    def fmt(v):
+        return _format_for_log(v)
+
+    details = []
+    details.append("**详细计算过程**:\n")
+
+    # 1. 年初LC余额_预期现金流
+    details.append("#### 1. 年初LC余额_预期现金流")
+    details.append("- **来源**: 直接取数（简化处理，假设年初LC余额全部为预期现金流）")
+    details.append(f"- **数值**: {fmt(bop_lc_cf)}\n")
+
+    # 2. 当年新增LC_预期现金流
+    details.append("#### 2. 当年新增LC_预期现金流")
+    details.append("- **公式**: `当年新增LC_预期现金流 = 当年新增LC_合计 × (NB_预期赔付现金流 + NB_预期维持费用现金流) / (NB_预期赔付现金流 + NB_预期维持费用现金流 + NB_预期非金融风险调整)`")
+    details.append("- **计算步骤**:")
+    details.append(f"  - 当年新增LC_合计 = {fmt(nb_initial_lc_total)} (来源：NB_新增LC)")
+
+    if pv_data is not None:
+        pv_nb_init_claims = pv_data.get_field('Pvfl_Nb_Ini_Cfa_Rec_Lkd_Cla_Amt', DECIMAL_ZERO)
+        pv_nb_init_maint = pv_data.get_field('Pvfl_Nb_Ini_Cfa_Rec_Lkd_Mtn_Amt', DECIMAL_ZERO)
+        pv_nb_init_ra = pv_data.get_field('Pvfl_Nb_Ini_Cfa_Rec_Lkd_Rad_Amt', DECIMAL_ZERO)
+        denom_nb_init = pv_nb_init_claims + pv_nb_init_maint + pv_nb_init_ra
+        numerator = pv_nb_init_claims + pv_nb_init_maint
+
+        details.append(f"  - NB_预期赔付现金流（初始确认现值） = {fmt(pv_nb_init_claims)} (来源：Pvfl_Nb_Ini_Cfa_Rec_Lkd_Cla_Amt)")
+        details.append(f"  - NB_预期维持费用现金流（初始确认现值） = {fmt(pv_nb_init_maint)} (来源：Pvfl_Nb_Ini_Cfa_Rec_Lkd_Mtn_Amt)")
+        details.append(f"  - NB_预期非金融风险调整（初始确认现值） = {fmt(pv_nb_init_ra)} (来源：Pvfl_Nb_Ini_Cfa_Rec_Lkd_Rad_Amt)")
+        details.append(f"  - 分子 = {fmt(pv_nb_init_claims)} + {fmt(pv_nb_init_maint)} = {fmt(numerator)}")
+        details.append(f"  - 分母 = {fmt(pv_nb_init_claims)} + {fmt(pv_nb_init_maint)} + {fmt(pv_nb_init_ra)} = {fmt(denom_nb_init)}")
+        if denom_nb_init > 0:
+            ratio = numerator / denom_nb_init
+            details.append(f"  - 比例 = {fmt(numerator)} / {fmt(denom_nb_init)} = {fmt(ratio)}")
+            details.append(f"  - 当年新增LC_预期现金流 = {fmt(nb_initial_lc_total)} × {fmt(ratio)} = {fmt(nb_initial_lc_cf)}")
+        else:
+            details.append("  - 分母为0，当年新增LC_预期现金流 = 0.00")
+    else:
+        details.append("  - PV数据为空，当年新增LC_预期现金流 = 0.00")
+    details.append(f"- **结果**: `{fmt(nb_initial_lc_cf)}`\n")
+
+    # 3. LC分摊IFIE_预期现金流
+    details.append("#### 3. LC分摊IFIE_预期现金流")
+    details.append("- **公式**: `LC分摊IFIE_预期现金流 = IF_LC分摊IFIE_赔付与费用 + NB_LC分摊IFIE_赔付与费用`")
+    details.append("- **计算步骤**:")
+    details.append(f"  - IF_LC分摊IFIE_赔付与费用 = {fmt(if_lc_ifie_cf)} (来源：context.if_lc_ifie_cf)")
+    details.append(f"  - NB_LC分摊IFIE_赔付与费用 = {fmt(nb_lc_ifie_cf)} (来源：context.nb_lc_ifie_cf)")
+    details.append(f"  - LC分摊IFIE_预期现金流 = {fmt(if_lc_ifie_cf)} + {fmt(nb_lc_ifie_cf)} = {fmt(lc_ifie_cf)}")
+    details.append(f"- **结果**: `{fmt(lc_ifie_cf)}`\n")
+
+    # 4. 分摊的LC_预期现金流
+    details.append("#### 4. 分摊的LC_预期现金流")
+    details.append("- **公式**: `分摊的LC_预期现金流 = (IF_预期当期赔付 + IF_预期当期维费 + NB_预期当期赔付 + NB_预期当期维费) × LC分摊比例_合计`")
+    details.append("- **计算步骤**:")
+    details.append(f"  - IF_预期当期赔付现金流（期末现值Wlk） = {fmt(pv_if_cur_claims)} (来源：Pvfl_If_Bop_Cca_Rep_Wlk_Cla_Amt)")
+    details.append(f"  - IF_预期当期维持费用现金流（期末现值Wlk） = {fmt(pv_if_cur_maint)} (来源：Pvfl_If_Bop_Cca_Rep_Wlk_Mtn_Amt)")
+    details.append(f"  - NB_预期当期赔付现金流（期末现值Wlk） = {fmt(pv_nb_cur_claims)} (来源：Pvfl_Nb_Ini_Cca_Rep_Wlk_Cla_Amt)")
+    details.append(f"  - NB_预期当期维持费用现金流（期末现值Wlk） = {fmt(pv_nb_cur_maint)} (来源：Pvfl_Nb_Ini_Cca_Rep_Wlk_Mtn_Amt)")
+    cur_cf_total = pv_if_cur_claims + pv_if_cur_maint + pv_nb_cur_claims + pv_nb_cur_maint
+    details.append(f"  - 预期当期现金流合计 = {fmt(cur_cf_total)}")
+    details.append(f"  - LC分摊比例_合计 = {fmt(lc_allocation_ratio_total)} (来源：LC计量_合计部分)")
+    details.append(f"  - 分摊的LC_预期现金流 = {fmt(cur_cf_total)} × {fmt(lc_allocation_ratio_total)} = {fmt(allocated_lc_cf)}")
+    details.append(f"- **结果**: `{fmt(allocated_lc_cf)}`")
+    details.append("- **说明**: 正数表示减少LC亏损（LC余额绝对值减少），因为当现金流释放时，亏损应该被摊销\n")
+
+    # 5. 被LC吸收的变化_预期现金流
+    details.append("#### 5. 被LC吸收的变化_预期现金流")
+    details.append("- **公式**: `IF(待调整LC余额_合计=0, -SUM(年初LC余额，当年新增LC，LC分摊IFIE，分摊的LC), 被LC吸收的变化_合计×IFERROR(预期现金流变化合计/被CSM/LC吸收的变化合计,0))`")
+    details.append("- **判断条件**:")
+    details.append(f"  - 待调整LC余额_合计 = {fmt(lc_balance_to_adjust_total)} (来源：LC计量_合计部分)")
+    if lc_balance_to_adjust_total == 0:
+        details.append("  - 条件判断：待调整LC余额_合计 = 0，走分支1")
+        details.append("- **计算步骤（分支1）**:")
+        sum_before_adj = bop_lc_total + nb_initial_lc_total_for_sum + lc_ifie_total + allocated_lc_total
+        details.append(f"  - SUM(年初LC余额，当年新增LC，LC分摊IFIE，分摊的LC) = {fmt(sum_before_adj)}")
+        details.append(f"  - 被LC吸收的变化_预期现金流 = -{fmt(sum_before_adj)} = {fmt(allocated_lc_exp_adj_cf)}")
+    else:
+        details.append("  - 条件判断：待调整LC余额_合计 ≠ 0，走分支2")
+        details.append("- **计算步骤（分支2）**:")
+        details.append(f"  - 被LC吸收的变化_合计 = {fmt(allocated_lc_exp_adj_total)} (来源：LC计量_合计部分)")
+        details.append(f"  - 预期现金流变化合计 = {fmt(delta_cf_total)} (来源：context.delta_cf_total)")
+        details.append(f"  - 被CSM/LC吸收的变化合计 = {fmt(delta_csm_lc)} (来源：context.exp_adj_csm_impact)")
+        if delta_csm_lc != 0:
+            ratio_cf = delta_cf_total / delta_csm_lc
+            details.append(f"  - 比例 = {fmt(ratio_cf)}")
+            details.append(f"  - 被LC吸收的变化_预期现金流 = {fmt(allocated_lc_exp_adj_total)} × {fmt(ratio_cf)} = {fmt(allocated_lc_exp_adj_cf)}")
+        else:
+            details.append("  - 被CSM/LC吸收的变化合计为0，被LC吸收的变化_预期现金流 = 0.00")
+    details.append(f"- **结果**: `{fmt(allocated_lc_exp_adj_cf)}`\n")
+
+    # 6. 待调整LC余额_预期现金流
+    details.append("#### 6. 待调整LC余额_预期现金流")
+    details.append("- **公式**: `待调整LC余额_预期现金流 = 年初LC余额_预期现金流 + 当年新增LC_预期现金流 + LC分摊IFIE_预期现金流 + 分摊的LC_预期现金流 + 被LC吸收的变化_预期现金流`")
+    details.append(f"- **计算**: {fmt(bop_lc_cf)} + {fmt(nb_initial_lc_cf)} + {fmt(lc_ifie_cf)} + {fmt(allocated_lc_cf)} + {fmt(allocated_lc_exp_adj_cf)} = {fmt(lc_balance_to_adjust_cf)}")
+    details.append(f"- **结果**: `{fmt(lc_balance_to_adjust_cf)}`\n")
+
+    # 7. LC调整_预期现金流
+    details.append("#### 7. LC调整_预期现金流")
+    details.append("- **公式**: `LC调整_预期现金流 = IF(CSM摊销比例=100%, -待调整LC余额_预期现金流, 0)`")
+    if csm_amort_ratio >= Decimal('1'):
+        details.append(f"- **判断**: CSM摊销比例 = {fmt(csm_amort_ratio)} >= 100%，所以 LC调整_预期现金流 = -{fmt(lc_balance_to_adjust_cf)} = {fmt(lc_adjust_cf)}")
+    else:
+        details.append(f"- **判断**: CSM摊销比例 = {fmt(csm_amort_ratio)} < 100%，所以 LC调整_预期现金流 = 0.00")
+    details.append(f"- **结果**: `{fmt(lc_adjust_cf)}`\n")
+
+    # 8. 期末LC余额_预期现金流
+    details.append("#### 8. 期末LC余额_预期现金流")
+    details.append("- **公式**: `期末LC余额_预期现金流 = 待调整LC余额_预期现金流 + LC调整_预期现金流`")
+    details.append(f"- **计算**: {fmt(lc_balance_to_adjust_cf)} + {fmt(lc_adjust_cf)} = {fmt(end_lc_cf)}")
+    details.append(f"- **结果**: `{fmt(end_lc_cf)}`\n")
+
+    logger.log_text("\n".join(details))
+
+
+def _log_lc_measurement_ra_details(
+    logger,
+    bop_lc_ra,
+    nb_initial_lc_total,
+    nb_initial_lc_cf,
+    nb_initial_lc_ra,
+    if_lc_ifie_ra,
+    nb_lc_ifie_ra,
+    lc_ifie_ra,
+    pv_if_cur_ra,
+    pv_nb_cur_ra,
+    lc_allocation_ratio_total,
+    allocated_lc_ra,
+    allocated_lc_exp_adj_total,
+    allocated_lc_exp_adj_cf,
+    allocated_lc_exp_adj_ra,
+    lc_balance_to_adjust_ra,
+    csm_amort_ratio,
+    lc_adjust_ra,
+    end_lc_ra,
+):
+    """记录LC计量_非金融风险调整的详细计算过程"""
+
+    def fmt(v):
+        return _format_for_log(v)
+
+    details = []
+    details.append("**详细计算过程**:\n")
+
+    # 1. 年初LC余额_非金融风险调整
+    details.append("#### 1. 年初LC余额_非金融风险调整")
+    details.append("- **来源**: 直接取数（简化处理，假设为0）")
+    details.append(f"- **数值**: {fmt(bop_lc_ra)}\n")
+
+    # 2. 当年新增LC_非金融风险调整
+    details.append("#### 2. 当年新增LC_非金融风险调整")
+    details.append("- **公式**: `当年新增LC_非金融风险调整 = 当年新增LC_合计 - 当年新增LC_预期现金流`")
+    details.append("- **计算步骤**:")
+    details.append(f"  - 当年新增LC_合计 = {fmt(nb_initial_lc_total)} (来源：NB_新增LC)")
+    details.append(f"  - 当年新增LC_预期现金流 = {fmt(nb_initial_lc_cf)} (来源：LC计量_预期现金流部分)")
+    details.append(f"  - 当年新增LC_非金融风险调整 = {fmt(nb_initial_lc_total)} - ({fmt(nb_initial_lc_cf)}) = {fmt(nb_initial_lc_ra)}")
+    details.append(f"- **结果**: `{fmt(nb_initial_lc_ra)}`")
+    details.append("- **说明**: 倒挤法，确保当年新增LC_合计 = 预期现金流 + 非金融风险调整\n")
+
+    # 3. LC分摊IFIE_非金融风险调整
+    details.append("#### 3. LC分摊IFIE_非金融风险调整")
+    details.append("- **公式**: `LC分摊IFIE_非金融风险调整 = IF_LC分摊IFIE_非金融风险调整 + NB_LC分摊IFIE_非金融风险调整`")
+    details.append("- **计算步骤**:")
+    details.append(f"  - IF_LC分摊IFIE_非金融风险调整 = {fmt(if_lc_ifie_ra)} (来源：context.if_lc_ifie_ra)")
+    details.append(f"  - NB_LC分摊IFIE_非金融风险调整 = {fmt(nb_lc_ifie_ra)} (来源：context.nb_lc_ifie_ra)")
+    details.append(f"  - LC分摊IFIE_非金融风险调整 = {fmt(if_lc_ifie_ra)} + {fmt(nb_lc_ifie_ra)} = {fmt(lc_ifie_ra)}")
+    details.append(f"- **结果**: `{fmt(lc_ifie_ra)}`\n")
+
+    # 4. 分摊的LC_非金融风险调整
+    details.append("#### 4. 分摊的LC_非金融风险调整")
+    details.append("- **公式**: `分摊的LC_非金融风险调整 = (IF_预期当期非金融风险调整 + NB_预期当期非金融风险调整) × LC分摊比例_合计`")
+    details.append("- **计算步骤**:")
+    details.append(f"  - IF_预期当期非金融风险调整（期末现值Wlk） = {fmt(pv_if_cur_ra)} (来源：Pvfl_If_Bop_Cca_Rep_Wlk_Rad_Amt)")
+    details.append(f"  - NB_预期当期非金融风险调整（期末现值Wlk） = {fmt(pv_nb_cur_ra)} (来源：Pvfl_Nb_Ini_Cca_Rep_Wlk_Rad_Amt)")
+    pv_cur_ra_total = pv_if_cur_ra + pv_nb_cur_ra
+    details.append(f"  - 预期当期非金融风险调整合计 = {fmt(pv_if_cur_ra)} + {fmt(pv_nb_cur_ra)} = {fmt(pv_cur_ra_total)}")
+    details.append(f"  - LC分摊比例_合计 = {fmt(lc_allocation_ratio_total)} (来源：LC计量_合计部分)")
+    details.append(f"  - 分摊的LC_非金融风险调整 = {fmt(pv_cur_ra_total)} × {fmt(lc_allocation_ratio_total)} = {fmt(allocated_lc_ra)}")
+    details.append(f"- **结果**: `{fmt(allocated_lc_ra)}`")
+    details.append("- **说明**: 正数表示减少LC亏损（LC余额绝对值减少），因为当非金融风险调整释放时，亏损应被摊销\n")
+
+    # 5. 被LC吸收的变化_非金融风险调整
+    details.append("#### 5. 被LC吸收的变化_非金融风险调整")
+    details.append("- **公式**: `被LC吸收的变化_非金融风险调整 = 被LC吸收的变化_合计 - 被LC吸收的变化_预期现金流`")
+    details.append("- **计算步骤**:")
+    details.append(f"  - 被LC吸收的变化_合计 = {fmt(allocated_lc_exp_adj_total)} (来源：LC计量_合计部分)")
+    details.append(f"  - 被LC吸收的变化_预期现金流 = {fmt(allocated_lc_exp_adj_cf)} (来源：LC计量_预期现金流部分)")
+    details.append(f"  - 被LC吸收的变化_非金融风险调整 = {fmt(allocated_lc_exp_adj_total)} - {fmt(allocated_lc_exp_adj_cf)} = {fmt(allocated_lc_exp_adj_ra)}")
+    details.append(f"- **结果**: `{fmt(allocated_lc_exp_adj_ra)}`")
+    details.append("- **说明**: 倒挤法，确保合计 = 预期现金流 + 非金融风险调整\n")
+
+    # 6. 待调整LC余额_非金融风险调整
+    details.append("#### 6. 待调整LC余额_非金融风险调整")
+    details.append("- **公式**: `待调整LC余额_非金融风险调整 = 年初LC余额_非金融风险调整 + 当年新增LC_非金融风险调整 + LC分摊IFIE_非金融风险调整 + 分摊的LC_非金融风险调整 + 被LC吸收的变化_非金融风险调整`")
+    details.append(f"- **计算**: {fmt(bop_lc_ra)} + {fmt(nb_initial_lc_ra)} + {fmt(lc_ifie_ra)} + {fmt(allocated_lc_ra)} + {fmt(allocated_lc_exp_adj_ra)} = {fmt(lc_balance_to_adjust_ra)}")
+    details.append(f"- **结果**: `{fmt(lc_balance_to_adjust_ra)}`\n")
+
+    # 7. LC调整_非金融风险调整
+    details.append("#### 7. LC调整_非金融风险调整")
+    details.append("- **公式**: `LC调整_非金融风险调整 = IF(CSM摊销比例=100%, -待调整LC余额_非金融风险调整, 0)`")
+    if csm_amort_ratio >= Decimal('1'):
+        details.append(f"- **判断**: CSM摊销比例 = {fmt(csm_amort_ratio)} >= 100%，所以 LC调整_非金融风险调整 = -{fmt(lc_balance_to_adjust_ra)} = {fmt(lc_adjust_ra)}")
+    else:
+        details.append(f"- **判断**: CSM摊销比例 = {fmt(csm_amort_ratio)} < 100%，所以 LC调整_非金融风险调整 = 0.00")
+    details.append(f"- **结果**: `{fmt(lc_adjust_ra)}`\n")
+
+    # 8. 期末LC余额_非金融风险调整
+    details.append("#### 8. 期末LC余额_非金融风险调整")
+    details.append("- **公式**: `期末LC余额_非金融风险调整 = 待调整LC余额_非金融风险调整 + LC调整_非金融风险调整`")
+    details.append(f"- **计算**: {fmt(lc_balance_to_adjust_ra)} + {fmt(lc_adjust_ra)} = {fmt(end_lc_ra)}")
+    details.append(f"- **结果**: `{fmt(end_lc_ra)}`\n")
+
+    logger.log_text("\n".join(details))
+
+
 def months_from_uw_to_target(uw_date: date, target_month_str: str) -> int:
     """
     计算从签单日期到目标月份的月数差
@@ -462,16 +715,20 @@ def _calculate_lc_ifie_allocation(context, logger, cohort_state: CohortState):
     
     # 获取统一的CSM/LC字段（用于计算LC IFIE分摊比例）
     # 修复：context.nb_initial_lc 现在直接存储为负数（亏损），不需要再转换
+    is_reversal = getattr(context, 'is_reversal_policy', False)
     nb_initial_csm_lc = context.nb_initial_csm or DECIMAL_ZERO
     if nb_initial_csm_lc == DECIMAL_ZERO and hasattr(context, 'nb_initial_lc'):
         nb_lc_val = context.nb_initial_lc or DECIMAL_ZERO
-        if nb_lc_val < DECIMAL_ZERO:  # LC应该是负数
+        is_nb_lc = (nb_lc_val < DECIMAL_ZERO) if (not is_reversal) else (nb_lc_val > DECIMAL_ZERO)
+        if is_nb_lc:
             nb_initial_csm_lc = nb_lc_val
     
     # ==========================================================================================
     # IF（期初有效合同）LC IFIE分摊
     # ==========================================================================================
-    if_bop_lc = bop_csm_lc if bop_csm_lc < 0 else DECIMAL_ZERO
+    # 正常保单：LC < 0；批减单：LC > 0（符号逻辑相反）
+    is_if_lc = (bop_csm_lc < 0) if (not is_reversal) else (bop_csm_lc > 0)
+    if_bop_lc = bop_csm_lc if is_if_lc else DECIMAL_ZERO
     
     logger.log_item(
         "IF_年初LC",
@@ -482,7 +739,7 @@ def _calculate_lc_ifie_allocation(context, logger, cohort_state: CohortState):
             "IF_年初LC": if_bop_lc
         },
         if_bop_lc,
-        note="使用统一字段逻辑：如果IF_年初CSM/LC < 0，则为LC"
+        note="使用统一字段逻辑：正常保单IF_年初CSM/LC < 0为LC；批减单IF_年初CSM/LC > 0为LC（符号逻辑相反）"
     )
     
     # IF_LC IFIE分摊比例
@@ -493,7 +750,7 @@ def _calculate_lc_ifie_allocation(context, logger, cohort_state: CohortState):
     pv_if_init_ra = DECIMAL_ZERO
     denom_if = DECIMAL_ZERO
     
-    if if_bop_lc < 0 and if_lc_ifie_ratio == DECIMAL_ZERO:
+    if is_if_lc and if_lc_ifie_ratio == DECIMAL_ZERO:
         # 如果还未计算，则计算
         # 注意：已删除 Cca_Beg_Lcu 字段，Cfa_Beg_Lcu 已经包含了1月现金流（折现到年初）
         # 年初现值：有效合同-年初预期-预期未来-年初现值（LCU）
@@ -502,10 +759,11 @@ def _calculate_lc_ifie_allocation(context, logger, cohort_state: CohortState):
         pv_if_init_ra = pv_data.get_field('Pvfl_If_Bop_Cfa_Beg_Lcu_Rad_Amt', DECIMAL_ZERO)
         denom_if = pv_if_init_claims + pv_if_init_maint + pv_if_init_ra
         
-        if denom_if > 0:
-            if_lc_ifie_ratio = abs(if_bop_lc) / denom_if
+        denom_if_abs = denom_if.copy_abs()
+        if denom_if_abs > 0:
+            if_lc_ifie_ratio = if_bop_lc.copy_abs() / denom_if_abs
         context.if_lc_ifie_ratio = if_lc_ifie_ratio
-    elif if_bop_lc < 0:
+    elif is_if_lc:
         # 如果已有值，也需要获取分母用于日志显示
         pv_if_init_claims = pv_data.get_field('Pvfl_If_Bop_Cfa_Beg_Lcu_Cla_Amt', DECIMAL_ZERO)
         pv_if_init_maint = pv_data.get_field('Pvfl_If_Bop_Cfa_Beg_Lcu_Mtn_Amt', DECIMAL_ZERO)
@@ -518,14 +776,14 @@ def _calculate_lc_ifie_allocation(context, logger, cohort_state: CohortState):
         "IF_LC IFIE分摊比例 = IF_年初LC / (IF_预期赔付现金流_年初现值 + IF_预期维持费用现金流_年初现值 + IF_预期非金融风险调整_年初现值)",
         {
             "IF_年初LC": if_bop_lc,
-            "IF_预期赔付现金流_年初现值（LCU）": pv_if_init_claims if if_bop_lc < 0 else DECIMAL_ZERO,
-            "IF_预期维持费用现金流_年初现值（LCU）": pv_if_init_maint if if_bop_lc < 0 else DECIMAL_ZERO,
-            "IF_预期非金融风险调整_年初现值（LCU）": pv_if_init_ra if if_bop_lc < 0 else DECIMAL_ZERO,
-            "分母合计": denom_if if if_bop_lc < 0 else DECIMAL_ZERO,
+            "IF_预期赔付现金流_年初现值（LCU）": pv_if_init_claims if is_if_lc else DECIMAL_ZERO,
+            "IF_预期维持费用现金流_年初现值（LCU）": pv_if_init_maint if is_if_lc else DECIMAL_ZERO,
+            "IF_预期非金融风险调整_年初现值（LCU）": pv_if_init_ra if is_if_lc else DECIMAL_ZERO,
+            "分母合计(|denom|)": denom_if.copy_abs() if is_if_lc else DECIMAL_ZERO,
             "IF_LC IFIE分摊比例": if_lc_ifie_ratio
         },
         if_lc_ifie_ratio,
-        note="如果IF_年初LC < 0，则计算分摊比例；否则为0。年初现值指：有效合同-年初预期-预期未来-年初现值（LCU），已包含1月现金流折现到年初"
+        note="如果存在LC（正常保单：IF_年初LC<0；批减单：IF_年初LC>0），则计算分摊比例；否则为0。年初现值指：有效合同-年初预期-预期未来-年初现值（LCU），已包含1月现金流折现到年初"
     )
     
     # ==========================================================================================
@@ -678,12 +936,12 @@ def _calculate_lc_ifie_allocation(context, logger, cohort_state: CohortState):
     if_lc_ifie_ra_before_sign = (if_ifie_accretion_ra + if_ifie_rate_change_ra) * if_lc_ifie_ratio
     if_lc_ifie_total_before_sign = if_lc_ifie_claims_before_sign + if_lc_ifie_ra_before_sign
     
-    # 修复：LC IFIE分摊应该与LC本金同方向（负数，增加亏损）
-    # 如果存在LC（if_bop_lc < 0），则LC IFIE分摊应该是负数
-    if if_bop_lc < 0:
-        if_lc_ifie_claims = -abs(if_lc_ifie_claims_before_sign)
-        if_lc_ifie_ra = -abs(if_lc_ifie_ra_before_sign)
-        if_lc_ifie_total = -abs(if_lc_ifie_total_before_sign)
+    # LC IFIE分摊应与LC本金同方向（正常保单为负，批减单为正）
+    if is_if_lc:
+        lc_sign = Decimal('-1') if if_bop_lc < 0 else Decimal('1')
+        if_lc_ifie_claims = if_lc_ifie_claims_before_sign.copy_abs() * lc_sign
+        if_lc_ifie_ra = if_lc_ifie_ra_before_sign.copy_abs() * lc_sign
+        if_lc_ifie_total = if_lc_ifie_total_before_sign.copy_abs() * lc_sign
     else:
         if_lc_ifie_claims = if_lc_ifie_claims_before_sign
         if_lc_ifie_ra = if_lc_ifie_ra_before_sign
@@ -701,7 +959,7 @@ def _calculate_lc_ifie_allocation(context, logger, cohort_state: CohortState):
             "IF_LC分摊IFIE_赔付与费用": if_lc_ifie_claims
         },
         if_lc_ifie_claims,
-        note=f"计算过程：({if_ifie_accretion_claims} + {if_ifie_rate_change_claims}) × {if_lc_ifie_ratio} = {if_lc_ifie_claims_before_sign}，符号处理：{'转为负数（与LC同方向）' if if_bop_lc < 0 else '保持原值'}"
+        note=f"计算过程：({if_ifie_accretion_claims} + {if_ifie_rate_change_claims}) × {if_lc_ifie_ratio} = {if_lc_ifie_claims_before_sign}，符号处理：{'与LC同方向' if is_if_lc else '保持原值'}"
     )
     
     logger.log_item(
@@ -716,7 +974,7 @@ def _calculate_lc_ifie_allocation(context, logger, cohort_state: CohortState):
             "IF_LC分摊IFIE_非金融风险调整": if_lc_ifie_ra
         },
         if_lc_ifie_ra,
-        note=f"计算过程：({if_ifie_accretion_ra} + {if_ifie_rate_change_ra}) × {if_lc_ifie_ratio} = {if_lc_ifie_ra_before_sign}，符号处理：{'转为负数（与LC同方向）' if if_bop_lc < 0 else '保持原值'}"
+        note=f"计算过程：({if_ifie_accretion_ra} + {if_ifie_rate_change_ra}) × {if_lc_ifie_ratio} = {if_lc_ifie_ra_before_sign}，符号处理：{'与LC同方向' if is_if_lc else '保持原值'}"
     )
     
     logger.log_item(
@@ -755,8 +1013,11 @@ def _calculate_lc_ifie_allocation(context, logger, cohort_state: CohortState):
     # ==========================================================================================
     # NB（新增合同）LC IFIE分摊（详细逻辑）
     # ==========================================================================================
-    # 使用统一字段逻辑：如果 nb_initial_csm_lc < 0，则为LC
-    nb_initial_lc = nb_initial_csm_lc if nb_initial_csm_lc < 0 else DECIMAL_ZERO
+    # 使用统一字段逻辑：
+    # - 正常保单：nb_initial_csm_lc < 0 为LC
+    # - 批减单：nb_initial_csm_lc > 0 为LC（符号逻辑相反）
+    is_nb_lc = (nb_initial_csm_lc < 0) if (not is_reversal) else (nb_initial_csm_lc > 0)
+    nb_initial_lc = nb_initial_csm_lc if is_nb_lc else DECIMAL_ZERO
     
     logger.log_item(
         "NB_新增LC",
@@ -767,7 +1028,7 @@ def _calculate_lc_ifie_allocation(context, logger, cohort_state: CohortState):
             "NB_新增LC": nb_initial_lc
         },
         nb_initial_lc,
-        note="使用统一字段逻辑：如果NB_初始CSM/LC < 0，则为LC"
+        note="使用统一字段逻辑：正常保单NB_初始CSM/LC < 0为LC；批减单NB_初始CSM/LC > 0为LC（符号逻辑相反）"
     )
     
     # NB_LC IFIE分摊比例
@@ -777,9 +1038,11 @@ def _calculate_lc_ifie_allocation(context, logger, cohort_state: CohortState):
     init_ra = getattr(context, 'init_ra', DECIMAL_ZERO) or DECIMAL_ZERO
     denom_nb = init_fut_claim + init_fut_maint + init_ra
     
-    if nb_initial_lc < 0 and nb_lc_ifie_ratio == DECIMAL_ZERO:
-        if denom_nb > 0:
-            nb_lc_ifie_ratio = abs(nb_initial_lc) / denom_nb  # 使用绝对值计算比例
+    is_nb_lc_for_ratio = (nb_initial_lc < 0) if (not is_reversal) else (nb_initial_lc > 0)
+    if is_nb_lc_for_ratio and nb_lc_ifie_ratio == DECIMAL_ZERO:
+        denom_nb_abs = denom_nb.copy_abs()
+        if denom_nb_abs > 0:
+            nb_lc_ifie_ratio = nb_initial_lc.copy_abs() / denom_nb_abs
         context.nb_lc_ratio = nb_lc_ifie_ratio
     
     logger.log_item(
@@ -788,15 +1051,15 @@ def _calculate_lc_ifie_allocation(context, logger, cohort_state: CohortState):
         "NB_LC IFIE分摊比例 = |NB_年初LC| / (汇总当年各新增年月_预期赔付现金流_初始确认现值 + 汇总当年各新增年月_预期维持费用现金流_初始确认现值 + 汇总当年各新增年月_预期非金融风险调整_初始确认现值)",
         {
             "NB_年初LC": nb_initial_lc,
-            "分子（|NB_年初LC|）": abs(nb_initial_lc) if nb_initial_lc < 0 else DECIMAL_ZERO,
+            "分子（|NB_年初LC|）": (nb_initial_lc.copy_abs() if is_nb_lc_for_ratio else DECIMAL_ZERO),
             "汇总当年各新增年月_预期赔付现金流_初始确认现值": init_fut_claim,
             "汇总当年各新增年月_预期维持费用现金流_初始确认现值": init_fut_maint,
             "汇总当年各新增年月_预期非金融风险调整_初始确认现值": init_ra,
-            "分母合计": denom_nb,
+            "分母合计(|denom|)": denom_nb.copy_abs(),
             "NB_LC IFIE分摊比例": nb_lc_ifie_ratio
         },
         nb_lc_ifie_ratio,
-        note=f"如果NB_年初LC < 0，则计算分摊比例；否则为0。比例{'已在其他模块计算' if nb_lc_ifie_ratio > 0 and getattr(context, 'nb_lc_ratio', None) else '在此处计算'}。计算过程：|{nb_initial_lc}| / ({init_fut_claim} + {init_fut_maint} + {init_ra}) = |{nb_initial_lc}| / {denom_nb} = {nb_lc_ifie_ratio}" if nb_initial_lc < 0 and denom_nb > 0 else "NB_年初LC >= 0 或分母 <= 0，比例为0"
+        note=f"如果存在NB_LC（正常保单: NB_年初LC<0；批减单: NB_年初LC>0），则计算分摊比例；否则为0。比例{'已在其他模块计算' if nb_lc_ifie_ratio > 0 and getattr(context, 'nb_lc_ratio', None) else '在此处计算'}。计算过程：|{nb_initial_lc}| / |({init_fut_claim} + {init_fut_maint} + {init_ra})| = |{nb_initial_lc}| / {denom_nb.copy_abs()} = {nb_lc_ifie_ratio}" if is_nb_lc_for_ratio and denom_nb.copy_abs() > 0 else "NB_LC不存在或分母为0，比例为0"
     )
     
     # 1. NB_待分摊IFIE_计息_赔付与费用
@@ -938,12 +1201,13 @@ def _calculate_lc_ifie_allocation(context, logger, cohort_state: CohortState):
     nb_lc_ifie_ra_before_sign = (nb_ifie_accretion_ra + nb_ifie_rate_change_ra) * nb_lc_ifie_ratio
     nb_lc_ifie_total_before_sign = nb_lc_ifie_claims_before_sign + nb_lc_ifie_ra_before_sign
     
-    # 修复：LC IFIE分摊应该与LC本金同方向（负数，增加亏损）
-    # 如果存在LC（nb_initial_lc < 0），则LC IFIE分摊应该是负数
-    if nb_initial_lc < 0:
-        nb_lc_ifie_claims = -abs(nb_lc_ifie_claims_before_sign)
-        nb_lc_ifie_ra = -abs(nb_lc_ifie_ra_before_sign)
-        nb_lc_ifie_total = -abs(nb_lc_ifie_total_before_sign)
+    # LC IFIE分摊应与LC本金同方向（正常保单为负，批减单为正）
+    is_nb_lc_sign = (nb_initial_lc < 0) if (not is_reversal) else (nb_initial_lc > 0)
+    if is_nb_lc_sign:
+        lc_sign = Decimal('-1') if nb_initial_lc < 0 else Decimal('1')
+        nb_lc_ifie_claims = nb_lc_ifie_claims_before_sign.copy_abs() * lc_sign
+        nb_lc_ifie_ra = nb_lc_ifie_ra_before_sign.copy_abs() * lc_sign
+        nb_lc_ifie_total = nb_lc_ifie_total_before_sign.copy_abs() * lc_sign
     else:
         nb_lc_ifie_claims = nb_lc_ifie_claims_before_sign
         nb_lc_ifie_ra = nb_lc_ifie_ra_before_sign
@@ -961,7 +1225,7 @@ def _calculate_lc_ifie_allocation(context, logger, cohort_state: CohortState):
             "NB_LC分摊IFIE_赔付与费用": nb_lc_ifie_claims
         },
         nb_lc_ifie_claims,
-        note=f"计算过程：({nb_ifie_accretion_claims} + {nb_ifie_rate_change_claims}) × {nb_lc_ifie_ratio} = {nb_lc_ifie_claims_before_sign}，符号处理：{'转为负数（与LC同方向）' if nb_initial_lc < 0 else '保持原值'}"
+        note=f"计算过程：({nb_ifie_accretion_claims} + {nb_ifie_rate_change_claims}) × {nb_lc_ifie_ratio} = {nb_lc_ifie_claims_before_sign}，符号处理：{'与LC同方向' if is_nb_lc_sign else '保持原值'}"
     )
     
     logger.log_item(
@@ -976,7 +1240,7 @@ def _calculate_lc_ifie_allocation(context, logger, cohort_state: CohortState):
             "NB_LC分摊IFIE_非金融风险调整": nb_lc_ifie_ra
         },
         nb_lc_ifie_ra,
-        note=f"计算过程：({nb_ifie_accretion_ra} + {nb_ifie_rate_change_ra}) × {nb_lc_ifie_ratio} = {nb_lc_ifie_ra_before_sign}，符号处理：{'转为负数（与LC同方向）' if nb_initial_lc < 0 else '保持原值'}"
+        note=f"计算过程：({nb_ifie_accretion_ra} + {nb_ifie_rate_change_ra}) × {nb_lc_ifie_ratio} = {nb_lc_ifie_ra_before_sign}，符号处理：{'与LC同方向' if is_nb_lc_sign else '保持原值'}"
     )
     
     logger.log_item(
@@ -1040,7 +1304,7 @@ def _calculate_lc_ifie_allocation(context, logger, cohort_state: CohortState):
             "IF_分摊后IFIE后LC": if_lc_after_ifie,
             
             # NB 部分
-            "NB_新增LC": abs(nb_initial_lc) if nb_initial_lc < 0 else DECIMAL_ZERO,  # 显示绝对值
+            "NB_新增LC": (nb_initial_lc.copy_abs() if is_nb_lc_sign else DECIMAL_ZERO),
             "NB_LC IFIE分摊比例": nb_lc_ifie_ratio,
             "NB_待分摊IFIE_计息_赔付与费用": nb_ifie_accretion_claims,
             "NB_待分摊IFIE_计息_非金融风险调整": nb_ifie_accretion_ra,
@@ -1080,7 +1344,9 @@ def _determine_cohort_status(
     if_bop_csm = bop_csm_lc if bop_csm_lc >= 0 else DECIMAL_ZERO
     if_bop_lc = bop_csm_lc if bop_csm_lc < 0 else DECIMAL_ZERO
     # IF_计息后CSM = IF_年初CSM + IF_CSM计息（只计算CSM部分）
-    if_csm_post = if_bop_csm + (cohort_state.csm_interest if cohort_state else DECIMAL_ZERO)
+    # 修复：使用 context.if_interest_csm（只包含IF的计息），而不是 cohort_state.csm_interest（IF+NB合计）
+    if_interest_csm = getattr(context, 'if_interest_csm', None) or DECIMAL_ZERO
+    if_csm_post = if_bop_csm + if_interest_csm
     
     # 分离NB的CSM和LC
     nb_initial_csm = context.nb_initial_csm or DECIMAL_ZERO
@@ -1123,7 +1389,10 @@ def _determine_cohort_status(
     )
     
     # 确定合同组最终状态
-    if net_trial >= 0:
+    is_reversal = getattr(context, 'is_reversal_policy', False)
+    # 正常保单：net_trial >= 0 为盈利(CSM)，<0 为亏损(LC)
+    # 批减单：符号逻辑相反（net_trial <= 0 为CSM，>0 为LC），且取值保持原符号（CSM为负，LC为正）
+    if (not is_reversal and net_trial >= 0) or (is_reversal and net_trial <= 0):
         cohort_csm = net_trial
         cohort_lc = DECIMAL_ZERO
         if cohort_state:
@@ -1169,8 +1438,11 @@ def _determine_cohort_status(
         )
     
     # 更新期末余额（摊销前）
+    # 正常保单：统一字段 CSM/LC >= 0 视为 CSM；< 0 视为 LC
+    # 批减单：符号逻辑相反（<= 0 视为 CSM；> 0 视为 LC），且取值保持原符号（CSM为负，LC为正）
     cohort_csm_lc = cohort_csm + cohort_lc
-    if cohort_csm_lc >= 0:
+    is_csm_bucket = (cohort_csm_lc >= 0) if (not is_reversal) else (cohort_csm_lc <= 0)
+    if is_csm_bucket:
         context.end_csm_before_amort = cohort_csm_lc
         context.end_lc_before_amort = DECIMAL_ZERO
     else:
@@ -1338,6 +1610,9 @@ def _calculate_lc_measurement(context, logger):
     # 获取评估月
     eop_month_str = context.val_month_str
     # 所有数据都从当前评估期的PV数据读取
+
+    # 批减单标记：符号逻辑相反（CSM<=0，LC>0）
+    is_reversal = getattr(context, 'is_reversal_policy', False)
     
     # 获取PV数据
     pv_data = context.pv_source_data.get_data(eop_month_str)
@@ -1354,7 +1629,7 @@ def _calculate_lc_measurement(context, logger):
         csm_amort_amount = getattr(context, 'csm_amort_amount', None)
         end_csm_before_amort = getattr(context, 'end_csm_before_amort', None)
         if csm_amort_amount is not None and end_csm_before_amort is not None and end_csm_before_amort != 0:
-            csm_amort_ratio = abs(csm_amort_amount / end_csm_before_amort)
+            csm_amort_ratio = (csm_amort_amount if csm_amort_amount > 0 else -csm_amort_amount) / end_csm_before_amort
         else:
             # 如果没有，使用IACF摊销比例作为参考
             csm_amort_ratio = getattr(context, 'iacf_amort_ratio', Decimal('0')) or Decimal('0')
@@ -1426,8 +1701,10 @@ def _calculate_lc_measurement(context, logger):
         )
         
         # 计算比例
-        if cohort_lc_for_ratio < 0 and denominator_total > 0:
-            lc_allocation_ratio_total = abs(cohort_lc_for_ratio) / denominator_total
+        # 正常保单：合同组LC < 0 才计算；批减单：合同组LC > 0 才计算（符号逻辑相反）
+        is_lc_for_ratio = (cohort_lc_for_ratio < 0) if (not is_reversal) else (cohort_lc_for_ratio > 0)
+        if is_lc_for_ratio and denominator_total > 0:
+            lc_allocation_ratio_total = cohort_lc_for_ratio.copy_abs() / denominator_total
         else:
             lc_allocation_ratio_total = Decimal('0')
         
@@ -1490,7 +1767,12 @@ def _calculate_lc_measurement(context, logger):
     sum_lc_test = cohort_lc + allocated_lc_total + delta_csm_lc
     sum_csm_test = cohort_csm + delta_csm_lc
     
-    if (cohort_lc < 0 and sum_lc_test < 0) or (cohort_lc == 0 and sum_csm_test < 0):
+    # 正常保单：LC<0；批减单：LC>0（符号逻辑相反）
+    is_lc_bucket = (cohort_lc < 0) if (not is_reversal) else (cohort_lc > 0)
+    lc_stays_lc = (sum_lc_test < 0) if (not is_reversal) else (sum_lc_test > 0)
+    csm_turns_lc = (sum_csm_test < 0) if (not is_reversal) else (sum_csm_test > 0)
+
+    if (is_lc_bucket and lc_stays_lc) or ((not is_lc_bucket) and csm_turns_lc):
         allocated_lc_exp_adj_total = delta_csm_lc + bop_csm + nb_initial_csm + csm_interest
     else:
         allocated_lc_exp_adj_total = -(bop_lc_total + nb_initial_lc_total + lc_ifie_total + allocated_lc_total)
@@ -1614,6 +1896,8 @@ def _calculate_lc_measurement(context, logger):
     # 分摊的LC_非金融风险调整：（有效合同+新增合同的预期当期非金融风险调整）× LC分摊比例
     # 注意：正数表示减少LC亏损（LC余额绝对值减少），因为当非金融风险调整释放时，亏损应该被摊销
     if pv_data is None:
+        pv_if_cur_ra = DECIMAL_ZERO
+        pv_nb_cur_ra = DECIMAL_ZERO
         allocated_lc_ra = DECIMAL_ZERO
     else:
         # 有效合同-年初预期-预期当年-非金融风险调整-期末现值（加权初始确认利率）
@@ -1647,6 +1931,29 @@ def _calculate_lc_measurement(context, logger):
     context.allocated_lc_exp_adj_ra = allocated_lc_exp_adj_ra  # 保存被LC吸收的变化_非金融风险调整，用于亏损合同损益拆分
     context.end_lc_ra = end_lc_ra  # 保存期末LC余额_非金融风险调整，用于未到期责任负债拆分
     context.nb_initial_lc_ra = nb_initial_lc_ra  # 保存当年新增LC_非金融风险调整，用于亏损合同损益拆分
+    
+    # 记录详细计算过程（非金融风险调整）
+    _log_lc_measurement_ra_details(
+        logger,
+        bop_lc_ra,
+        nb_initial_lc_total,
+        nb_initial_lc_cf,
+        nb_initial_lc_ra,
+        if_lc_ifie_ra,
+        nb_lc_ifie_ra,
+        lc_ifie_ra,
+        pv_if_cur_ra,
+        pv_nb_cur_ra,
+        lc_allocation_ratio_total,
+        allocated_lc_ra,
+        allocated_lc_exp_adj_total,
+        allocated_lc_exp_adj_cf,
+        allocated_lc_exp_adj_ra,
+        lc_balance_to_adjust_ra,
+        csm_amort_ratio,
+        lc_adjust_ra,
+        end_lc_ra,
+    )
     
     logger.log_item(
         "LC计量_非金融风险调整",

@@ -5,7 +5,6 @@ from contextlib import redirect_stdout, redirect_stderr
 import io
 import threading
 from concurrent.futures import ProcessPoolExecutor, as_completed
-import multiprocessing
 import time
 from datetime import datetime
 
@@ -16,18 +15,18 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 
 from BBA_dev.data_access.loader import get_all_policy_entries, preload_static_data, clear_static_cache
-from BBA_dev.scripts.run_lifecycle_simulation import LifecycleSimulator
+from BBA_dev.scripts.run_lifecycle_simulation_assumption import LifecycleSimulator
 from BBA_dev.utils.async_csv_writer import AsyncCSVWriter
 
-OUTPUT_FILE = os.path.join(PROJECT_ROOT, "logs", "bba_batch_results_202412.csv")
+OUTPUT_FILE = os.path.join(PROJECT_ROOT, "logs", "bba_batch_results_assumption_202412.csv")
 os.makedirs(os.path.dirname(OUTPUT_FILE), exist_ok=True)
 
 # 异步写入配置
 ASYNC_BUFFER_SIZE = 500  # 异步写入缓冲区大小（从100提升到500）
 FLUSH_INTERVAL = 5.0     # 自动刷新间隔（秒）
 
-# 多进程配置：充分利用32核CPU
-MAX_WORKERS = 8  # 可根据实际情况调整（建议为CPU核心数）
+# 多进程配置：可根据实际情况调整
+MAX_WORKERS = 8
 RESULT_COLUMNS = [
     "policy_no",
     "certi_no",
@@ -77,9 +76,6 @@ RESULT_COLUMNS = [
 ]
 
 
-# 注意：CSV写入已改为异步模式，无需锁
-
-
 def process_single_policy(
     policy_no: str,
     certi_no: Optional[str],
@@ -88,11 +84,7 @@ def process_single_policy(
 ) -> Tuple[str, Optional[List[Dict]], Optional[str]]:
     """
     处理单个保单/批单组合（在独立进程中运行）
-    
-    Returns:
-        Tuple[policy_no, results, error_message]
-        - results: 成功时返回结果列表，失败时返回None
-        - error_message: 失败时返回错误信息，成功时返回None
+    获取费用率从数据库读取（由 LifecycleSimulator 内部完成），实际获取费用直接使用该费率计算。
     """
     try:
         simulator = LifecycleSimulator(
@@ -127,14 +119,8 @@ def process_single_policy(
 
 def run_batch(run_date: str = "202412", val_method: str = "7", max_workers: int = MAX_WORKERS, limit: int = None, policy_no: str = None):
     """
-    多进程并行批处理
-    
-    Args:
-        run_date: 运行批次
-        val_method: 计量方法
-        max_workers: 最大进程数（默认32，充分利用32核CPU）
-        limit: 限制处理的保单数量（用于测试，None表示处理全部）
-        policy_no: 指定单个保单号进行测试（优先级高于limit参数）
+    多进程并行批处理，获取费用率与实际获取费用均从数据库获取（参照 run_batch_process_new 的取数方式）。
+    其余流程与原 run_batch_process 保持一致。
     """
     # 记录开始时间
     start_time = time.time()
@@ -146,7 +132,7 @@ def run_batch(run_date: str = "202412", val_method: str = "7", max_workers: int 
     print(f"最大进程数: {max_workers}")
     print(f"=" * 80)
     
-    # 预加载静态数据（利率曲线和精算假设）
+    # 预加载静态数据（利率曲线和精算假设，获取费用率从数据库读取）
     print(f"\n{'='*80}")
     print("步骤1：预加载静态数据...")
     print(f"{'='*80}")
@@ -337,8 +323,8 @@ def run_batch(run_date: str = "202412", val_method: str = "7", max_workers: int 
 if __name__ == "__main__":
     import sys
     # 支持命令行参数：
-    # python run_batch_process.py [limit]                   # 批量测试模式
-    # python run_batch_process.py --policy [policy_no]     # 单保单测试模式
+    # python run_batch_process_assumption.py [limit]                   # 批量测试模式
+    # python run_batch_process_assumption.py --policy [policy_no]     # 单保单测试模式
     limit = None
     policy_no = None
     
@@ -351,7 +337,7 @@ if __name__ == "__main__":
                 print(f"🔍 使用命令行参数：单保单测试模式，保单号={policy_no}")
             else:
                 print("❌ --policy 参数需要指定保单号")
-                print("使用方法：python run_batch_process.py --policy [保单号]")
+                print("使用方法：python run_batch_process_assumption.py --policy [保单号]")
                 sys.exit(1)
         elif sys.argv[1] == "--help" or sys.argv[1] == "-h":
             # 显示帮助信息
@@ -359,18 +345,18 @@ if __name__ == "__main__":
             print("批量处理脚本使用方法:")
             print("="*80)
             print("1. 处理全部保单:")
-            print("   python run_batch_process.py")
+            print("   python run_batch_process_assumption.py")
             print()
             print("2. 批量测试模式（处理前N张保单）:")
-            print("   python run_batch_process.py [数量]")
-            print("   例如: python run_batch_process.py 10")
+            print("   python run_batch_process_assumption.py [数量]")
+            print("   例如: python run_batch_process_assumption.py 10")
             print()
             print("3. 单保单测试模式:")
-            print("   python run_batch_process.py --policy [保单号]")
-            print("   例如: python run_batch_process.py --policy YSAIC2019000001")
+            print("   python run_batch_process_assumption.py --policy [保单号]")
+            print("   例如: python run_batch_process_assumption.py --policy YSAIC2019000001")
             print()
             print("4. 显示此帮助信息:")
-            print("   python run_batch_process.py --help")
+            print("   python run_batch_process_assumption.py --help")
             print("="*80)
             sys.exit(0)
         else:
@@ -383,4 +369,6 @@ if __name__ == "__main__":
                 print("提示：使用 --help 查看使用方法")
     
     run_batch(limit=limit, policy_no=policy_no)
+
+
 
