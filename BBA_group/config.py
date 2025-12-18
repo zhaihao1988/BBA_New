@@ -2,7 +2,7 @@ from decimal import Decimal, getcontext
 
 # --- 参数配置 ---
 getcontext().prec = 38
-POLICY_NO = 'mock2'
+POLICY_NO = 'mock1'
 CERTI_NO = None # 批单号，如果为None则计算主单
 
 # 精算假设参数
@@ -17,3 +17,5 @@ USE_OCI_OPTION  = True             # OCI 选择权 (True = 拆分, 利率变动�
 
 # 计量方法配置
 VAL_METHOD = '7'  # 计量方法，用于查询精算假设表（'7' 表示 BBA 方法）
+
+
