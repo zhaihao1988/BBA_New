@@ -301,44 +301,9 @@ def generate_report_data(init_data, data_by_year):
         lc_release_ra = get_d('保险合同收入_预期释放的非金融风险调整_亏损分摊')
         lc_release_total = lc_release_claims + lc_release_ra
         
-        # For final year, we need to calculate IFIE LC impact first to determine LC reversal amount
-        # This is needed because LC reversal should account for IFIE effects
+        # 新口径：终止年度不再做“超额分配到非亏损部分”的比较，全部记在 LC 列
         net_lc_recog_non_lc = Decimal('0')
-        
-        if is_final_year:
-            # Step 1: Calculate IFIE LC impact (P&L + OCI) - needed for LC reversal calculation
-            ifie_pl_cf_lc_temp = get_d('IFIE_P&L_未到期_预期现金流_亏损')
-            ifie_pl_ra_lc_temp = get_d('IFIE_P&L_未到期_非金融风险调整_亏损')
-            ifie_oci_cf_lc_temp = get_d('IFIE_OCI_未到期_预期现金流_亏损')
-            ifie_oci_ra_lc_temp = get_d('IFIE_OCI_未到期_非金融风险调整_亏损')
-            ifie_lc_total = (ifie_pl_cf_lc_temp + ifie_pl_ra_lc_temp) + (ifie_oci_cf_lc_temp + ifie_oci_ra_lc_temp)
-            
-            # Step 2: Opening LC balance (absolute value)
-            opening_lc_abs = -opening['lrc_lc'] if opening['lrc_lc'] < 0 else opening['lrc_lc']
-            
-            # Step 3: LC can absorb = opening LC + IFIE LC impact
-            # IFIE LC is typically negative (reduces liability), so we add it
-            lc_after_ifie = opening_lc_abs + ifie_lc_total  # ifie_lc_total is negative, so this reduces
-            
-            # Step 4: Total reversal amount from log
-            total_reversal = lc_release_total
-            
-            # Step 5: Calculate LC reversal and NonLC allocation
-            # LC reversal should fully reverse the LC after IFIE: -lc_after_ifie
-            # If total reversal > lc_after_ifie, excess goes to NonLC
-            if total_reversal > lc_after_ifie:
-                # Excess that needs to be allocated to NonLC
-                excess_to_non_lc = total_reversal - lc_after_ifie
-                net_lc_recog_non_lc = -excess_to_non_lc  # Negative because it reduces NonLC
-                # LC reversal: fully reverse LC after IFIE (negative value to reduce LC)
-                net_lc_recog = -lc_after_ifie
-            else:
-                # LC can absorb all reversal
-                net_lc_recog = -total_reversal
-        else:
-            # Normal year: Net LC recognition = initial loss + changes - LC release
-            # In the roll-forward table, LC column shows changes (positive = increase LC, negative = decrease LC)
-            net_lc_recog = initial_loss_recog + lc_change_est - lc_release_total
+        net_lc_recog = initial_loss_recog + lc_change_est - lc_release_total
         
         add_row('亏损部分的确认及转回(7)', net_lc_recog_non_lc, net_lc_recog, Decimal('0'), indent=1)
         
@@ -389,15 +354,6 @@ def generate_report_data(init_data, data_by_year):
                         <td style="text-align: right; padding: 8px;">-</td>
                     </tr>"""
             
-            if is_final_year and net_lc_recog_non_lc != 0:
-                explanation_content += f"""
-                    <tr>
-                        <td style="padding: 8px;">超额转回分配至非亏损部分</td>
-                        <td style="text-align: right; padding: 8px;">{format_decimal(net_lc_recog_non_lc)}</td>
-                        <td style="text-align: right; padding: 8px;">-</td>
-                        <td style="text-align: right; padding: 8px;">-</td>
-                    </tr>"""
-            
             explanation_content += f"""
                     <tr style="background-color: #f8f9fa; font-weight: bold;">
                         <td style="padding: 8px;">净确认</td>
@@ -409,7 +365,6 @@ def generate_report_data(init_data, data_by_year):
                 <p style="font-size: 0.9em; color: #666; margin-top: 10px;">
                     <b>计算公式</b>: 净确认 = 初始确认亏损 + 预期现金流变动 + 非金融风险调整变动 - LC释放<br>
                     <b>说明</b>: 亏损确认增加LC负债，显示为正数。LC释放减少LC负债，显示为负数。
-                    {f'在合同终止年度，如果LC转回超过期初LC余额，超额部分将分配至非亏损部分。' if is_final_year and net_lc_recog_non_lc != 0 else ''}
                 </p>
                 """
             

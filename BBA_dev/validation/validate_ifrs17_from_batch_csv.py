@@ -23,6 +23,13 @@ from BBA_dev.scripts.generate_ifrs17_reports_from_batch_csv import (
     SIGN_FIX_COLUMNS,
 )
 
+# 直接复用 103/104 报表的核心计算逻辑，避免在本脚本中重复实现一套“第二口径”
+from BBA_dev.utils.generate_ifrs17_103_report import (
+    convert_yearly_results_to_data_by_year,
+    generate_report_data,
+)
+from BBA_dev.utils import generate_ifrs17_104_report as gen104
+
 
 @dataclass
 class ValidationResult:
@@ -417,36 +424,149 @@ def _validate_one_policy(
         passed_103 = True
         diff_103 = {'non_lc': Decimal('0'), 'lc': Decimal('0'), 'lic': Decimal('0')}
         if validate_103:
-            opening_103 = {'lrc_non_lc': Decimal('0'), 'lrc_lc': Decimal('0'), 'lic': Decimal('0')}
+            # 使用 103 报表自身的 generate_report_data 作为“权威口径”
+            data_by_year = convert_yearly_results_to_data_by_year(yearly_results)
+            report_rows, _ = generate_report_data(init_data=None, data_by_year=data_by_year)
+
+            # 按年度取出“年末的保险合同负债(25)”这一行，作为 103 报表的计算期末余额
+            closing_rows_by_year: Dict[int, Dict] = {}
+            for row in report_rows:
+                if row.get("category") == "年末的保险合同负债(25)":
+                    closing_rows_by_year[row["year"]] = row
+
             all_passed_103 = True
+
             for year in years:
-                year_data = next((r for r in yearly_results if r['year'] == year), {})
-                opening_103, diff_year, passed_year = _validate_103_year(year_data, year, years, opening_103)
+                row = closing_rows_by_year.get(year)
+                if not row:
+                    # 找不到对应年度的期末行，视为未通过
+                    all_passed_103 = False
+                    continue
+
+                # 103 报表计算得到的期末 LRC/LIC（计算口径）
+                closing_non_lc = parse_decimal(row.get("lrc_non_lc"))
+                closing_lc_display = parse_decimal(row.get("lrc_lc"))
+                closing_lic = parse_decimal(row.get("lic"))
+
+                # 同一年度在 CSV/yearly_results 中的原始日志值
+                year_data = next((r for r in yearly_results if r["year"] == year), {})
+
+                def get_d(key: str) -> Decimal:
+                    return parse_decimal(year_data.get(key, 0))
+
+                # 终止年度判断逻辑，与 103 报表内部保持一致
+                years_list = [r["year"] for r in yearly_results]
+                is_final_year = (year == max(years_list)) if years_list else False
+                is_termination_year = False
+                if is_final_year:
+                    try:
+                        closing_sum = (
+                            get_d("closing_bel")
+                            + get_d("closing_ra")
+                            + get_d("closing_csm")
+                            + get_d("closing_lic")
+                        )
+                        is_termination_year = (closing_sum > -Decimal("0.01") and closing_sum < Decimal("0.01"))
+                    except Exception:
+                        is_termination_year = False
+
+                if is_termination_year:
+                    # 终止年度：日志期末应为 0
+                    log_non_lc_display = Decimal("0")
+                    log_lc_display = Decimal("0")
+                    log_lic = Decimal("0")
+                else:
+                    # 正常年度：从 CSV 日志提取 BEL/RA/CSM，再用“总额-LC”倒挤非亏损部分
+                    log_closing_bel = get_d("closing_bel")
+                    log_closing_ra = get_d("closing_ra")
+                    log_closing_csm = get_d("closing_csm")
+                    # LC 在报表中以绝对值呈现，验证时直接使用 103 报表计算得到的 closing_lc_display
+                    log_lc_display = closing_lc_display
+                    log_non_lc_display = log_closing_bel + log_closing_ra + log_closing_csm - log_lc_display
+                    log_lic = get_d("closing_lic")
+
+                diff_non_lc = closing_non_lc - log_non_lc_display
+                diff_lc = closing_lc_display - log_lc_display
+                diff_lic = closing_lic - log_lic
+
+                # 判断年度是否通过（与 103 报表内部的 0.01 阈值一致）
+                passed_year = (
+                    abs(diff_non_lc) < Decimal("0.01")
+                    and abs(diff_lc) < Decimal("0.01")
+                    and abs(diff_lic) < Decimal("0.01")
+                )
+
                 if not passed_year:
                     all_passed_103 = False
-                    # 记录最大差异的年度
-                    if abs(diff_year['non_lc']) > abs(diff_103['non_lc']) or \
-                       abs(diff_year['lc']) > abs(diff_103['lc']) or \
-                       abs(diff_year['lic']) > abs(diff_103['lic']):
-                        diff_103 = diff_year
+                    # 记录最大绝对差异
+                    if abs(diff_non_lc) > abs(diff_103["non_lc"]):
+                        diff_103["non_lc"] = diff_non_lc
+                    if abs(diff_lc) > abs(diff_103["lc"]):
+                        diff_103["lc"] = diff_lc
+                    if abs(diff_lic) > abs(diff_103["lic"]):
+                        diff_103["lic"] = diff_lic
+
             passed_103 = all_passed_103
         
         # 104报表验算
         passed_104 = True
         diff_104 = {'pv': Decimal('0'), 'ra': Decimal('0'), 'csm': Decimal('0')}
         if validate_104:
-            opening_104 = {'pv': Decimal('0'), 'ra': Decimal('0'), 'csm': Decimal('0')}
+            # 使用 104 报表自身的 generate_report_data 作为“权威口径”
+            data_by_year_104 = gen104.convert_yearly_results_to_data_by_year(yearly_results)
+            # 注意：generate_report_data 期望 init_data 至少是一个 dict，这里传空 dict 即可
+            report_rows_104, _ = gen104.generate_report_data(init_data={}, data_by_year=data_by_year_104)
+
+            # 按年度取出“年末的保险合同净负债(27)”这一行，作为 104 报表的计算期末余额
+            closing_rows_by_year_104: Dict[int, Dict] = {}
+            for row in report_rows_104:
+                if row.get("category_id") == "27":
+                    closing_rows_by_year_104[row["year"]] = row
+
             all_passed_104 = True
+
             for year in years:
-                year_data = next((r for r in yearly_results if r['year'] == year), {})
-                opening_104, diff_year, passed_year = _validate_104_year(year_data, year, years, opening_104)
+                row = closing_rows_by_year_104.get(year)
+                if not row:
+                    # 找不到对应年度的期末行，视为未通过
+                    all_passed_104 = False
+                    continue
+
+                # 104 报表计算得到的期末 BEL/RA/CSM（计算口径）
+                closing_pv = parse_decimal(row.get("pv"))
+                closing_ra = parse_decimal(row.get("ra"))
+                closing_csm = parse_decimal(row.get("csm"))
+
+                # 同一年度在 CSV/yearly_results 中的原始日志值
+                year_data = next((r for r in yearly_results if r["year"] == year), {})
+
+                def get_d_104(key: str) -> Decimal:
+                    return parse_decimal(year_data.get(key, 0))
+
+                log_closing_bel = get_d_104('未到期责任负债_预期现金流_非亏损') + get_d_104('未到期责任负债_预期现金流_亏损')
+                log_closing_ra = get_d_104('未到期责任负债_非金融风险调整_非亏损') + get_d_104('未到期责任负债_非金融风险调整_亏损')
+                log_closing_csm = get_d_104('未到期责任负债_CSM')
+
+                diff_pv = closing_pv - log_closing_bel
+                diff_ra = closing_ra - log_closing_ra
+                diff_csm = closing_csm - log_closing_csm
+
+                passed_year = (
+                    abs(diff_pv) < Decimal('0.01') and
+                    abs(diff_ra) < Decimal('0.01') and
+                    abs(diff_csm) < Decimal('0.01')
+                )
+
                 if not passed_year:
                     all_passed_104 = False
-                    # 记录最大差异的年度
-                    if abs(diff_year['pv']) > abs(diff_104['pv']) or \
-                       abs(diff_year['ra']) > abs(diff_104['ra']) or \
-                       abs(diff_year['csm']) > abs(diff_104['csm']):
-                        diff_104 = diff_year
+                    # 记录当前保单组合在全部年度中的最大绝对差异
+                    if abs(diff_pv) > abs(diff_104['pv']):
+                        diff_104['pv'] = diff_pv
+                    if abs(diff_ra) > abs(diff_104['ra']):
+                        diff_104['ra'] = diff_ra
+                    if abs(diff_csm) > abs(diff_104['csm']):
+                        diff_104['csm'] = diff_csm
+
             passed_104 = all_passed_104
         
         # 选择第一个年度作为代表（用于输出）

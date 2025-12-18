@@ -176,24 +176,29 @@ def generate_report_data(init_data, data_by_year):
             </ul>
             """
         else:
+            # 无 init_data 场景：从跑批 CSV 还原“初始确认的新增合同影响”
+            # 这里的口径与单张 104 保持一致：
+            #   BEL = (PV_Claims + PV_Maint + PV_IACF) - PV_Prem （盈利 + 亏损合计）
+            #   RA  = 新增合同非金融风险调整（盈利 + 亏损合计）
+            #   CSM = 新增合同CSM_盈利合同
+            # 注意：不再在此处叠加 “亏损合同损益_*” 两列，它们代表 LC 相关的损益，
+            # 应由后续“不调整CSM的估计变更”等行承接，避免在 (8) 中被剥离出原始 PV/RA。
             nb_claims_profit = get_d('新增合同预期现金流_赔付与费用现金流_盈利合同')
             nb_iacf_profit = get_d('新增合同预期现金流_IACF_盈利合同')
             nb_prem_profit = get_d('新增合同预期现金流_保费现金流_盈利合同')
-            
+
             nb_claims_loss = get_d('新增合同预期现金流_赔付与费用现金流_亏损合同_非亏损')
-            loss_nb_cf = get_d('亏损合同损益_新增合同预期现金流_赔付与费用现金流_亏损')
             nb_iacf_loss = get_d('新增合同预期现金流_IACF_亏损合同')
             nb_prem_loss = get_d('新增合同预期现金流_保费现金流_亏损合同')
-            
+
             nb_bel = (nb_claims_profit + nb_iacf_profit - nb_prem_profit) + \
-                     (nb_claims_loss + loss_nb_cf + nb_iacf_loss - nb_prem_loss)
-            
+                     (nb_claims_loss + nb_iacf_loss - nb_prem_loss)
+
             nb_ra = get_d('新增合同非金融风险调整_盈利合同') + \
-                    get_d('新增合同非金融风险调整_亏损合同_非亏损') + \
-                    get_d('亏损合同损益_新增合同非金融风险调整_亏损')
-                    
+                    get_d('新增合同非金融风险调整_亏损合同_非亏损')
+
             nb_csm = get_d('新增合同CSM_盈利合同')
-            
+
             nb_explanation = f"""
             <ul>
                 <li><b>BEL</b>: {format_decimal(nb_bel)}</li>
