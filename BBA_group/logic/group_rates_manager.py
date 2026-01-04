@@ -16,6 +16,16 @@ from BBA_group.models.group_cohort_state import GroupCohortState
 from BBA_group.models.group_policy_state import GroupPolicyState
 
 
+def _ym_to_index(ym: str) -> int:
+    """
+    将 'YYYYMM' 转换为整数索引（便于计算月份差）
+    例如：202005 -> 2020 * 12 + 5
+    """
+    year = int(ym[:4])
+    month = int(ym[4:])
+    return year * 12 + month
+
+
 def build_group_rate_curve(
     cohort_state: GroupCohortState,
     policies: List[GroupPolicyState],
@@ -23,117 +33,182 @@ def build_group_rate_curve(
     logger: Optional[Any] = None
 ) -> Dict[int, Decimal]:
     """
-    构建合同组维度的利率曲线
+    构建合同组维度的 **加权锁定利率曲线（Wlk）**
     
-    算法：
-    1. 找到组内第一个保单的签单月份，作为第一期
-    2. 使用该保单签单月份的利率曲线作为初始组级利率曲线
-    3. 按签单月份顺序，递归更新组级利率曲线
+    核心要求（与用户口径对齐）：
+    - 以组内 **最早初始确认月份** 作为第1期；
+    - 第k期对应：最早月份往后第 k-1 个自然月；
+    - 每一期的利率 = 所有在该月之前（含当月）已初始确认的保单，
+      使用各自 **初始确认CSM** 作为固定权重，
+      对其利率曲线上“从自身初始确认月起算的对应期数”的月化远期利率做 **CSM 加权平均**；
+    - 若某保单的利率曲线在该offset期已经没有数据，则该保单在该期不参与加权。
     
     Args:
         cohort_state: 组级合同组状态
-        policies: 组内所有保单的状态列表（按签单月份排序）
-        rates_history: 历史利率曲线字典（月份 -> DataFrame）
+        policies: 组内所有保单的状态列表
+        rates_history: 历史利率曲线字典（'YYYYMM' -> DataFrame(term_month, forward_disrate_value)）
         logger: 日志记录器（可选）
         
     Returns:
-        Dict[int, Decimal]: 组级利率曲线（期数 -> 利率）
+        Dict[int, Decimal]: 组级Wlk曲线（期数 -> 月化远期利率）
     """
     if not policies:
         return {}
-    
-    # 过滤出有CSM的保单（CSM > 0），只有盈利保单才参与利率曲线构建
-    profitable_policies = [p for p in policies if p.initial_csm_for_weight > 0]
-    
+
+    # 仅盈利保单参与组级Wlk构建（CSM > 0）
+    profitable_policies: List[GroupPolicyState] = [
+        p for p in policies
+        if getattr(p, "initial_csm_for_weight", Decimal("0")) > 0 and p.uw_month_str
+    ]
+
     if not profitable_policies:
         if logger:
             logger.log_item(
-                "组级利率曲线构建失败",
-                "组内没有盈利保单（CSM > 0），无法构建组级利率曲线",
+                "组级Wlk曲线构建失败",
+                "组内没有盈利保单（initial_csm_for_weight > 0），无法构建组级Wlk曲线",
                 "",
                 {},
-                Decimal('0'),
-                note="只有盈利保单（CSM > 0）才参与利率曲线构建"
+                Decimal("0"),
+                note="只有盈利保单（CSM > 0）才参与组级利率曲线构建"
             )
         return {}
-    
-    # 按签单月份排序
-    sorted_policies = sorted(profitable_policies, key=lambda p: p.uw_month_str or '')
-    
-    # 初始化：使用第一个盈利保单的签单月份作为基准
-    first_policy = sorted_policies[0]
-    base_month = first_policy.uw_month_str
-    
-    if not base_month:
-        if logger:
-            logger.log_item(
-                "组级利率曲线构建失败",
-                "第一个保单缺少签单月份信息",
-                "",
-                {},
-                Decimal('0'),
-                note="无法构建组级利率曲线"
-            )
-        return {}
-    
+
+    # 按初始确认月份排序
+    profitable_policies.sort(key=lambda p: p.uw_month_str)
+
+    # 基准月份：组内最早的初始确认月份
+    base_month = profitable_policies[0].uw_month_str
     cohort_state.group_rate_curve_base_month = base_month
-    
-    # 获取第一个保单签单月份的利率曲线
-    if base_month not in rates_history:
+
+    # 预先检查并缓存每个参与保单的利率曲线及索引
+    policy_infos = []
+    base_idx = _ym_to_index(base_month)
+
+    for p in profitable_policies:
+        uw_month = p.uw_month_str
+        if uw_month not in rates_history:
+            if logger:
+                logger.log_item(
+                    "组级Wlk曲线构建警告",
+                    f"缺少 {uw_month} 月份的利率曲线数据，保单 {p.policy_no} 不参与Wlk构建",
+                    "",
+                    {},
+                    Decimal("0"),
+                    note="请检查利率曲线配置"
+                )
+            continue
+
+        df = rates_history[uw_month]
+        if df.empty:
+            continue
+
+        uw_idx = _ym_to_index(uw_month)
+        max_term = int(df["term_month"].max())
+        last_idx = uw_idx + max_term - 1  # 该保单曲线能支持到的最后自然月
+
+        rates_map = {
+            int(row["term_month"]): Decimal(str(row["forward_disrate_value"]))
+            for _, row in df.iterrows()
+        }
+
+        policy_infos.append(
+            {
+                "policy": p,
+                "uw_month": uw_month,
+                "uw_idx": uw_idx,
+                "max_term": max_term,
+                "last_idx": last_idx,
+                "rates_map": rates_map,
+                "csm": getattr(p, "initial_csm_for_weight", Decimal("0")),
+            }
+        )
+
+    if not policy_infos:
         if logger:
             logger.log_item(
-                "组级利率曲线构建失败",
-                f"缺少{base_month}月份的利率曲线数据",
+                "组级Wlk曲线构建失败",
+                "所有盈利保单均缺少可用利率曲线，无法构建组级Wlk曲线",
                 "",
                 {},
-                Decimal('0'),
-                note="无法构建组级利率曲线"
+                Decimal("0"),
+                note="请检查利率曲线配置"
             )
         return {}
-    
-    first_rates_df = rates_history[base_month]
-    
-    # 初始化组级利率曲线（使用第一个盈利保单的利率曲线）
-    group_curve = {}
-    group_csm_weights = {}
-    
-    for _, row in first_rates_df.iterrows():
-        term = int(row['term_month'])
-        rate = Decimal(str(row['forward_disrate_value']))
-        group_curve[term] = rate
-        # 初始权重为该保单的CSM
-        group_csm_weights[term] = first_policy.initial_csm_for_weight
-    
+
+    # 组级曲线最大自然月：所有保单中最晚可支持的月份
+    max_last_idx = max(info["last_idx"] for info in policy_infos)
+    max_group_term = max_last_idx - base_idx + 1  # 组级曲线总期数
+
+    group_curve: Dict[int, Decimal] = {}
+    group_csm_weights: Dict[int, Decimal] = {}
+
+    # 按“自然月”循环，每个自然月对应组级曲线中的一个期数
+    for term in range(1, max_group_term + 1):
+        current_idx = base_idx + (term - 1)
+        numerator = Decimal("0")
+        denom = Decimal("0")
+
+        for info in policy_infos:
+            csm = info["csm"]
+            if csm <= 0:
+                continue
+
+            # 仅当该保单已在当前自然月之前初始确认时，才参与该期加权
+            if current_idx < info["uw_idx"]:
+                continue
+
+            # 该保单从自身初始确认月算起的期数 offset（从1开始）
+            offset = current_idx - info["uw_idx"] + 1
+            if offset <= 0 or offset > info["max_term"]:
+                # 超出该保单利率曲线范围，不参与该期
+                continue
+
+            rate = info["rates_map"].get(offset)
+            if rate is None:
+                continue
+
+            numerator += csm * rate
+            denom += csm
+
+        if denom > 0:
+            group_rate = numerator / denom
+        else:
+            group_rate = Decimal("0")
+
+        group_curve[term] = group_rate
+        group_csm_weights[term] = denom
+
+    # 汇总CSM权重（用于日志和后续可能的检查）
+    total_csm_weight = sum(info["csm"] for info in policy_infos)
     cohort_state.group_rate_curve = group_curve
-    cohort_state.group_rate_curve_csm_weights = group_csm_weights.copy()
-    cohort_state.total_csm_weight = first_policy.initial_csm_for_weight
-    cohort_state.policy_csm_weights[first_policy.policy_no] = first_policy.initial_csm_for_weight
-    
+    cohort_state.group_rate_curve_csm_weights = group_csm_weights
+    cohort_state.total_csm_weight = total_csm_weight
+
+    # 记录保单级CSM权重
+    for info in policy_infos:
+        p: GroupPolicyState = info["policy"]
+        cohort_state.policy_csm_weights[p.policy_no] = info["csm"]
+
     if logger:
         logger.log_item(
-            "组级利率曲线初始化",
-            f"使用{base_month}月份作为基准月份",
-            f"基准月份: {base_month}, 初始CSM权重: {first_policy.initial_csm_for_weight}",
+            "组级Wlk利率曲线构建完成",
+            "基于组内各保单初始确认CSM的加权锁定利率曲线",
+            (
+                "第1期 = 最早初始确认月份的加权利率；"
+                "第k期对应自然月=最早月份向后第k-1个月；"
+                "每期利率 = 所有已存在保单在该月对应offset期的利率，"
+                "按初始确认CSM加权平均"
+            ),
             {
-                "基准月份": base_month,
-                "初始CSM权重": first_policy.initial_csm_for_weight,
-                "利率曲线期数": len(group_curve)
+                "基准月份（第1期）": base_month,
+                "期数总数": len(group_curve),
+                "参与保单数量": len(policy_infos),
+                "累计CSM权重": total_csm_weight,
             },
-            Decimal('0'),
-            note=f"组级利率曲线已初始化，共{len(group_curve)}期"
+            Decimal("0"),
+            note="已将组级Wlk曲线写入 GroupCohortState.group_rate_curve（期数 -> 月化远期利率）"
         )
-    
-    # 递归更新：处理后续盈利保单
-    for policy in sorted_policies[1:]:
-        # 只处理有CSM的保单
-        if policy.initial_csm_for_weight > 0:
-            update_group_rate_curve(
-                cohort_state,
-                policy,
-                rates_history,
-                logger
-            )
-    
+
     return cohort_state.group_rate_curve
 
 

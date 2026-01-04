@@ -1,0 +1,110 @@
+ # 日志配置
+logging:
+  level:
+    com.jdyx: @logging.level@
+    com.kevin: error
+    org.springframework: error
+  config: classpath:logback-plus.xml
+
+--- # 数据源配置
+spring:
+  datasource:
+    type: com.zaxxer.hikari.HikariDataSource
+    dynamic:
+      p6spy: false
+      # 设置默认的数据源或者数据源组,默认值即为 master
+      primary: pg_measure_platform
+      # 严格模式 匹配不到数据源则报错
+      strict: true
+      public-key: MF0wDQYJKoZIhvcNAQEBBQADTAAwSQJCAJGpogDovUs9sL7Qw0YiP/Gu1u9XtMMGel8FPn1pxFDVNUUm9N+nvU2pVdsYvNQZ+2kDBRCNu9wuVk3fJCmngUfXAgMBAAE=
+      datasource:
+        # PG-公共数据源
+        pg_public:
+          type: ${spring.datasource.type}
+          driverClassName: org.postgresql.Driver
+          url: jdbc:postgresql://10.128.21.148:5431/cas25_test?currentSchema=public&useUnicode=true&characterEncoding=utf8&useSSL=true&autoReconnect=true&reWriteBatchedInserts=true
+          username: mpw:5WSaKcuoguh2zf1NkK+sxg==
+          password: mpw:nXwvPKQVyt5F4IDGCNGuXg==
+        # PG-计量平台数据源
+        pg_measure_platform:
+          type: ${spring.datasource.type}
+          driverClassName: org.postgresql.Driver
+          url: jdbc:postgresql://10.128.21.148:5431/cas25_test?currentSchema=measure_platform&useUnicode=true&characterEncoding=utf8&useSSL=true&autoReconnect=true&reWriteBatchedInserts=true
+          username: mpw:5WSaKcuoguh2zf1NkK+sxg==
+          password: mpw:nXwvPKQVyt5F4IDGCNGuXg==
+        # PG-会计引擎数据源
+        pg_ac_engine:
+          type: ${spring.datasource.type}
+          driverClassName: org.postgresql.Driver
+          url: jdbc:postgresql://10.128.21.148:5431/cas25_test?currentSchema=ac_engine&useUnicode=true&characterEncoding=utf8&useSSL=true&autoReconnect=true&reWriteBatchedInserts=true
+          username: mpw:5WSaKcuoguh2zf1NkK+sxg==
+          password: mpw:nXwvPKQVyt5F4IDGCNGuXg==
+        master:
+          type: ${spring.datasource.type}
+          driverClassName: org.postgresql.Driver
+          url: jdbc:postgresql://10.128.21.148:5431/cas25_test?currentSchema=cas25_core&useUnicode=true&characterEncoding=utf8&useSSL=true&autoReconnect=true&reWriteBatchedInserts=true
+          username: mpw:5WSaKcuoguh2zf1NkK+sxg==
+          password: mpw:nXwvPKQVyt5F4IDGCNGuXg==
+        pg_bi_to_cas25:
+          type: ${spring.datasource.type}
+          driverClassName: org.postgresql.Driver
+          url: jdbc:postgresql://10.128.21.148:5431/cas25_test?currentSchema=bi_to_cas25&useUnicode=true&characterEncoding=utf8&useSSL=true&autoReconnect=true&reWriteBatchedInserts=true
+          username: mpw:5WSaKcuoguh2zf1NkK+sxg==
+          password: mpw:nXwvPKQVyt5F4IDGCNGuXg==
+
+      hikari:
+        # 最大连接池数量
+        maxPoolSize: 10
+        # 最小空闲线程数量
+        minIdle: 5
+        # 配置获取连接等待超时的时间 30秒
+        connectionTimeout: 30000
+        # 校验超时时间 10秒
+        validationTimeout: 10000
+        # 空闲连接存活最大时间，默认10分钟
+        idleTimeout: 600000
+        # 此属性控制池中连接的最长生命周期，值0表示无限生命周期，默认30分钟
+        maxLifetime: 1800000
+        # 连接测试query（配置检测连接是否有效）
+        connectionTestQuery: SELECT 1
+        # 多久检查一次连接的活性
+        keepaliveTime: 30000
+
+--- # redis 单机配置(单机与集群只能开启一个另一个需要注释掉)
+spring:
+  redis:
+    # 地址
+    host: 10.128.21.132
+    # 端口，默认为6379
+    port: 6379
+    # 数据库索引
+    database: 0
+    # 密码(如没有密码请注释掉)
+    password: QAZxsw123
+    # 连接超时时间
+    timeout: 1000s
+    # 是否开启ssl
+    ssl: false
+
+redisson:
+  # redis key前缀
+  keyPrefix:
+  # 线程池数量
+  threads: 16
+  # Netty线程池数量
+  nettyThreads: 32
+  # 单节点配置
+  singleServerConfig:
+    # 客户端名称
+    clientName: ${project-info.name}
+    # 最小空闲连接数
+    connectionMinimumIdleSize: 32
+    # 连接池大小
+    connectionPoolSize: 64
+    # 连接空闲超时，单位：毫秒
+    idleConnectionTimeout: 10000
+    # 命令等待超时，单位：毫秒
+    timeout: 30000
+    # 发布和订阅连接池大小
+    subscriptionConnectionPoolSize: 50
+

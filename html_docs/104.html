@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IFRS 17 全要素余额调节表 (PVFCF / RA / CSM)</title>
+    <style>
+        :root {
+            --primary-color: #2c3e50;
+            --accent-blue: #3498db;
+            --pos-green: #27ae60;
+            --neg-red: #c0392b;
+            --bg-light: #f4f6f9;
+            --tab-active: #34495e;
+            --tab-inactive: #bdc3c7;
+        }
+        body {
+            font-family: "Microsoft YaHei", "Segoe UI", sans-serif;
+            background-color: var(--bg-light);
+            color: #333;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .container {
+            max-width: 1100px;
+            width: 100%;
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.08);
+            margin-bottom: 30px;
+        }
+        h1 {
+            color: var(--primary-color);
+            text-align: center;
+            margin-bottom: 5px;
+        }
+        .subtitle {
+            text-align: center;
+            color: #7f8c8d;
+            font-size: 0.9em;
+            margin-bottom: 25px;
+        }
+
+        /* Tabs Styles */
+        .tabs {
+            display: flex;
+            justify-content: center;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #eee;
+        }
+        .tab-btn {
+            padding: 12px 30px;
+            border: none;
+            background: none;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: bold;
+            color: #7f8c8d;
+            position: relative;
+            transition: all 0.3s ease;
+        }
+        .tab-btn:hover { color: var(--primary-color); }
+        .tab-btn.active {
+            color: var(--primary-color);
+        }
+        .tab-btn.active::after {
+            content: '';
+            position: absolute;
+            bottom: -2px;
+            left: 0;
+            width: 100%;
+            height: 3px;
+            background-color: var(--accent-blue);
+        }
+
+        /* Canvas & Legend */
+        .canvas-wrapper {
+            width: 100%;
+            overflow-x: auto;
+            text-align: center;
+            margin: 20px 0;
+            min-height: 450px;
+        }
+        .legend {
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            margin-bottom: 10px;
+            font-size: 0.9rem;
+        }
+        .legend-item { display: flex; align-items: center; }
+        .color-box { width: 15px; height: 15px; margin-right: 5px; border-radius: 3px; }
+
+        /* Mapping Table Styles */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+            font-size: 13px;
+        }
+        th {
+            background-color: var(--primary-color);
+            color: white;
+            padding: 10px;
+            text-align: left;
+        }
+        td {
+            padding: 10px;
+            border-bottom: 1px solid #eee;
+            vertical-align: top;
+            line-height: 1.5;
+        }
+        tr:nth-child(even) { background-color: #f9f9f9; }
+        tr:hover { background-color: #eef2f7; }
+
+        .code-tag {
+            font-family: Consolas, Monaco, monospace;
+            background-color: #e8f0fe;
+            color: #1a73e8;
+            padding: 4px 8px;
+            border-radius: 3px;
+            display: inline-block;
+            margin: 2px 0;
+            border: 1px solid #d2e3fc;
+            font-size: 0.85rem;
+            white-space: pre-wrap; /* 允许长字段换行 */
+            word-break: break-all;
+        }
+        .logic-note { color: #5f6368; font-style: italic; font-size: 0.85rem; margin-top: 2px; }
+        
+        /* Utility Classes */
+        .hidden { display: none; }
+        .text-right { text-align: right; }
+        .amount { font-family: Consolas, monospace; font-weight: bold; }
+        .d-plus { color: var(--pos-green); font-weight: bold; }
+        .d-minus { color: var(--neg-red); font-weight: bold; }
+        
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>IFRS 17 余额调节表分析工具</h1>
+        <p class="subtitle">针对：未来现金流现值 (PVFCF) | 非金融风险调整 (RA) | 合同服务边际 (CSM)</p>
+        
+        <div class="tabs">
+            <button class="tab-btn active" onclick="switchTab('pvfcf')">1. 未来现金流现值 (PVFCF)</button>
+            <button class="tab-btn" onclick="switchTab('ra')">2. 风险调整 (RA)</button>
+            <button class="tab-btn" onclick="switchTab('csm')">3. 合同服务边际 (CSM)</button>
+        </div>
+
+        <div class="legend">
+            <div class="legend-item"><div class="color-box" style="background:#2c3e50"></div>期初/期末余额</div>
+            <div class="legend-item"><div class="color-box" style="background:#27ae60"></div>增加负债</div>
+            <div class="legend-item"><div class="color-box" style="background:#c0392b"></div>减少负债</div>
+        </div>
+
+        <div class="canvas-wrapper">
+            <canvas id="mainCanvas" width="960" height="500"></canvas>
+        </div>
+    </div>
+
+    <div class="container">
+        <h2 id="tableTitle">字段映射详情</h2>
+        <div id="mappingContent">
+            <!-- Table content will be injected via JS -->
+        </div>
+    </div>
+
+    <script>
+        // === 数据源 (基于截图 2022 年度列) ===
+        // 注意：在负债调节表中，通常正数代表负债余额增加，负数代表减少
+        const datasets = {
+            pvfcf: {
+                title: "未来现金流量的现值 (PVFCF)",
+                // 逻辑：期初 + 经验调整 + 新业务 + 估计变更 + 利息 + 现金流(保费-赔付) = 期末
+                data: [
+                    { label: "期初余额\n(Opening)", value: 483568, isTotal: true },
+                    { label: "经验调整\n(Exp Adj)", value: -4256, isTotal: false },
+                    { label: "新业务\n(New Business)", value: -8198, isTotal: false }, // 通常新单保费流入>支出现值，导致负债减少(负数)
+                    { label: "估计变更\n(Est Chg->CSM)", value: 5230, isTotal: false },
+                    { label: "估计变更\n(Est Chg->P&L)", value: 7448, isTotal: false }, // 亏损合同相关
+                    { label: "过往服务\n(Past Service)", value: -6885, isTotal: false },
+                    { label: "利息/汇率\n(Finance/OCI)", value: 14401, isTotal: false }, // 14345 + 56
+                    { label: "实际现金流\n(Cash Flows)", value: 13345, isTotal: false }, // 收支净额导致负债变化 (见下方解释)
+                    { label: "期末余额\n(Closing)", value: 504653, isTotal: true }      // 计算值
+                ],
+                mapping: [
+                    { 
+                        item: "期初余额", 
+                        field: "未到期责任负债_预期现金流_非亏损\n+ 未到期责任负债_预期现金流_亏损", 
+                        logic: "上期期末余额。" 
+                    },
+                    { 
+                        item: "经验调整", 
+                        field: "保险合同收入_经验调整\n(注：通常需结合 赔付与费用_亏损分摊_预期现金流)", 
+                        logic: "当期实际与预期的非投资成分差异释放。" 
+                    },
+                    { 
+                        item: "新业务", 
+                        field: "新增合同预期现金流_保费现金流_盈利合同\n+ 新增合同预期现金流_IACF_盈利合同\n+ 新增合同预期现金流_赔付与费用现金流_盈利合同\n+ 新增合同预期现金流_保费现金流_亏损合同\n+ 新增合同预期现金流_IACF_亏损合同\n+ 新增合同预期现金流_赔付与费用现金流_亏损合同_非亏损", 
+                        logic: "新单带来的未来现金流现值。通常为负(因为包含未来保费流入)。" 
+                    },
+                    { 
+                        item: "估计变更(调CSM)", 
+                        field: "未到期_调整CSM的预期现金流变动", 
+                        logic: "解锁CSM的部分。" 
+                    },
+                    { 
+                        item: "估计变更(进损益)", 
+                        field: "亏损合同损益_不调整CSM的预期现金流变动\n+ 亏损合同损益_新增合同预期现金流_赔付与费用现金流_亏损", 
+                        logic: "亏损合同的假设调整，或CSM减记至0后的溢出。" 
+                    },
+                    { 
+                        item: "利息影响", 
+                        field: "IFIE_P&L_未到期_预期现金流_非亏损\n+ IFIE_P&L_未到期_预期现金流_亏损\n+ IFIE_OCI_未到期_预期现金流_非亏损\n+ IFIE_OCI_未到期_预期现金流_亏损", 
+                        logic: "货币时间价值的释放(Unwind)及OCI变动。" 
+                    },
+                    { 
+                        item: "实际现金流", 
+                        field: "现金流_收到的保费\n+ 现金流_支付的获取费用\n+ (注：您提供的列表中缺少 '支付的赔款' 字段，实际报表中必须包含)", 
+                        logic: "⚠️ 关键：这部分来自【现金流】类字段。收到保费会增加负债(LRC)，支付赔款减少负债。" 
+                    }
+                ]
+            },
+            ra: {
+                title: "非金融风险调整 (RA)",
+                data: [
+                    { label: "期初余额", value: 12913, isTotal: true },
+                    { label: "RA释放\n(Release)", value: -1542, isTotal: false },
+                    { label: "新业务", value: 1644, isTotal: false },
+                    { label: "估计变更\n(调CSM)", value: -619, isTotal: false },
+                    { label: "估计变更\n(进损益)", value: -86, isTotal: false },
+                    { label: "过往服务", value: -1571, isTotal: false },
+                    { label: "利息/汇率", value: 370, isTotal: false }, // 360 + 10
+                    { label: "期末余额", value: 11109, isTotal: true }
+                ],
+                mapping: [
+                    { 
+                        item: "期初余额", 
+                        field: "未到期责任负债_非金融风险调整_非亏损\n+ 未到期责任负债_非金融风险调整_亏损", 
+                        logic: "上期期末余额。" 
+                    },
+                    { 
+                        item: "RA释放", 
+                        field: "保险合同收入_预期释放的非金融风险调整_含亏损\n+ 保险合同收入_预期释放的非金融风险调整_亏损分摊", 
+                        logic: "随着不确定性消除而释放进收入。" 
+                    },
+                    { 
+                        item: "新业务", 
+                        field: "新增合同非金融风险调整_盈利合同\n+ 新增合同非金融风险调整_亏损合同_非亏损\n+ 亏损合同损益_新增合同非金融风险调整_亏损", 
+                        logic: "新单带来的风险溢价。" 
+                    },
+                    { 
+                        item: "估计变更(调CSM)", 
+                        field: "未到期_调整CSM的非金融风险调整变动", 
+                        logic: "非金融假设变化导致的RA变动，解锁CSM。" 
+                    },
+                    { 
+                        item: "估计变更(进损益)", 
+                        field: "亏损合同损益_不调整CSM的非金融风险调整变动", 
+                        logic: "亏损合同相关的RA变动。" 
+                    },
+                    { 
+                        item: "利息影响", 
+                        field: "IFIE_P&L_未到期_非金融风险调整_非亏损\n+ IFIE_P&L_未到期_非金融风险调整_亏损\n+ IFIE_OCI_未到期_非金融风险调整_非亏损\n+ IFIE_OCI_未到期_非金融风险调整_亏损", 
+                        logic: "RA的利息增值。" 
+                    }
+                ]
+            },
+            csm: {
+                title: "合同服务边际 (CSM)",
+                data: [
+                    { label: "期初余额", value: 89227, isTotal: true },
+                    { label: "新业务", value: 9221, isTotal: false },
+                    { label: "利息增值", value: 3334, isTotal: false },
+                    { label: "估计变更", value: -4611, isTotal: false }, // 调CSM的现金流+RA变动总和
+                    { label: "CSM摊销", value: -9565, isTotal: false },
+                    { label: "汇率变动", value: 11, isTotal: false },
+                    { label: "期末余额", value: 87617, isTotal: true }
+                ],
+                mapping: [
+                    { 
+                        item: "期初余额", 
+                        field: "未到期责任负债_CSM\n(需使用上期期末值)", 
+                        logic: "上期期末余额。" 
+                    },
+                    { 
+                        item: "新业务", 
+                        field: "新增合同CSM_盈利合同", 
+                        logic: "新单利润。注意：亏损合同不产生CSM。" 
+                    },
+                    { 
+                        item: "利息增值", 
+                        field: "IFIE_P&L_未到期_CSM", 
+                        logic: "按锁定利率计算的利息。" 
+                    },
+                    { 
+                        item: "CSM摊销", 
+                        field: "保险合同收入_摊销的CSM", 
+                        logic: "本期服务释放进收入。" 
+                    },
+                    { 
+                        item: "估计变更", 
+                        field: "未到期_调整CSM的预期现金流变动\n+ 未到期_调整CSM的非金融风险调整变动", 
+                        logic: "即上图中 PVFCF 和 RA 标为“调CSM”的部分之和(取反向)。" 
+                    }
+                ]
+            }
+        };
+
+        let currentTab = 'pvfcf';
+
+        function switchTab(tab) {
+            currentTab = tab;
+            // Update Buttons
+            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+            event.target.classList.add('active');
+            
+            // Re-render
+            renderChart();
+            renderTable();
+        }
+
+        // === 渲染表格 ===
+        function renderTable() {
+            const config = datasets[currentTab];
+            const container = document.getElementById('mappingContent');
+            document.getElementById('tableTitle').innerText = config.title + " - 字段映射表";
+            
+            let html = `<table>
+                <thead>
+                    <tr>
+                        <th style="width:15%">报表项目</th>
+                        <th style="width:45%">对应底层字段 (来源于你的列表)</th>
+                        <th style="width:40%">业务逻辑说明</th>
+                    </tr>
+                </thead>
+                <tbody>`;
+            
+            config.mapping.forEach(row => {
+                html += `<tr>
+                    <td><strong>${row.item}</strong></td>
+                    <td><span class="code-tag">${row.field}</span></td>
+                    <td class="logic-note">${row.logic}</td>
+                </tr>`;
+            });
+            
+            html += `</tbody></table>`;
+            container.innerHTML = html;
+        }
+
+        // === Canvas 绘图逻辑 (通用) ===
+        function renderChart() {
+            const canvas = document.getElementById('mainCanvas');
+            const ctx = canvas.getContext('2d');
+            const dataConfig = datasets[currentTab];
+            const chartData = dataConfig.data;
+
+            // 尺寸设置
+            const width = canvas.width;
+            const height = canvas.height;
+            const padding = { top: 60, right: 30, bottom: 80, left: 80 };
+            const chartWidth = width - padding.left - padding.right;
+            const chartHeight = height - padding.top - padding.bottom;
+
+            // 计算Y轴范围
+            let currentSum = 0;
+            let maxVal = -Infinity;
+            let minVal = Infinity;
+            
+            const steps = [];
+            chartData.forEach(item => {
+                let start, end;
+                if (item.isTotal) {
+                    start = 0;
+                    end = item.value;
+                    currentSum = item.value;
+                } else {
+                    start = currentSum;
+                    currentSum += item.value;
+                    end = currentSum;
+                }
+                steps.push({ start, end, ...item });
+                maxVal = Math.max(maxVal, start, end);
+                minVal = Math.min(minVal, start, end);
+            });
+
+            // 增加边距
+            const range = maxVal - minVal;
+            maxVal += range * 0.1;
+            minVal = Math.min(0, minVal - range * 0.05); // 确保0线在视野内
+
+            const yScale = chartHeight / (maxVal - minVal);
+            const zeroY = padding.top + (maxVal - 0) * yScale;
+
+            // 绘图
+            ctx.clearRect(0, 0, width, height);
+
+            // 1. 坐标轴
+            ctx.beginPath();
+            ctx.strokeStyle = '#e0e0e0';
+            ctx.moveTo(padding.left, padding.top);
+            ctx.lineTo(padding.left, height - padding.bottom);
+            ctx.lineTo(width - padding.right, height - padding.bottom);
+            ctx.stroke();
+
+            // 0线
+            ctx.beginPath();
+            ctx.strokeStyle = '#7f8c8d';
+            ctx.lineWidth = 1;
+            ctx.moveTo(padding.left, zeroY);
+            ctx.lineTo(width - padding.right, zeroY);
+            ctx.stroke();
+
+            // 2. 柱状图
+            const barWidth = Math.min(60, chartWidth / (steps.length * 1.5));
+            const gap = (chartWidth - steps.length * barWidth) / (steps.length + 1);
+
+            ctx.font = '13px Arial';
+            ctx.textAlign = 'center';
+
+            steps.forEach((step, i) => {
+                const x = padding.left + gap + i * (barWidth + gap);
+                const yStart = padding.top + (maxVal - step.start) * yScale;
+                const yEnd = padding.top + (maxVal - step.end) * yScale;
+                
+                const barH = Math.abs(yEnd - yStart);
+                const barTop = Math.min(yStart, yEnd);
+
+                // 颜色
+                let color = '#2c3e50';
+                if (!step.isTotal) {
+                    color = step.value >= 0 ? '#27ae60' : '#c0392b';
+                }
+
+                ctx.fillStyle = color;
+                ctx.fillRect(x, barTop, barWidth, Math.max(barH, 2));
+
+                // 连线
+                if (i < steps.length - 1) {
+                    ctx.beginPath();
+                    ctx.strokeStyle = '#95a5a6';
+                    ctx.setLineDash([2, 2]);
+                    ctx.moveTo(x + barWidth, yEnd);
+                    const nextX = padding.left + gap + (i + 1) * (barWidth + gap);
+                    ctx.lineTo(nextX, yEnd);
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+                }
+
+                // 数值标签
+                ctx.fillStyle = '#333';
+                const labelY = step.value >= 0 ? barTop - 10 : barTop + barH + 15;
+                let valText = Math.round(step.value).toLocaleString();
+                if (!step.isTotal && step.value > 0) valText = "+" + valText;
+                ctx.fillText(valText, x + barWidth/2, labelY);
+
+                // X轴标签
+                ctx.fillStyle = '#555';
+                const lines = step.label.split('\n');
+                lines.forEach((line, idx) => {
+                    ctx.fillText(line, x + barWidth/2, height - padding.bottom + 20 + idx*15);
+                });
+            });
+            
+            // Y轴刻度
+            ctx.textAlign = 'right';
+            ctx.fillStyle = '#999';
+            for(let i=0; i<=5; i++) {
+                const val = minVal + (range * (i/5)); // 修正刻度计算
+                // 简单起见，只画几个参考线，或者略过
+            }
+        }
+
+        // 初始化
+        window.onload = function() {
+            renderChart();
+            renderTable();
+        };
+    </script>
+</body>
+</html>

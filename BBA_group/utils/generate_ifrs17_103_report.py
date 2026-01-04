@@ -54,6 +54,9 @@ def generate_report_data(init_data, data_by_year):
         def get_d(key):
             return data.get(key, Decimal('0'))
         
+        is_initial_year = (year == min(data_by_year.keys()))
+        is_final_year = (year == max(data_by_year.keys()))
+        
         # --- 1. Opening Balance ---
         # 1.1 Net Opening
         net_opening = opening['lrc_non_lc'] + opening['lrc_lc'] + opening['lic']
@@ -69,9 +72,8 @@ def generate_report_data(init_data, data_by_year):
             'indent': 0
         })
         
-        year_explanations.append({
-            "title": "1. 年初余额",
-            "content": f"""
+        # 构建年初余额说明内容
+        opening_content = f"""
             <table style="width:100%; border-collapse: collapse; margin-top: 5px; border: 1px solid #eee;">
                 <tr style="background-color: #f8f9fa;">
                     <th style="text-align: left; padding: 8px;">项目</th>
@@ -97,11 +99,28 @@ def generate_report_data(init_data, data_by_year):
                     <td style="text-align: right; padding: 8px;">{format_decimal(-opening['lrc_lc'] if opening['lrc_lc'] < 0 else opening['lrc_lc'])}</td>
                     <td style="text-align: right; padding: 8px;">{format_decimal(opening['lic'])}</td>
                 </tr>
-            </table>
+            </table>"""
+        
+        # 如果是初始年度且有init_data，添加BEL计算公式说明
+        bel_formula_text = ""
+        if is_initial_year and init_data and init_data.get('nb_init_prem', Decimal('0')) != Decimal('0'):
+            nb_bel = (init_data.get('nb_init_claims', Decimal('0')) + 
+                      init_data.get('nb_init_maint', Decimal('0')) + 
+                      init_data.get('nb_init_iacf', Decimal('0'))) - init_data.get('nb_init_prem', Decimal('0'))
+            bel_formula_text = f"""
+            <p style="font-size: 0.9em; color: #666; margin-top: 10px;">
+                <b>初始确认BEL计算公式</b>: BEL = (预期赔付 {format_decimal(init_data.get('nb_init_claims', Decimal('0')))} + 预期维费 {format_decimal(init_data.get('nb_init_maint', Decimal('0')))} + 预期获取费用 {format_decimal(init_data.get('nb_init_iacf', Decimal('0')))}) - 预期保费 {format_decimal(init_data.get('nb_init_prem', Decimal('0')))} = {format_decimal(nb_bel)}
+            </p>"""
+        
+        opening_content += bel_formula_text + """
             <p style="font-size: 0.9em; color: #666; margin-top: 10px;">
                 <b>说明</b>: 年初余额来自上一年度的期末余额。LRC-非亏损 = BEL + RA + CSM - LC，LRC-亏损 = LC（显示为绝对值）。
             </p>
             """
+        
+        year_explanations.append({
+            "title": "1. 年初余额",
+            "content": opening_content
         })
         
         add_row = lambda cat, lrc_nl, lrc_l, lic, indent=0, is_header=False: year_rows.append({
@@ -150,9 +169,6 @@ def generate_report_data(init_data, data_by_year):
         add_row('年初的保险合同负债(1)', opening['lrc_non_lc'], opening_lc_display, opening['lic'], is_header=True)
         add_row('年初的保险合同资产(2)', Decimal('0'), Decimal('0'), Decimal('0'), is_header=False)
         add_row('年初的保险合同净负债(3)=(1)+(2)', opening['lrc_non_lc'], opening_lc_display, opening['lic'], is_header=False)
-        
-        is_initial_year = (year == min(data_by_year.keys()))
-        is_final_year = (year == max(data_by_year.keys()))
 
         # --- 2. Revenue (4) ---
         rev_csm = get_d('保险合同收入_摊销的CSM')
@@ -170,6 +186,8 @@ def generate_report_data(init_data, data_by_year):
         rev_claims_net = rev_claims_gross - rev_lc_release_claims
         rev_ra_net = rev_ra_gross - rev_lc_release_ra
 
+        # 获取IFIE_P&L的亏损部分（需要从收入中扣除）
+
         # Revenue calculation: keep display and calculation signs consistent
         # rev_claims_net / rev_ra_net 在表格展示时取负号，因此计算时同样取负
         revenue_non_lc = rev_csm + rev_iacf + rev_exp - rev_claims_net - rev_ra_net
@@ -179,6 +197,7 @@ def generate_report_data(init_data, data_by_year):
         
         add_row('保险服务收入合计(4)', revenue_non_lc, revenue_lc, Decimal('0'), is_header=True)
         
+        # Update explanation to show LC revenue breakdown
         year_explanations.append({
             "title": "4. 保险服务收入合计",
             "content": f"""
@@ -228,6 +247,18 @@ def generate_report_data(init_data, data_by_year):
                 <tr>
                     <td style="padding: 8px;">摊销的CSM</td>
                     <td style="text-align: right; padding: 8px;">{format_decimal(rev_csm)}</td>
+                    <td style="text-align: right; padding: 8px;">0.00</td>
+                    <td style="text-align: right; padding: 8px;">0.00</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px;">摊销的IACF</td>
+                    <td style="text-align: right; padding: 8px;">{format_decimal(rev_iacf)}</td>
+                    <td style="text-align: right; padding: 8px;">0.00</td>
+                    <td style="text-align: right; padding: 8px;">0.00</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px;">经验调整</td>
+                    <td style="text-align: right; padding: 8px;">{format_decimal(rev_exp)}</td>
                     <td style="text-align: right; padding: 8px;">0.00</td>
                     <td style="text-align: right; padding: 8px;">0.00</td>
                 </tr>
@@ -292,7 +323,9 @@ def generate_report_data(init_data, data_by_year):
             })
 
         # 5c. Loss Component Recognition & Reversal
-        initial_loss_recog = -get_d('nb_initial_lc') if is_initial_year else Decimal('0')
+        # 修正：每年都应该读取nb_initial_lc，因为每年都可能有新签单的保单
+        # 初始确认亏损应该在每张保单的签单年度被计入，组级汇总时已经汇总了所有保单的nb_initial_lc
+        initial_loss_recog = -get_d('nb_initial_lc')
         lc_change_est = get_d('亏损合同损益_不调整CSM的预期现金流变动') + get_d('亏损合同损益_不调整CSM的非金融风险调整变动')
         
         # LC release (分摊的LC) reduces LC but is not counted as revenue (per user instruction).
@@ -307,8 +340,11 @@ def generate_report_data(init_data, data_by_year):
         
         add_row('亏损部分的确认及转回(7)', net_lc_recog_non_lc, net_lc_recog, Decimal('0'), indent=1)
         
-        # Add explanation for LC recognition if non-zero
-        if net_lc_recog != 0 or net_lc_recog_non_lc != 0:
+        # Add explanation for LC recognition (always show if there's any LC activity)
+        # Show explanation if net_lc_recog is non-zero, or if any component is non-zero
+        has_lc_activity = (net_lc_recog != 0 or net_lc_recog_non_lc != 0 or 
+                           initial_loss_recog != 0 or lc_change_est != 0 or lc_release_total != 0)
+        if has_lc_activity:
             explanation_content = f"""
                 <table style="width:100%; border-collapse: collapse; margin-top: 5px; border: 1px solid #eee;">
                     <tr style="background-color: #f8f9fa;">
@@ -320,7 +356,7 @@ def generate_report_data(init_data, data_by_year):
                     <tr>
                         <td style="padding: 8px;">初始确认亏损</td>
                         <td style="text-align: right; padding: 8px;">0.00</td>
-                        <td style="text-align: right; padding: 8px;">{format_decimal(initial_loss_recog) if is_initial_year else '0.00'}</td>
+                        <td style="text-align: right; padding: 8px;">{format_decimal(initial_loss_recog)}</td>
                         <td style="text-align: right; padding: 8px;">0.00</td>
                     </tr>
                     <tr>
@@ -507,8 +543,11 @@ def generate_report_data(init_data, data_by_year):
 
         add_row('保险合同金融变动额(12)', ifie_pl_non_lc, ifie_pl_lc_display, ifie_pl_lic, indent=0)
         
-        # Add explanation for IFIE P&L
-        if ifie_pl_non_lc != 0 or ifie_pl_lc_display != 0:
+        # Add explanation for IFIE P&L (always show if there's any IFIE activity)
+        has_ifie_pl_activity = (ifie_pl_non_lc != 0 or ifie_pl_lc_display != 0 or 
+                                ifie_pl_cf_non_lc_raw != 0 or ifie_pl_ra_non_lc_raw != 0 or 
+                                ifie_pl_csm != 0 or ifie_pl_cf_lc_log != 0 or ifie_pl_ra_lc_log != 0)
+        if has_ifie_pl_activity:
             # Calculate component breakdown for Non-LC (derived from Total - LC)
             # Note: We show the derived Non-LC components, not the raw log values
             # LC components in display: negate to show as positive in report
@@ -607,8 +646,11 @@ def generate_report_data(init_data, data_by_year):
 
         add_row('其他综合收益其他变动(14)', ifie_oci_non_lc, ifie_oci_lc_display, Decimal('0'), indent=0)
         
-        # Add explanation for IFIE OCI
-        if ifie_oci_non_lc != 0 or ifie_oci_lc_display != 0:
+        # Add explanation for IFIE OCI (always show if there's any IFIE OCI activity)
+        has_ifie_oci_activity = (ifie_oci_non_lc != 0 or ifie_oci_lc_display != 0 or 
+                                 ifie_oci_cf_non_lc_raw != 0 or ifie_oci_ra_non_lc_raw != 0 or 
+                                 ifie_oci_cf_lc_log != 0 or ifie_oci_ra_lc_log != 0)
+        if has_ifie_oci_activity:
             # Calculate component breakdown for Non-LC (derived from Total - LC)
             # LC components in display: negate to show as positive in report
             ifie_oci_cf_lc_display_comp = -ifie_oci_cf_lc_log  # Negate to show as positive
@@ -1278,7 +1320,7 @@ def render_html_template(rows, explanations_by_year, policy_no=None, certi_no=No
     """
     return html
 
-def main(yearly_results=None, output_html_path=None, policy_no=None, certi_no=None):
+def main(yearly_results=None, init_context=None, output_html_path=None, policy_no=None, certi_no=None):
     if yearly_results is None or len(yearly_results) == 0:
         print("Error: 需要提供yearly_results数据")
         return
@@ -1287,9 +1329,39 @@ def main(yearly_results=None, output_html_path=None, policy_no=None, certi_no=No
         policy_no = yearly_results[0].get('policy_no')
     if certi_no is None and yearly_results:
         certi_no = yearly_results[0].get('certi_no') or None
+    
+    # 提取初始确认数据
+    if init_context:
+        def to_decimal(val):
+            if val is None:
+                return Decimal('0')
+            if isinstance(val, Decimal):
+                return val
+            return Decimal(str(val))
+        
+        init_data = {
+            'nb_init_prem': to_decimal(getattr(init_context, 'actual_premium', None)),
+            'nb_init_iacf': to_decimal(getattr(init_context, 'actual_iacf_incurred', None)),
+            'nb_init_claims': to_decimal(getattr(init_context, 'init_fut_claim', None)),
+            'nb_init_maint': to_decimal(getattr(init_context, 'init_fut_maint', None)),
+            'nb_init_ra': to_decimal(getattr(init_context, 'init_ra', None)),
+            'nb_init_csm': to_decimal(getattr(init_context, 'nb_initial_csm', None)),
+            'nb_init_lc': to_decimal(getattr(init_context, 'nb_initial_lc', None)),
+        }
+    else:
+        # 如果没有init_context，尝试从第一个年度结果推导（如果可能）
+        init_data = {
+            'nb_init_prem': Decimal('0'),
+            'nb_init_iacf': Decimal('0'),
+            'nb_init_claims': Decimal('0'),
+            'nb_init_maint': Decimal('0'),
+            'nb_init_ra': Decimal('0'),
+            'nb_init_csm': Decimal('0'),
+            'nb_init_lc': Decimal('0'),
+        }
         
     data_by_year = convert_yearly_results_to_data_by_year(yearly_results)
-    rows, explanations = generate_report_data(None, data_by_year)
+    rows, explanations = generate_report_data(init_data, data_by_year)
     html = render_html_template(rows, explanations, policy_no=policy_no, certi_no=certi_no)
     
     if output_html_path is None:

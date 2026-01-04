@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IFRS 17 全流程计量引擎可视化 (Full Traceability)</title>
+    <style>
+        :root {
+            --primary: #2c3e50;
+            --secondary: #34495e;
+            --accent: #3498db;
+            --csm-color: #27ae60;
+            --lc-color: #c0392b;
+            --bg-color: #f4f6f7;
+            --card-bg: #ffffff;
+        }
+        body {
+            font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+            background-color: var(--bg-color);
+            margin: 0;
+            padding: 20px;
+            color: #333;
+            font-size: 13px;
+        }
+        .container {
+            max-width: 1600px;
+            margin: 0 auto;
+        }
+        
+        /* Canvas Container */
+        .canvas-wrapper {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            padding: 20px;
+            margin-bottom: 30px;
+            overflow-x: auto;
+            text-align: center;
+        }
+        
+        h1 { color: var(--primary); text-align: center; margin-bottom: 20px; }
+        h2 { 
+            border-left: 5px solid var(--accent); 
+            padding-left: 10px; 
+            margin-top: 40px; 
+            color: var(--secondary);
+            background: #e8f6f3;
+            padding: 10px;
+        }
+
+        /* Tabs */
+        .tabs {
+            display: flex;
+            justify-content: center;
+            margin-bottom: 20px;
+            gap: 10px;
+        }
+        .tab-btn {
+            padding: 12px 30px;
+            border: none;
+            border-radius: 25px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            background: #e0e0e0;
+            color: #666;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .tab-btn.active {
+            background: var(--accent);
+            color: white;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+        }
+        .tab-content { display: none; animation: fadeIn 0.5s; }
+        .tab-content.active { display: block; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+        /* Field Card */
+        .field-card {
+            background: var(--card-bg);
+            border: 1px solid #e0e0e0;
+            border-radius: 6px;
+            padding: 15px;
+            width: 100%; 
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+            transition: transform 0.2s;
+            position: relative;
+        }
+        .field-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+            border-color: var(--accent);
+        }
+        
+        .field-title {
+            font-weight: bold;
+            color: var(--primary);
+            margin-bottom: 8px;
+            font-size: 14px;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 5px;
+        }
+        .field-formula {
+            font-family: Consolas, monospace;
+            color: #7f8c8d;
+            font-size: 11px;
+            margin-bottom: 8px;
+            background: #f8f9fa;
+            padding: 5px;
+            border-radius: 4px;
+            word-break: break-all;
+        }
+        .field-calc {
+            color: #2980b9;
+            font-size: 12px;
+            margin-bottom: 5px;
+        }
+        .field-value {
+            font-weight: bold;
+            font-size: 16px;
+            text-align: right;
+        }
+        .val-csm { color: var(--csm-color); }
+        .val-lc { color: var(--lc-color); }
+        .val-neutral { color: #555; }
+        .correction-highlight { border: 2px solid #e74c3c; background-color: #fff5f5; }
+        .correction-tag { 
+            position: absolute; top: -10px; right: 10px; 
+            background: #e74c3c; color: white; 
+            font-size: 10px; padding: 2px 6px; border-radius: 4px; 
+        }
+
+        /* Grid Layout for Fields */
+        .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; }
+        .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; }
+        .grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; }
+        
+        .badge {
+            display: inline-block;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 10px;
+            color: white;
+            margin-right: 5px;
+        }
+        .badge-csm { background-color: var(--csm-color); }
+        .badge-lc { background-color: var(--lc-color); }
+        .badge-input { background-color: #7f8c8d; }
+
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>IFRS 17 全流程计量引擎可视化 (Fixed Logic)</h1>
+
+    <!-- Tabs Navigation -->
+    <div class="tabs">
+        <button class="tab-btn active" onclick="switchTab('scenario1')">案例一：亏转盈 (LC翻转)</button>
+        <button class="tab-btn" onclick="switchTab('scenario2')">案例二：盈转亏 (CSM击穿)</button>
+    </div>
+
+    <!-- 1. 全局可视化流图 -->
+    <div class="canvas-wrapper">
+        <h3 id="canvasTitle" style="text-align:center; margin-top:0;">资金流向与逻辑判定全景图</h3>
+        <canvas id="flowCanvas" width="1500" height="500"></canvas>
+    </div>
+
+    <!-- SCENARIO 1: 亏转盈 -->
+    <div id="scenario1" class="tab-content active">
+        <!-- SECTION 1 -->
+        <h2>第一阶段：初始确认与计息 (Initial Recognition & Accretion)</h2>
+        <div class="grid-3">
+            <div class="field-card">
+                <div class="field-title"><span class="badge badge-csm">CSM</span>IF_年初CSM余额</div>
+                <div class="field-formula">直接取数</div>
+                <div class="field-value val-csm">0.00</div>
+            </div>
+            <div class="field-card">
+                <div class="field-title"><span class="badge badge-csm">CSM</span>当年新增合同CSM</div>
+                <div class="field-formula">NB_CSM (汇总>0部分)</div>
+                <div class="field-calc">模拟输入: 大额盈利新单</div>
+                <div class="field-value val-csm">250.00</div>
+            </div>
+            <div class="field-card">
+                <div class="field-title"><span class="badge badge-csm">CSM</span>CSM计息 (合计)</div>
+                <div class="field-formula">期初计息 + 新增计息</div>
+                <div class="field-calc">0 + 250 * ((1+3%)^0.5 - 1)</div>
+                <div class="field-value val-csm">3.72</div>
+            </div>
+        </div>
+        <div class="grid-2" style="margin-top:15px;">
+            <div class="field-card">
+                <div class="field-title"><span class="badge badge-csm">CSM</span>IF_计息后CSM</div>
+                <div class="field-formula">IF_年初余额 + IF_计息后CSM</div>
+                <div class="field-value val-csm">0.00</div>
+            </div>
+            <div class="field-card">
+                <div class="field-title"><span class="badge badge-csm">CSM</span>NB_计息后CSM</div>
+                <div class="field-formula">NB_新增CSM + NB_CSM计息</div>
+                <div class="field-calc">250.00 + 3.72</div>
+                <div class="field-value val-csm">253.72</div>
+            </div>
+        </div>
+
+        <!-- SECTION 2 -->
+        <h2>第二阶段：LC 计量与 IFIE 分摊 (LC Interest Allocation)</h2>
+        <p style="color:#666; font-size:12px; margin-bottom:10px;">*已修正 NB 分摊比例的分子为 NB_新增LC</p>
+        
+        <div class="grid-4">
+            <!-- IF Logic -->
+            <div class="field-card">
+                <div class="field-title"><span class="badge badge-lc">LC</span>IF_年初LC</div>
+                <div class="field-formula">直接取数</div>
+                <div class="field-value val-lc">-100.00</div>
+            </div>
+            <div class="field-card">
+                <div class="field-title"><span class="badge badge-input">Param</span>IF_LC IFIE分摊比例</div>
+                <div class="field-formula">IF_年初LC / IF_总现金流PV</div>
+                <div class="field-calc">-100 / 5000</div>
+                <div class="field-value">2.00%</div>
+            </div>
+            
+            <!-- NB Logic (Corrected) -->
+            <div class="field-card">
+                <div class="field-title"><span class="badge badge-lc">LC</span>NB_新增LC</div>
+                <div class="field-formula">Sum(当年新增<0)</div>
+                <div class="field-value val-lc">-20.00</div>
+            </div>
+            <div class="field-card correction-highlight">
+                <span class="correction-tag">已修正</span>
+                <div class="field-title"><span class="badge badge-input">Param</span>NB_LC IFIE分摊比例</div>
+                <div class="field-formula" style="color:#e74c3c; font-weight:bold;">NB_新增LC / NB_总现金流PV</div>
+                <div class="field-calc">-20 / 1000 (假设NB总流出)</div>
+                <div class="field-value">2.00%</div>
+            </div>
+        </div>
+
+        <div style="margin-top:20px; font-weight:bold; color:#555;">待分摊 IFIE 汇总 & 结果:</div>
+        <div class="grid-3">
+            <div class="field-card">
+                <div class="field-title">IF_待分摊IFIE_合计</div>
+                <div class="field-formula">计息 + 利率变化</div>
+                <div class="field-value">166.00</div>
+            </div>
+            <div class="field-card">
+                <div class="field-title">NB_待分摊IFIE_合计</div>
+                <div class="field-formula">计息 + 利率变化 (新增部分)</div>
+                <div class="field-calc">模拟假设值</div>
+                <div class="field-value">7.50</div>
+            </div>
+            <div class="field-card">
+                <div class="field-title"><span class="badge badge-lc">LC</span>LC分摊IFIE_合计</div>
+                <div class="field-formula">(IF_IFIE*2%) + (NB_IFIE*2%)</div>
+                <div class="field-calc">3.32 + 0.15</div>
+                <div class="field-value val-lc">3.47</div>
+            </div>
+        </div>
+        
+        <div class="grid-2" style="margin-top:15px;">
+            <div class="field-card">
+                <div class="field-title"><span class="badge badge-lc">LC</span>分摊后LC (Pre-Check)</div>
+                <div class="field-formula">IF_LC + NB_LC + IFIE</div>
+                <div class="field-calc">-100 - 20 + 3.47</div>
+                <div class="field-value val-lc">-116.53</div>
+            </div>
+        </div>
+
+        <!-- SECTION 3 -->
+        <h2>第三阶段：合同组 CSM/LC 判定 (Aggregation Check)</h2>
+        <div class="field-card" style="background-color: #eaf2f8; border-left: 5px solid #3498db;">
+            <div class="field-title">判定逻辑核心</div>
+            <div class="field-formula">
+                Total = 计息后CSM合计 + 分摊后LC合计<br>
+                Total = 253.72 + (-116.53) = <span style="color:green; font-weight:bold;">137.19</span>
+            </div>
+            <div class="field-calc" style="font-size:14px; margin-top:5px;">
+                因为 Total >= 0，合同组判定为 <strong>盈利组 (CSM Group)</strong>。<br>
+                LC 应被全额转回（吸收）。
+            </div>
+        </div>
+
+        <!-- SECTION 4 -->
+        <h2>第四阶段：吸收与重分类 (Absorption)</h2>
+        <div class="grid-2">
+            <div class="field-card" style="border-color: var(--lc-color);">
+                <div class="field-title"><span class="badge badge-lc">LC</span>被LC吸收的变化_合计</div>
+                <div class="field-formula">IF(盈利, -SUM(LC各项), ...)</div>
+                <div class="field-calc">-1 * (-116.53)</div>
+                <div class="field-value val-lc" style="color:green;">+116.53</div>
+            </div>
+            <div class="field-card" style="border-color: var(--csm-color);">
+                <div class="field-title"><span class="badge badge-csm">CSM</span>被CSM吸收的变化</div>
+                <div class="field-formula">IF(盈利, SUM(LC各项), ...)</div>
+                <div class="field-calc">CSM 支出以填补 LC</div>
+                <div class="field-value val-csm" style="color:red;">-116.53</div>
+            </div>
+        </div>
+
+        <!-- SECTION 5 -->
+        <h2>第五阶段：期末计量 (Final Measurement)</h2>
+        <div class="grid-3">
+            <div class="field-card">
+                <div class="field-title"><span class="badge badge-lc">LC</span>期末LC余额_合计</div>
+                <div class="field-formula">待调整LC + 调整</div>
+                <div class="field-calc">-116.53 + 116.53 = 0</div>
+                <div class="field-value val-lc">0.00</div>
+            </div>
+            <div class="field-card">
+                <div class="field-title"><span class="badge badge-csm">CSM</span>摊销的CSM</div>
+                <div class="field-formula">-(期初+新增+计息+被吸收) * 10%</div>
+                <div class="field-calc">-(137.19) * 10%</div>
+                <div class="field-value val-csm">-13.72</div>
+            </div>
+            <div class="field-card" style="background:#e8f8f5;">
+                <div class="field-title"><span class="badge badge-csm">CSM</span>期末CSM余额</div>
+                <div class="field-formula">摊销前 + 摊销</div>
+                <div class="field-calc">137.19 - 13.72</div>
+                <div class="field-value val-csm">123.47</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- SCENARIO 2: 盈转亏 -->
+    <div id="scenario2" class="tab-content">
+        <!-- SECTION 1 -->
+        <h2>第一阶段：初始确认与计息 (Initial Recognition & Accretion)</h2>
+        <div class="grid-3">
+            <div class="field-card">
+                <div class="field-title"><span class="badge badge-csm">CSM</span>IF_年初CSM余额</div>
+                <div class="field-formula">直接取数</div>
+                <div class="field-calc">期初盈利状态</div>
+                <div class="field-value val-csm">200.00</div>
+            </div>
+            <div class="field-card">
+                <div class="field-title"><span class="badge badge-csm">CSM</span>当年新增合同CSM</div>
+                <div class="field-formula">NB_CSM (汇总>0部分)</div>
+                <div class="field-calc">模拟输入: 少量盈利新单</div>
+                <div class="field-value val-csm">20.00</div>
+            </div>
+            <div class="field-card">
+                <div class="field-title"><span class="badge badge-csm">CSM</span>CSM计息 (合计)</div>
+                <div class="field-formula">期初计息 + 新增计息</div>
+                <div class="field-calc">6.00 + 0.30</div>
+                <div class="field-value val-csm">6.30</div>
+            </div>
+        </div>
+        <div class="grid-2" style="margin-top:15px;">
+            <div class="field-card">
+                <div class="field-title"><span class="badge badge-csm">CSM</span>IF_计息后CSM</div>
+                <div class="field-formula">IF_年初余额 + IF_计息后CSM</div>
+                <div class="field-value val-csm">206.00</div>
+            </div>
+            <div class="field-card">
+                <div class="field-title"><span class="badge badge-csm">CSM</span>NB_计息后CSM</div>
+                <div class="field-formula">NB_新增CSM + NB_CSM计息</div>
+                <div class="field-calc">20.00 + 0.30</div>
+                <div class="field-value val-csm">20.30</div>
+            </div>
+        </div>
+
+        <!-- SECTION 2 -->
+        <h2>第二阶段：LC 计量与 IFIE 分摊 (LC Interest Allocation)</h2>
+        <div class="grid-4">
+            <div class="field-card">
+                <div class="field-title"><span class="badge badge-lc">LC</span>IF_年初LC</div>
+                <div class="field-formula">直接取数</div>
+                <div class="field-value val-neutral">0.00</div>
+            </div>
+            <div class="field-card">
+                <div class="field-title"><span class="badge badge-input">Param</span>IF_LC IFIE分摊比例</div>
+                <div class="field-formula">IF_年初LC / IF_预期现金流...</div>
+                <div class="field-calc">0 / 5000 (因为年初无亏损)</div>
+                <div class="field-value">0.00%</div>
+            </div>
+            <div class="field-card">
+                <div class="field-title"><span class="badge badge-lc">LC</span>NB_新增LC</div>
+                <div class="field-formula">Sum(当年新增<0)</div>
+                <div class="field-calc">模拟输入: <strong>巨额亏损新单</strong></div>
+                <div class="field-value val-lc">-300.00</div>
+            </div>
+            <div class="field-card correction-highlight">
+                <span class="correction-tag">已修正</span>
+                <div class="field-title"><span class="badge badge-input">Param</span>NB_LC IFIE分摊比例</div>
+                <div class="field-formula" style="color:#e74c3c; font-weight:bold;">NB_新增LC / NB_总现金流PV</div>
+                <div class="field-calc">-300 / 1500 (假设值)</div>
+                <div class="field-value">20.00%</div>
+            </div>
+        </div>
+
+        <div style="margin-top:20px; font-weight:bold; color:#555;">待分摊 IFIE 汇总 & 结果:</div>
+        <div class="grid-3">
+            <div class="field-card">
+                <div class="field-title">IF_待分摊IFIE_合计</div>
+                <div class="field-formula">计息 + 利率变化</div>
+                <div class="field-value">166.00</div>
+            </div>
+            <div class="field-card">
+                <div class="field-title">NB_待分摊IFIE_合计</div>
+                <div class="field-formula">新增部分</div>
+                <div class="field-value">10.00</div>
+            </div>
+            <div class="field-card">
+                <div class="field-title"><span class="badge badge-lc">LC</span>LC分摊IFIE_合计</div>
+                <div class="field-formula">(IF_IFIE*0%) + (NB_IFIE*20%)</div>
+                <div class="field-calc">0 + 2.00</div>
+                <div class="field-value val-lc">2.00</div>
+            </div>
+        </div>
+        
+        <div class="grid-2" style="margin-top:15px;">
+            <div class="field-card">
+                <div class="field-title"><span class="badge badge-lc">LC</span>分摊后LC (Pre-Check)</div>
+                <div class="field-formula">IF_LC + NB_LC + IFIE</div>
+                <div class="field-calc">0 - 300 + 2.00</div>
+                <div class="field-value val-lc">-298.00</div>
+            </div>
+        </div>
+
+        <!-- SECTION 3 -->
+        <h2>第三阶段：合同组 CSM/LC 判定 (Aggregation Check)</h2>
+        <div class="field-card" style="background-color: #fdedec; border-left: 5px solid #c0392b;">
+            <div class="field-title">判定逻辑核心</div>
+            <div class="field-formula">
+                Total = 计息后CSM合计 + 分摊后LC合计<br>
+                Total = (206.00 + 20.30) + (-298.00) = <span style="color:red; font-weight:bold;">-71.70</span>
+            </div>
+            <div class="field-calc" style="font-size:14px; margin-top:5px;">
+                因为 Total < 0，合同组判定为 <strong>亏损组 (LC Group)</strong>。<br>
+                CSM 安全垫被击穿，CSM 需归零，剩余净亏损确认为 LC。
+            </div>
+        </div>
+
+        <!-- SECTION 4 -->
+        <h2>第四阶段：吸收与重分类 (Absorption)</h2>
+        <div class="grid-2">
+            <div class="field-card" style="border-color: var(--csm-color);">
+                <div class="field-title"><span class="badge badge-csm">CSM</span>被CSM吸收的变化</div>
+                <div class="field-formula">IF(亏损, -SUM(CSM各项), ...)</div>
+                <div class="field-calc">CSM 必须“自杀式”归零<br>-1 * (200 + 20 + 6.30)</div>
+                <div class="field-value val-csm" style="color:red;">-226.30</div>
+            </div>
+            <div class="field-card" style="border-color: var(--lc-color);">
+                <div class="field-title"><span class="badge badge-lc">LC</span>被LC吸收的变化_合计</div>
+                <div class="field-formula">IF(亏损, SUM(总变化 + CSM), ...)</div>
+                <div class="field-calc">LC 吸收净亏损额。<br>实际上等于 Total 值</div>
+                <div class="field-value val-lc">-71.70</div>
+                <div style="font-size:11px; color:#666;">(负数表示亏损增加/LC建立)</div>
+            </div>
+        </div>
+
+        <!-- SECTION 5 -->
+        <h2>第五阶段：期末计量 (Final Measurement)</h2>
+        <div class="grid-3">
+            <div class="field-card" style="background:#fce4ec;">
+                <div class="field-title"><span class="badge badge-lc">LC</span>期末LC余额_合计</div>
+                <div class="field-formula">待调整LC + 调整</div>
+                <div class="field-calc">原本0 + 新增-300 + 吸收(-(-226.3)) + IFIE<br>= -71.70</div>
+                <div class="field-value val-lc">-71.70</div>
+            </div>
+            <div class="field-card">
+                <div class="field-title"><span class="badge badge-csm">CSM</span>摊销的CSM</div>
+                <div class="field-formula">因为CSM已归零，摊销为0</div>
+                <div class="field-value val-csm">0.00</div>
+            </div>
+            <div class="field-card">
+                <div class="field-title"><span class="badge badge-csm">CSM</span>期末CSM余额</div>
+                <div class="field-formula">Pre-CSM + 吸收</div>
+                <div class="field-calc">226.30 - 226.30</div>
+                <div class="field-value val-csm">0.00</div>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<script>
+    const canvas = document.getElementById('flowCanvas');
+    const ctx = canvas.getContext('2d');
+
+    // Drawing Config
+    const nodeW = 160, nodeH = 60;
+    const startX = 50, startY = 50;
+    const gapX = 150;
+
+    // Data for Scenarios (Simplified Logic for Visualization)
+    const scenarios = {
+        'scenario1': {
+            title: "亏损 -> 盈利 (LC to CSM)",
+            if_lc: "-100.00", nb_lc: "-20.00",
+            if_csm: "0.00", nb_csm: "+250.00",
+            ifie_lc: "-3.47", csm_acc: "+3.72",
+            pre_lc: "-116.53", pre_csm: "+253.72",
+            total: "+137.19", state: "CSM",
+            absorb_lc: "+116.53", absorb_csm: "-116.53",
+            final_lc: "0.00", final_csm: "+123.47"
+        },
+        'scenario2': {
+            title: "盈利 -> 亏损 (CSM to LC)",
+            if_lc: "0.00", nb_lc: "-300.00",
+            if_csm: "+200.00", nb_csm: "+20.00",
+            ifie_lc: "-2.00", csm_acc: "+6.30",
+            pre_lc: "-298.00", pre_csm: "+226.30",
+            total: "-71.70", state: "LC",
+            absorb_lc: "-71.70", absorb_csm: "-226.30",
+            final_lc: "-71.70", final_csm: "0.00"
+        }
+    };
+
+    function drawNode(x, y, text, val, type, subtext = "") {
+        ctx.fillStyle = type === 'CSM' ? '#e8f8f5' : (type === 'LC' ? '#fdedec' : '#f4f6f7');
+        ctx.strokeStyle = type === 'CSM' ? '#27ae60' : (type === 'LC' ? '#c0392b' : '#7f8c8d');
+        
+        ctx.beginPath(); ctx.roundRect(x, y, nodeW, nodeH, 8); ctx.fill(); ctx.lineWidth = 2; ctx.stroke();
+
+        ctx.fillStyle = '#333'; ctx.font = 'bold 12px Microsoft YaHei'; ctx.textAlign = 'center';
+        ctx.fillText(text, x + nodeW/2, y + 20);
+
+        ctx.font = 'bold 14px Consolas';
+        ctx.fillStyle = val.includes('-') ? '#c0392b' : '#27ae60';
+        if (parseFloat(val) === 0) ctx.fillStyle = '#555';
+        ctx.fillText(val, x + nodeW/2, y + 40);
+
+        if(subtext) {
+            ctx.font = '10px Arial'; ctx.fillStyle = '#666';
+            ctx.fillText(subtext, x + nodeW/2, y + 55);
+        }
+    }
+
+    function drawArrow(x1, y1, x2, y2, color) {
+        ctx.beginPath(); ctx.moveTo(x1, y1);
+        const midX = (x1 + x2) / 2;
+        ctx.bezierCurveTo(midX, y1, midX, y2, x2, y2);
+        ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(x2, y2);
+        ctx.lineTo(x2-6, y2-4); ctx.lineTo(x2-6, y2+4);
+        ctx.fillStyle = color; ctx.fill();
+    }
+
+    function renderScene(key) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        const data = scenarios[key];
+        
+        // Layer 1
+        drawNode(startX, 150, "IF 年初 LC", data.if_lc, "LC");
+        drawNode(startX, 250, "NB 新增 LC", data.nb_lc, "LC");
+        drawNode(startX, 350, "IF 年初 CSM", data.if_csm, "CSM");
+        drawNode(startX, 450, "NB 新增 CSM", data.nb_csm, "CSM");
+
+        // Layer 2
+        const l2x = startX + nodeW + gapX;
+        drawNode(l2x, 200, "LC 分摊 IFIE", data.ifie_lc, "LC");
+        drawNode(l2x, 400, "CSM 计息", data.csm_acc, "CSM");
+
+        drawArrow(startX+nodeW, 180, l2x, 230, '#c0392b');
+        drawArrow(startX+nodeW, 280, l2x, 230, '#c0392b');
+        drawArrow(startX+nodeW, 480, l2x, 430, '#27ae60');
+
+        // Layer 3
+        const l3x = l2x + nodeW + gapX;
+        drawNode(l3x, 200, "分摊后 LC", data.pre_lc, "LC", "Sum(Pre-LC)");
+        drawNode(l3x, 400, "计息后 CSM", data.pre_csm, "CSM", "Sum(Pre-CSM)");
+
+        drawArrow(startX+nodeW, 180, l3x, 210, '#ccc'); // Pass through
+        drawArrow(l2x+nodeW, 230, l3x, 230, '#c0392b');
+        drawArrow(startX+nodeW, 380, l3x, 410, '#ccc');
+        drawArrow(l2x+nodeW, 430, l3x, 430, '#27ae60');
+
+        // Layer 4: Aggregation
+        const l4x = l3x + nodeW + gapX/2;
+        ctx.fillStyle = data.state === 'CSM' ? '#f9e79f' : '#fdedec';
+        ctx.strokeStyle = data.state === 'CSM' ? '#f1c40f' : '#c0392b';
+        ctx.fillRect(l4x, 150, 120, 300); ctx.strokeRect(l4x, 150, 120, 300);
+        
+        ctx.fillStyle = '#333'; ctx.font = 'bold 12px Arial'; ctx.textAlign = 'center';
+        ctx.fillText("判定池 (Pool)", l4x + 60, 280);
+        ctx.fillText("Total = " + data.total, l4x + 60, 300);
+        ctx.fillText("Result: " + data.state, l4x + 60, 320);
+
+        drawArrow(l3x+nodeW, 230, l4x, 250, '#c0392b');
+        drawArrow(l3x+nodeW, 430, l4x, 350, '#27ae60');
+
+        // Layer 5: Absorption
+        const l5x = l4x + 120 + gapX/2;
+        drawNode(l5x, 200, "LC 吸收变化", data.absorb_lc, "LC");
+        drawNode(l5x, 400, "CSM 吸收变化", data.absorb_csm, "CSM");
+
+        drawArrow(l4x+120, 300, l5x, 230, '#7f8c8d');
+        drawArrow(l4x+120, 300, l5x, 430, '#7f8c8d');
+
+        // Layer 6: Final
+        const l6x = l5x + nodeW + gapX;
+        drawNode(l6x, 200, "期末 LC", data.final_lc, "LC");
+        drawNode(l6x, 400, "期末 CSM", data.final_csm, "CSM");
+
+        // Logic for final arrows
+        if (data.state === 'CSM') {
+            drawArrow(l5x+nodeW, 230, l6x, 230, '#c0392b'); // Absorb helps zero LC
+            drawArrow(l3x+nodeW, 430, l6x, 430, '#27ae60'); // CSM continues
+            drawArrow(l5x+nodeW, 430, l6x, 430, '#c0392b'); // Reduced by absorb
+        } else {
+            // LC Case
+            drawArrow(l5x+nodeW, 230, l6x, 230, '#c0392b'); // LC established
+            drawArrow(l3x+nodeW, 430, l6x, 430, '#ccc'); // CSM killed
+            drawArrow(l5x+nodeW, 430, l6x, 430, '#c0392b'); // CSM wiped out
+        }
+    }
+
+    function switchTab(tabId) {
+        document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+        document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+        
+        document.getElementById(tabId).classList.add('active');
+        const btnIndex = tabId === 'scenario1' ? 0 : 1;
+        document.querySelectorAll('.tab-btn')[btnIndex].classList.add('active');
+        
+        renderScene(tabId);
+    }
+
+    // Init
+    window.onload = function() {
+        switchTab('scenario1');
+    };
+</script>
+
+</body>
+</html>

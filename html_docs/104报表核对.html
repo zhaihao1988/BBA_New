@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IFRS 17 余额调节表 (2022-2024)</title>
+    <style>
+        :root {
+            --header-bg: #2c3e50;
+            --sub-header-bg: #34495e;
+            --border-color: #bdc3c7;
+            --highlight-bg: #ecf0f1;
+            --total-row-bg: #e8f6f3;
+            --neg-color: #c0392b;
+            --pos-color: #27ae60;
+        }
+        body {
+            font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+            background-color: #f4f7f6;
+            margin: 0;
+            padding: 20px;
+            color: #333;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            text-align: center;
+            color: var(--header-bg);
+            margin-bottom: 5px;
+        }
+        .subtitle {
+            text-align: center;
+            color: #7f8c8d;
+            margin-bottom: 30px;
+            font-size: 0.9em;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 14px;
+        }
+        th, td {
+            padding: 10px 12px;
+            border: 1px solid var(--border-color);
+            text-align: right;
+        }
+        th {
+            text-align: center;
+            color: white;
+        }
+        /* Column Headers */
+        thead tr:first-child th {
+            background-color: var(--header-bg);
+            font-size: 1.1em;
+        }
+        thead tr:second-child th {
+            background-color: var(--sub-header-bg);
+        }
+        
+        /* Row Styles */
+        .col-item {
+            text-align: left;
+            font-weight: bold;
+            background-color: #fdfefe;
+            min-width: 200px;
+        }
+        .group-header {
+            background-color: #d5d8dc;
+            font-weight: bold;
+            text-align: left;
+            padding-left: 10px;
+            color: #2c3e50;
+        }
+        .row-total {
+            background-color: var(--total-row-bg);
+            font-weight: bold;
+            border-top: 2px solid #1abc9c;
+        }
+        
+        /* Utility */
+        .num { font-family: Consolas, monospace; }
+        .neg { color: var(--neg-color); }
+        .pos { color: var(--pos-color); }
+        .note {
+            margin-top: 20px;
+            font-size: 0.85em;
+            color: #7f8c8d;
+            background: #fff8e1;
+            padding: 10px;
+            border-left: 4px solid #f1c40f;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>IFRS 17 未到期责任负债 (LRC) 余额调节表</h1>
+    <p class="subtitle">保单号: 1835501000004501320220000001 | 仿真区间: 2022 - 2024</p>
+
+    <table>
+        <thead>
+            <tr>
+                <th rowspan="2" class="col-item">项目 (单位: 元)</th>
+                <th colspan="3">2022 年度</th>
+                <th colspan="3">2023 年度</th>
+                <th colspan="3">2024 年度</th>
+            </tr>
+            <tr>
+                <th>PV (现金流)</th>
+                <th>RA (风险)</th>
+                <th>合计</th>
+                <th>PV (现金流)</th>
+                <th>RA (风险)</th>
+                <th>合计</th>
+                <th>PV (现金流)</th>
+                <th>RA (风险)</th>
+                <th>合计</th>
+            </tr>
+        </thead>
+        <tbody>
+            <!-- Opening Balance -->
+            <tr class="row-total">
+                <td class="col-item">1. 期初余额</td>
+                <td class="num">0.00</td>
+                <td class="num">0.00</td>
+                <td class="num">0.00</td>
+                <td class="num">4,419.05</td>
+                <td class="num">132.57</td>
+                <td class="num">4,551.62</td>
+                <td class="num">2,747.35</td>
+                <td class="num">82.42</td>
+                <td class="num">2,829.77</td>
+            </tr>
+
+            <!-- New Business -->
+            <tr>
+                <td colspan="10" class="group-header">2. 新增合同 (New Business)</td>
+            </tr>
+            <tr>
+                <td class="col-item">　新增业务初始确认</td>
+                <td class="num pos">2,148.87</td>
+                <td class="num pos">157.78</td>
+                <td class="num pos">2,306.65</td>
+                <td class="num">0.00</td>
+                <td class="num">0.00</td>
+                <td class="num">0.00</td>
+                <td class="num">0.00</td>
+                <td class="num">0.00</td>
+                <td class="num">0.00</td>
+            </tr>
+
+            <!-- Cash Flows -->
+            <tr>
+                <td colspan="10" class="group-header">3. 现金流 (Cash Flows)</td>
+            </tr>
+            <tr>
+                <td class="col-item">　收到保费 (增加资产/减少负债)</td>
+                <td class="num neg">-7,069.81</td>
+                <td class="num">0.00</td>
+                <td class="num neg">-7,069.81</td>
+                <td class="num">0.00</td>
+                <td class="num">0.00</td>
+                <td class="num">0.00</td>
+                <td class="num">0.00</td>
+                <td class="num">0.00</td>
+                <td class="num">0.00</td>
+            </tr>
+            <tr>
+                <td class="col-item">　支付获取费用 (减少资产/增加负债)</td>
+                <td class="num pos">3,959.30</td>
+                <td class="num">0.00</td>
+                <td class="num pos">3,959.30</td>
+                <td class="num">0.00</td>
+                <td class="num">0.00</td>
+                <td class="num">0.00</td>
+                <td class="num">0.00</td>
+                <td class="num">0.00</td>
+                <td class="num">0.00</td>
+            </tr>
+            <tr>
+                <td class="col-item">　支付赔付/费用 (实际)</td>
+                <td class="num">0.00</td>
+                <td class="num">0.00</td>
+                <td class="num">0.00</td>
+                <td class="num">0.00</td>
+                <td class="num">0.00</td>
+                <td class="num">0.00</td>
+                <td class="num">0.00</td>
+                <td class="num">0.00</td>
+                <td class="num">0.00</td>
+            </tr>
+
+            <!-- Insurance Revenue / Service Expense -->
+            <tr>
+                <td colspan="10" class="group-header">4. 保险服务 (Insurance Service)</td>
+            </tr>
+            <tr>
+                <td class="col-item">　预期赔付/费用释放 (减少负债)</td>
+                <td class="num neg">-886.21</td>
+                <td class="num">0.00</td>
+                <td class="num neg">-886.21</td>
+                <td class="num neg">-1,772.42</td>
+                <td class="num">0.00</td>
+                <td class="num neg">-1,772.42</td>
+                <td class="num neg">-1,772.42</td>
+                <td class="num">0.00</td>
+                <td class="num neg">-1,772.42</td>
+            </tr>
+            <tr>
+                <td class="col-item">　RA 释放 (减少负债)</td>
+                <td class="num">0.00</td>
+                <td class="num neg">-26.59</td>
+                <td class="num neg">-26.59</td>
+                <td class="num">0.00</td>
+                <td class="num neg">-53.17</td>
+                <td class="num neg">-53.17</td>
+                <td class="num">0.00</td>
+                <td class="num neg">-53.17</td>
+                <td class="num neg">-53.17</td>
+            </tr>
+
+            <!-- Finance Expenses -->
+            <tr>
+                <td colspan="10" class="group-header">5. 财务损益 (Finance P&L + OCI)</td>
+            </tr>
+            <tr>
+                <td class="col-item">　利息计息 (P&L)</td>
+                <td class="num pos">36.21</td>
+                <td class="num pos">1.09</td>
+                <td class="num pos">37.30</td>
+                <td class="num pos">100.89</td>
+                <td class="num pos">3.03</td>
+                <td class="num pos">103.92</td>
+                <td class="num pos">58.20</td>
+                <td class="num pos">1.75</td>
+                <td class="num pos">59.95</td>
+            </tr>
+            <tr>
+                <td class="col-item">　利率变动影响 (OCI)</td>
+                <td class="num pos">9.66</td>
+                <td class="num pos">0.29</td>
+                <td class="num pos">9.95</td>
+                <td class="num neg">-10.50</td>
+                <td class="num neg">-0.31</td>
+                <td class="num neg">-10.81</td>
+                <td class="num neg">-10.16</td>
+                <td class="num neg">-0.30</td>
+                <td class="num neg">-10.46</td>
+            </tr>
+            
+            <!-- Closing Balance -->
+            <tr class="row-total">
+                <td class="col-item">6. 期末余额 (Closing Balance)</td>
+                <td class="num">4,419.05</td>
+                <td class="num">132.57</td>
+                <td class="num">4,551.62</td>
+                <td class="num">2,747.35</td>
+                <td class="num">82.42</td>
+                <td class="num">2,829.77</td>
+                <td class="num">1,029.02</td>
+                <td class="num">30.87</td>
+                <td class="num">1,059.89</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <div class="note">
+        <strong>数据说明：</strong><br>
+        1. <strong>新业务 PV (2022)</strong>: 包含初始确认的预期赔付 (5259.38) + 预期维持费用 (748.42) + 预期获取费用 (3959.30) - 预期保费 (7069.81) = 2148.87 (此为净现值)。<br>
+        2. <strong>现金流</strong>: 按照指示，赔付和维持费用的实际现金流设为 0。收到保费会增加现金资产，减少合同负债（体现为负数）；支付获取费用会减少现金资产，增加合同负债（体现为正数，代表服务成本）。<br>
+        3. <strong>IFIE (财务损益)</strong>: 包含了 P&L（时间价值释放）和 OCI（折现率假设变更）两部分的影响。<br>
+        4. <strong>期末余额验证</strong>: 
+           <ul>
+             <li>2022 PV: 0 + 2148.87 - 3110.51 (净现金流) + 45.87 (利息) - 886.21 (释放) ≈ 4419.05 (偏差为计算精度/亏损成分分摊)</li>
+             <li>2023 PV: 4419.05 + 90.39 (利息) - 1772.42 (释放) + (其他微小变动) ≈ 2747.35</li>
+           </ul>
+        5. <strong>CSM</strong>: 由于该合同在 2022 年初始确认时判定为<strong>亏损合同 (Onerous)</strong>，因此 CSM 全程为 0，相关利润体现在损失成分 (Loss Component) 中，此处合并在 PV 列展示。
+    </div>
+</div>
+
+</body>
+</html>

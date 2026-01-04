@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+  PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+  "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.jdyx.sx.measure.sxmodel.mapper.MeasureOtherMapper">
+
+
+  <!--未到期责任负债_亏损部分-->
+  <select id="getCsmGroupNoLrcLcAmtList" resultType="java.util.LinkedHashMap">
+    select csm_group_no,
+           case
+             when sum(coalesce("pv_rep_amt", 0) + coalesce("lrc_ra_amt", 0) - coalesce("lrc_no_lc_amt", 0)) > 0
+               then sum(coalesce("pv_rep_amt", 0) + coalesce("lrc_ra_amt", 0) - coalesce("lrc_no_lc_amt", 0))
+             else 0 end as "lrc_lc_amt"
+    from measure_platform.measure_cf_result_info
+    where val_month = #{valMonth}
+    group by csm_group_no
+  </select>
+
+
+  <!--当期亏损合同损益-->
+  <select id="getCsmGroupNoLrcLcChangeAmtList" resultType="java.util.LinkedHashMap">
+    select csm_group_no,
+           case
+             when sum(coalesce("pv_rep_amt", 0) + coalesce("lrc_ra_amt", 0) - coalesce("lrc_no_lc_amt", 0)) > 0
+               then sum(coalesce("pv_rep_amt", 0) + coalesce("lrc_ra_amt", 0) - coalesce("lrc_no_lc_amt", 0))
+             else 0 end as "lrc_lc_change_amt"
+    from measure_platform.measure_cf_result_info
+    where val_month = #{valMonth}
+    group by csm_group_no
+
+  </select>
+
+
+</mapper>

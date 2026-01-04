@@ -747,8 +747,10 @@ def main(yearly_results=None, init_context=None, output_html_path=None, policy_n
             return Decimal(str(val))
         
         init_data = {
-            'nb_init_prem': to_decimal(getattr(init_context, 'actual_premium', None)),
-            'nb_init_iacf': to_decimal(getattr(init_context, 'actual_iacf_incurred', None)),
+            # 使用初始确认时的预期现值（从PV数据读取），而不是actual_premium（签单保费）
+            'nb_init_prem': to_decimal(getattr(init_context, 'init_pv_premium', None)),
+            # 使用初始确认时的预期获取费用现值，而不是actual_iacf_incurred（可能被后续处理修改）
+            'nb_init_iacf': to_decimal(getattr(init_context, 'init_pv_iacf', None)),
             'nb_init_claims': to_decimal(getattr(init_context, 'init_fut_claim', None)),
             'nb_init_maint': to_decimal(getattr(init_context, 'init_fut_maint', None)),
             'nb_init_ra': to_decimal(getattr(init_context, 'init_ra', None)),

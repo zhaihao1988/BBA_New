@@ -20,6 +20,7 @@
 - 所有现值必须从PV原材料数据读取，不允许使用旧的计算方式
 - 使用统一字段逻辑：CSM/LC使用一个字段，>=0走CSM逻辑，<0走LC逻辑
 - 计息逻辑不在此模块，应在interest_accretion模块中处理
+- Rename Wlk->Lkd: 适配 pv_calculator.py 的字段更名
 """
 
 from decimal import Decimal
@@ -287,9 +288,9 @@ def _calculate_experience_adjustment(context, logger, assumptions: Assumptions, 
     # [Sec 4.3] 保费现金流经验调整
     if is_new_business:
         # 新增合同（从当前评估月的PV数据读取）
-        new_f_end_prem = pv_data.get_field('Pvfl_Nb_Eop_Cfa_Rep_Wlk_Pre_Amt')
-        new_f_init_prem = pv_data.get_field('Pvfl_Nb_Ini_Cfa_Rep_Wlk_Pre_Amt')
-        new_c_init_prem = pv_data.get_field('Pvfl_Nb_Ini_Cca_Rep_Wlk_Pre_Amt')
+        new_f_end_prem = pv_data.get_field('Pvfl_Nb_Eop_Cfa_Rep_Lkd_Pre_Amt')
+        new_f_init_prem = pv_data.get_field('Pvfl_Nb_Ini_Cfa_Rep_Lkd_Pre_Amt')
+        new_c_init_prem = pv_data.get_field('Pvfl_Nb_Ini_Cca_Rep_Lkd_Pre_Amt')
         
         # 从实际现金流模块获取实际保费（名义值，不计息）
         if hasattr(context, 'actual_cashflows') and context.actual_cashflows:
@@ -325,10 +326,10 @@ def _calculate_experience_adjustment(context, logger, assumptions: Assumptions, 
         )
     else:
         # 存量合同
-        eff_f_end_prem = pv_data.get_field('Pvfl_If_Eop_Cfa_Rep_Wlk_Pre_Amt')
+        eff_f_end_prem = pv_data.get_field('Pvfl_If_Eop_Cfa_Rep_Lkd_Pre_Amt')
         eff_c_actual_prem = Decimal('0')
-        eff_f_beg_prem = pv_data.get_field('Pvfl_If_Bop_Cfa_Rep_Wlk_Pre_Amt')
-        eff_c_year_prem = pv_data.get_field('Pvfl_If_Bop_Cca_Rep_Wlk_Pre_Amt')
+        eff_f_beg_prem = pv_data.get_field('Pvfl_If_Bop_Cfa_Rep_Lkd_Pre_Amt')
+        eff_c_year_prem = pv_data.get_field('Pvfl_If_Bop_Cca_Rep_Lkd_Pre_Amt')
         
         prem_var_raw = (eff_f_end_prem + eff_c_actual_prem) - (eff_f_beg_prem + eff_c_year_prem)
         context.prem_var = prem_var_raw * exp_adj_ratio
@@ -355,9 +356,9 @@ def _calculate_experience_adjustment(context, logger, assumptions: Assumptions, 
     # [Sec 4.4] IACF 经验调整
     if is_new_business:
         # 新增合同（从当前评估月的PV数据读取）
-        new_f_end_iacf = pv_data.get_field('Pvfl_Nb_Eop_Cfa_Rep_Wlk_Acq_Amt')
-        new_f_init_iacf = pv_data.get_field('Pvfl_Nb_Ini_Cfa_Rep_Wlk_Acq_Amt')
-        new_c_init_iacf = pv_data.get_field('Pvfl_Nb_Ini_Cca_Rep_Wlk_Acq_Amt')
+        new_f_end_iacf = pv_data.get_field('Pvfl_Nb_Eop_Cfa_Rep_Lkd_Acq_Amt')
+        new_f_init_iacf = pv_data.get_field('Pvfl_Nb_Ini_Cfa_Rep_Lkd_Acq_Amt')
+        new_c_init_iacf = pv_data.get_field('Pvfl_Nb_Ini_Cca_Rep_Lkd_Acq_Amt')
         
         # 从实际现金流模块获取实际IACF（名义值，不计息）
         if hasattr(context, 'actual_cashflows') and context.actual_cashflows:
@@ -395,10 +396,10 @@ def _calculate_experience_adjustment(context, logger, assumptions: Assumptions, 
         )
     else:
         # 存量合同
-        eff_f_end_iacf = pv_data.get_field('Pvfl_If_Eop_Cfa_Rep_Wlk_Acq_Amt')
+        eff_f_end_iacf = pv_data.get_field('Pvfl_If_Eop_Cfa_Rep_Lkd_Acq_Amt')
         eff_c_actual_iacf = Decimal('0')
-        eff_f_beg_iacf = pv_data.get_field('Pvfl_If_Bop_Cfa_Rep_Wlk_Acq_Amt')
-        eff_c_year_iacf = pv_data.get_field('Pvfl_If_Bop_Cca_Rep_Wlk_Acq_Amt')
+        eff_f_beg_iacf = pv_data.get_field('Pvfl_If_Bop_Cfa_Rep_Lkd_Acq_Amt')
+        eff_c_year_iacf = pv_data.get_field('Pvfl_If_Bop_Cca_Rep_Lkd_Acq_Amt')
         
         iacf_var_raw = (eff_f_end_iacf + eff_c_actual_iacf) - (eff_f_beg_iacf + eff_c_year_iacf)
         context.iacf_var = iacf_var_raw * exp_adj_ratio
@@ -484,13 +485,13 @@ def _calculate_csm_lc_absorption(context, logger, cohort_state: CohortState, pol
         is_new_business = False
     
     # [Sec 5.2] 保费现金流变化
-    eff_f_end_prem = _pv_amount(pv_data, 'Pvfl_If_Eop_Cfa_Rep_Wlk_Pre_Amt')
-    eff_f_beg_prem = _pv_amount(pv_data, 'Pvfl_If_Bop_Cfa_Rep_Wlk_Pre_Amt')
-    eff_c_year_prem = _pv_amount(pv_data, 'Pvfl_If_Bop_Cca_Rep_Wlk_Pre_Amt')
+    eff_f_end_prem = _pv_amount(pv_data, 'Pvfl_If_Eop_Cfa_Rep_Lkd_Pre_Amt')
+    eff_f_beg_prem = _pv_amount(pv_data, 'Pvfl_If_Bop_Cfa_Rep_Lkd_Pre_Amt')
+    eff_c_year_prem = _pv_amount(pv_data, 'Pvfl_If_Bop_Cca_Rep_Lkd_Pre_Amt')
     if is_new_business:
-        new_f_end_prem = _pv_amount(pv_data, 'Pvfl_Nb_Eop_Cfa_Rep_Wlk_Pre_Amt')
-        new_f_init_prem = _pv_amount(pv_data, 'Pvfl_Nb_Ini_Cfa_Rep_Wlk_Pre_Amt')
-        new_c_init_prem = _pv_amount(pv_data, 'Pvfl_Nb_Ini_Cca_Rep_Wlk_Pre_Amt')
+        new_f_end_prem = _pv_amount(pv_data, 'Pvfl_Nb_Eop_Cfa_Rep_Lkd_Pre_Amt')
+        new_f_init_prem = _pv_amount(pv_data, 'Pvfl_Nb_Ini_Cfa_Rep_Lkd_Pre_Amt')
+        new_c_init_prem = _pv_amount(pv_data, 'Pvfl_Nb_Ini_Cca_Rep_Lkd_Pre_Amt')
         # 从实际现金流模块获取实际保费（名义值，不计息）
         if hasattr(context, 'actual_cashflows') and context.actual_cashflows:
             actual_prem_nb = context.actual_cashflows.get_actual_premium(context.year)
@@ -513,7 +514,7 @@ def _calculate_csm_lc_absorption(context, logger, cohort_state: CohortState, pol
                   + (actual_prem_if + actual_prem_nb) - (eff_c_year_prem + new_c_init_prem) - adj_prem)
     logger.log_item(
         "保费现金流变化",
-        "[Sec 5.2] 保费现金流变化（统一Wlk公式）",
+        "[Sec 5.2] 保费现金流变化（统一Lkd公式）",
         "Δ_Prem = (Eff_F_end + New_F_end) - (Eff_F_beg + New_F_init) + (Eff_C_actual + New_C_actual) - (Eff_C_year + New_C_init) - Adj_Prem",
         {
             "Eff_F_end": eff_f_end_prem,
@@ -527,17 +528,17 @@ def _calculate_csm_lc_absorption(context, logger, cohort_state: CohortState, pol
             "Adj_Prem": adj_prem
         },
         delta_prem,
-        note="全部使用Wlk字段并扣除经验调整。实际现金流（Eff_C_actual、New_C_actual）是名义值，不计息"
+        note="全部使用Lkd字段并扣除经验调整。实际现金流（Eff_C_actual、New_C_actual）是名义值，不计息"
     )
 
     # [Sec 5.3] IACF变化
-    eff_f_end_iacf = _pv_amount(pv_data, 'Pvfl_If_Eop_Cfa_Rep_Wlk_Acq_Amt')
-    eff_f_beg_iacf = _pv_amount(pv_data, 'Pvfl_If_Bop_Cfa_Rep_Wlk_Acq_Amt')
-    eff_c_year_iacf = _pv_amount(pv_data, 'Pvfl_If_Bop_Cca_Rep_Wlk_Acq_Amt')
+    eff_f_end_iacf = _pv_amount(pv_data, 'Pvfl_If_Eop_Cfa_Rep_Lkd_Acq_Amt')
+    eff_f_beg_iacf = _pv_amount(pv_data, 'Pvfl_If_Bop_Cfa_Rep_Lkd_Acq_Amt')
+    eff_c_year_iacf = _pv_amount(pv_data, 'Pvfl_If_Bop_Cca_Rep_Lkd_Acq_Amt')
     if is_new_business:
-        new_f_end_iacf = _pv_amount(pv_data, 'Pvfl_Nb_Eop_Cfa_Rep_Wlk_Acq_Amt')
-        new_f_init_iacf = _pv_amount(pv_data, 'Pvfl_Nb_Ini_Cfa_Rep_Wlk_Acq_Amt')
-        new_c_init_iacf = _pv_amount(pv_data, 'Pvfl_Nb_Ini_Cca_Rep_Wlk_Acq_Amt')
+        new_f_end_iacf = _pv_amount(pv_data, 'Pvfl_Nb_Eop_Cfa_Rep_Lkd_Acq_Amt')
+        new_f_init_iacf = _pv_amount(pv_data, 'Pvfl_Nb_Ini_Cfa_Rep_Lkd_Acq_Amt')
+        new_c_init_iacf = _pv_amount(pv_data, 'Pvfl_Nb_Ini_Cca_Rep_Lkd_Acq_Amt')
         # 从实际现金流模块获取实际IACF（名义值，不计息）
         if hasattr(context, 'actual_cashflows') and context.actual_cashflows:
             actual_iacf_nb = context.actual_cashflows.get_actual_iacf(context.year)
@@ -560,7 +561,7 @@ def _calculate_csm_lc_absorption(context, logger, cohort_state: CohortState, pol
                   + (actual_iacf_if + actual_iacf_nb) - (eff_c_year_iacf + new_c_init_iacf) - adj_iacf)
     logger.log_item(
         "IACF变化",
-        "[Sec 5.3] IACF变化（统一Wlk公式）",
+        "[Sec 5.3] IACF变化（统一Lkd公式）",
         "Δ_IACF = (Eff_F_end^I + New_F_end^I) - (Eff_F_beg^I + New_F_init^I) + (Eff_C_actual^I + New_C_actual^I) - (Eff_C_year^I + New_C_init^I) - Adj_IACF",
         {
             "Eff_F_end^I": eff_f_end_iacf,
@@ -574,18 +575,18 @@ def _calculate_csm_lc_absorption(context, logger, cohort_state: CohortState, pol
             "Adj_IACF": adj_iacf
         },
         delta_iacf,
-        note="全部使用Wlk字段并扣除经验调整。实际现金流（Eff_C_actual^I、New_C_actual^I）是名义值，不计息"
+        note="全部使用Lkd字段并扣除经验调整。实际现金流（Eff_C_actual^I、New_C_actual^I）是名义值，不计息"
     )
 
     # [Sec 5.4] 赔付现金流变化
-    pv_field_eff_f_end_claim = 'Pvfl_If_Eop_Cfa_Rep_Wlk_Cla_Amt'
-    pv_field_eff_f_beg_claim = 'Pvfl_If_Bop_Cfa_Rep_Wlk_Cla_Amt'
+    pv_field_eff_f_end_claim = 'Pvfl_If_Eop_Cfa_Rep_Lkd_Cla_Amt'
+    pv_field_eff_f_beg_claim = 'Pvfl_If_Bop_Cfa_Rep_Lkd_Cla_Amt'
     eff_f_end_claim = _pv_amount(pv_data, pv_field_eff_f_end_claim)
     eff_f_beg_claim = _pv_amount(pv_data, pv_field_eff_f_beg_claim)
     
     if is_new_business:
-        pv_field_new_f_end_claim = 'Pvfl_Nb_Eop_Cfa_Rep_Wlk_Cla_Amt'
-        pv_field_new_f_init_claim = 'Pvfl_Nb_Ini_Cfa_Rep_Wlk_Cla_Amt'
+        pv_field_new_f_end_claim = 'Pvfl_Nb_Eop_Cfa_Rep_Lkd_Cla_Amt'
+        pv_field_new_f_init_claim = 'Pvfl_Nb_Ini_Cfa_Rep_Lkd_Cla_Amt'
         new_f_end_claim = _pv_amount(pv_data, pv_field_new_f_end_claim)
         new_f_init_claim = _pv_amount(pv_data, pv_field_new_f_init_claim)
     else:
@@ -620,26 +621,26 @@ def _calculate_csm_lc_absorption(context, logger, cohort_state: CohortState, pol
     
     logger.log_item(
         "赔付与费用_预期赔付变化",
-        "[Sec 5.4] 赔付现金流变化（统一Wlk公式）",
+        "[Sec 5.4] 赔付现金流变化（统一Lkd公式）",
         formula_desc,
         values_dict,
         delta_claims,
-        note="所有现值均从PV原材料数据读取，使用加权初始确认利率（Wlk）"
+        note="所有现值均从PV原材料数据读取，使用锁定利率（Lkd）"
     )
 
     # [Sec 5.5] 维持费用现金流变化
-    eff_f_end_maint = _pv_amount(pv_data, 'Pvfl_If_Eop_Cfa_Rep_Wlk_Mtn_Amt')
-    eff_f_beg_maint = _pv_amount(pv_data, 'Pvfl_If_Bop_Cfa_Rep_Wlk_Mtn_Amt')
+    eff_f_end_maint = _pv_amount(pv_data, 'Pvfl_If_Eop_Cfa_Rep_Lkd_Mtn_Amt')
+    eff_f_beg_maint = _pv_amount(pv_data, 'Pvfl_If_Bop_Cfa_Rep_Lkd_Mtn_Amt')
     if is_new_business:
-        new_f_end_maint = _pv_amount(pv_data, 'Pvfl_Nb_Eop_Cfa_Rep_Wlk_Mtn_Amt')
-        new_f_init_maint = _pv_amount(pv_data, 'Pvfl_Nb_Ini_Cfa_Rep_Wlk_Mtn_Amt')
+        new_f_end_maint = _pv_amount(pv_data, 'Pvfl_Nb_Eop_Cfa_Rep_Lkd_Mtn_Amt')
+        new_f_init_maint = _pv_amount(pv_data, 'Pvfl_Nb_Ini_Cfa_Rep_Lkd_Mtn_Amt')
     else:
         new_f_end_maint = DECIMAL_ZERO
         new_f_init_maint = DECIMAL_ZERO
     delta_maint = (eff_f_end_maint + new_f_end_maint) - (eff_f_beg_maint + new_f_init_maint)
     logger.log_item(
         "维持费用现金流变化",
-        "[Sec 5.5] 维持费用现金流变化（统一Wlk公式）",
+        "[Sec 5.5] 维持费用现金流变化（统一Lkd公式）",
         "Δ_Maint = (Eff_F_end^Mtn + New_F_end^Mtn) - (Eff_F_beg^Mtn + New_F_init^Mtn)",
         {
             "Eff_F_end^Mtn": eff_f_end_maint,
@@ -669,18 +670,18 @@ def _calculate_csm_lc_absorption(context, logger, cohort_state: CohortState, pol
     )
 
     # [Sec 5.7] 非金融风险调整变化
-    eff_f_end_ra = _pv_amount(pv_data, 'Pvfl_If_Eop_Cfa_Rep_Wlk_Rad_Amt')
-    eff_f_beg_ra = _pv_amount(pv_data, 'Pvfl_If_Bop_Cfa_Rep_Wlk_Rad_Amt')
+    eff_f_end_ra = _pv_amount(pv_data, 'Pvfl_If_Eop_Cfa_Rep_Lkd_Rad_Amt')
+    eff_f_beg_ra = _pv_amount(pv_data, 'Pvfl_If_Bop_Cfa_Rep_Lkd_Rad_Amt')
     if is_new_business:
-        new_f_end_ra = _pv_amount(pv_data, 'Pvfl_Nb_Eop_Cfa_Rep_Wlk_Rad_Amt')
-        new_f_init_ra = _pv_amount(pv_data, 'Pvfl_Nb_Ini_Cfa_Rep_Wlk_Rad_Amt')
+        new_f_end_ra = _pv_amount(pv_data, 'Pvfl_Nb_Eop_Cfa_Rep_Lkd_Rad_Amt')
+        new_f_init_ra = _pv_amount(pv_data, 'Pvfl_Nb_Ini_Cfa_Rep_Lkd_Rad_Amt')
     else:
         new_f_end_ra = DECIMAL_ZERO
         new_f_init_ra = DECIMAL_ZERO
     delta_ra = (eff_f_end_ra + new_f_end_ra) - (eff_f_beg_ra + new_f_init_ra)
     logger.log_item(
         "非金融风险调整变化",
-        "[Sec 5.7] RA变化（统一Wlk公式）",
+        "[Sec 5.7] RA变化（统一Lkd公式）",
         "Δ_RA = (Eff_F_end^RA + New_F_end^RA) - (Eff_F_beg^RA + New_F_init^RA)",
         {
             "Eff_F_end^RA": eff_f_end_ra,
@@ -742,20 +743,17 @@ def _calculate_csm_lc_absorption(context, logger, cohort_state: CohortState, pol
             if_lc_ifie_ratio = bop_csm_lc.copy_abs() / denom_if_abs
     
     # [Sec 7.3.2] LC IFIE分摊比例（当年新增合同）
-    nb_lc_ifie_ratio = Decimal('0')
-    is_nb_lc = (nb_initial_csm_lc < 0) if (not is_reversal) else (nb_initial_csm_lc > 0)
-    if is_nb_lc:
-        denom_nb = context.init_fut_claim + context.init_fut_maint + context.init_ra
-        denom_nb_abs = denom_nb.copy_abs()
-        if denom_nb_abs > 0:
-            nb_lc_ifie_ratio = nb_initial_csm_lc.copy_abs() / denom_nb_abs
+    # 注意：NB_LC IFIE分摊比例不应该在这里计算，应该在 group_csm_lc_measurement.calculate_lc_ifie_allocation 中计算
+    # 这里只从context读取（如果已经计算过），否则使用0
+    nb_lc_ifie_ratio = getattr(context, 'nb_lc_ifie_ratio', DECIMAL_ZERO) or DECIMAL_ZERO
     
-    # 保存LC IFIE分摊比例到context（供IFIE模块使用）
-    context.nb_lc_ratio = nb_lc_ifie_ratio
+    # 保存IF_LC IFIE分摊比例到context（供IFIE模块使用）
+    # 注意：IF_LC IFIE分摊比例可以在这里计算，因为使用的是年初现值，不依赖初始确认时的值
     context.if_lc_ifie_ratio = if_lc_ifie_ratio
     
     # [Sec 5] 被CSM/LC吸收的变化分摊
     # 使用统一字段逻辑：如果变化被LC吸收（正常保单：<0；批减单：>0），则分摊到LC；否则被CSM吸收
+    # 注意：这里使用从context读取的nb_lc_ifie_ratio（如果还没有计算，则为0，后续会在calculate_lc_ifie_allocation中计算）
     context.allocated_lc_exp_adj = delta_csm_lc * nb_lc_ifie_ratio
     context.csm_absorbed = delta_csm_lc - context.allocated_lc_exp_adj
     
@@ -859,4 +857,3 @@ def run(
         (context.prem_var + context.iacf_var) + context.exp_adj_csm_impact,
         note="整合经验调整和被CSM/LC吸收的变化，使用统一字段逻辑。注意：计息逻辑不在此模块，应在interest_accretion模块中处理"
     )
-

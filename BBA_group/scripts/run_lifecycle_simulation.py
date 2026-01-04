@@ -814,7 +814,7 @@ class LifecycleSimulator:
         if year is None:
             return
         
-        lc_ratio = self._to_decimal(getattr(context, 'nb_lc_ratio', Decimal('0')) or Decimal('0'))
+        lc_ratio = self._to_decimal(getattr(context, 'nb_lc_ifie_ratio', Decimal('0')) or Decimal('0'))
         
         # 优先使用revenue模块计算的值，如果没有则推导
         claims_lc_alloc = self._to_decimal(getattr(context, 'revenue_claims_expenses_lc_alloc', None))
@@ -980,7 +980,7 @@ class LifecycleSimulator:
 
         TODO: 未到期责任负债的亏损/非亏损拆分目前仅能返回总额，待有明确拆分口径后完善。
         """
-        lc_ratio = self._to_decimal(getattr(context, 'nb_lc_ratio', Decimal('0')) or Decimal('0'))
+        lc_ratio = self._to_decimal(getattr(context, 'nb_lc_ifie_ratio', Decimal('0')) or Decimal('0'))
 
         # 优先使用revenue模块计算的值，如果没有则推导
         claims_lc_alloc = self._to_decimal(getattr(context, 'revenue_claims_expenses_lc_alloc', None))

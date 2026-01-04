@@ -207,6 +207,7 @@
             <a class="nav-item" onclick="showSection('step8', this)">8. 未到期IFIE</a>
             <a class="nav-item" onclick="showSection('step9', this)">9. 未到期责任负债</a>
             <a class="nav-item" onclick="showSection('step10', this)">10. 计量结果与数据输出</a>
+            <a class="nav-item" onclick="showSection('step11', this)">11. 合同组CSM/LC计量</a>
         </div>
     </div>
 
@@ -1419,6 +1420,543 @@
         <section id="step8"><h1>8. 未到期IFIE</h1><p>待更新...</p></section>
         <section id="step9"><h1>9. 未到期责任负债</h1><p>待更新...</p></section>
         <section id="step10"><h1>10. 计量结果与数据输出</h1><p>待更新...</p></section>
+        <section id="step11">
+            <h1>11. 合同组CSM/LC计量 (Group CSM/LC Measurement)</h1>
+            <h2>11.1 CSM计息（组级口径）</h2>
+            <div class="formula-box">
+                <span class="formula-title">输入与利率</span>
+                <ul>
+                    <li><strong>组级期初IF CSM余额</strong>：上一年度末仍在服务期的CSM之和。</li>
+                    <li><strong>组级当年新增CSM</strong>：本年度新签且 margin≥0 的初始CSM之和，基于签单月初始折现因子。</li>
+                    <li><strong>组级锁定利率</strong>：由 <code>group_rates_manager</code> 计算的加权锁定利率，可拆分为月度利率 <code>r_m</code>。</li>
+                </ul>
+            </div>
+            <h3>11.1.1 期初有效合同CSM计息（按月滚动，组级）</h3>
+            <ul>
+                <li><strong>1月</strong>：<code>IF_interest_Jan = CSM_IF_BOP_group × r_Jan</code></li>
+                <li><strong>2-12月</strong>：
+                    <ul>
+                        <li>若上月CSM摊销比例=100%，本月不再新增计息（可视为0或沿用上月结果，仅做展示）。</li>
+                        <li>否则：从年初1月到当前评估月m，按组级锁定利率累乘得到年度有效利率 <code>R_1..m</code>，本年度IF计息为：<br>
+                            <code>IF_interest_1..m = CSM_IF_BOP_group × ((1+R_1..m) - 1)</code>，其中 <code>R_1..m</code> 由1月至m月的月利率逐月复利得到。</li>
+                    </ul>
+                </li>
+            </ul>
+            <h3>11.1.2 当年新增合同CSM计息（按签单月起息，组级）</h3>
+            <ul>
+                <li><strong>1月新增</strong>：新增CSM在月中确认，首月计息用半月复利：<br>
+                    <code>NB_interest_Jan = New_CSM_Jan × ((1 + r_Jan/2) - 1)</code> （等价于 <code>(1+r_Jan)^{0.5}-1</code>）。</li>
+                <li><strong>2-12月</strong>：
+                    <ul>
+                        <li>若上月CSM摊销比例=100%，当月不再新增计息。</li>
+                        <li>否则拆两块：
+                            <ul>
+                                <li>当月新签（当期评估月，CSM&gt;0）：首月计半个月利息：<code>CSM_new_m × ((1+r_m/2) - 1)</code>。</li>
+                                <li>本年已签但未摊完（当年早期签单的NB存量）：直接用“初始确认CSM本金 × 累乘因子差分”计算本月利息，无需上月末本息：<br>
+                                    <code>NB_interest_on_prior(m) = NB_initial_CSM × (AccFactor(UW→当月末) - AccFactor(UW→上月末))</code><br>
+                                    <code>AccFactor</code>：首月用 <code>(1+r_UW/2)</code>，之后每月乘 <code>(1+r_k)</code> 逐月累乘。</li>
+                            </ul>
+                        </li>
+                    </ul>
+                </li>
+            </ul>
+            <h3>11.1.3 计息后CSM（组级）</h3>
+            <ul>
+                <li><strong>IF_计息后CSM(组)</strong> = IF_年初CSM余额(组) + 当期IF CSM计息(组)</li>
+                <li><strong>NB_计息后CSM(组)</strong> = 当年新增合同CSM(组) + 当期NB CSM计息(组)</li>
+            </ul>
+            <h2>11.2 LC分摊IFIE（组级口径）</h2>
+            <p>计算归属于亏损成分（LC）的保险财务收益或费用（IFIE），分为有效合同（IF）和新增合同（NB）两部分。组级口径下，需先汇总各保单的待分摊IFIE，再用组级LC分摊比例计算。</p>
+            
+            <h3>11.2.1 有效合同（IF）LC分摊IFIE</h3>
+            <table style="font-size: 0.9em;">
+                <thead>
+                    <tr>
+                        <th width="30%">项目</th>
+                        <th>组级计算逻辑</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>IF_年初LC</strong></td>
+                        <td>直接取合同组年初LC余额（组级汇总值，通常为负值）。</td>
+                    </tr>
+                    <tr>
+                        <td><strong>IF_LC IFIE分摊比例</strong></td>
+                        <td>
+                            <p>若 <code>IF_年初LC &lt; 0</code>：</p>
+                            <code>IF_LC_Ratio = |IF_年初LC(组)| / Denom(组)</code><br>
+                            <p><strong>分母（组级汇总）：</strong></p>
+                            <code>Denom(组) = Σ[IF_预期赔付现金流_初始确认现值(单保单)] + Σ[IF_预期维持费用现金流_初始确认现值(单保单)] + Σ[IF_预期非金融风险调整_初始确认现值(单保单)]</code><br>
+                            <p><strong>说明：</strong>分子和分母需分别汇总各保单对应值后再计算比例，不能先算单保单比例再平均。</p>
+                            <p>否则：<code>IF_LC_Ratio = 0</code></p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>IF_待分摊IFIE_计息_赔付与费用</strong></td>
+                        <td>直接汇总合同组内各保单的对应值：<br>
+                            <code>Σ[IF_待分摊IFIE_计息_赔付与费用(单保单)]</code>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>IF_待分摊IFIE_计息_非金融风险调整</strong></td>
+                        <td>直接汇总合同组内各保单的对应值：<br>
+                            <code>Σ[IF_待分摊IFIE_计息_非金融风险调整(单保单)]</code>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>IF_待分摊IFIE_利率变化的影响_赔付与费用</strong></td>
+                        <td>直接汇总合同组内各保单的对应值：<br>
+                            <code>Σ[IF_待分摊IFIE_利率变化的影响_赔付与费用(单保单)]</code>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>IF_待分摊IFIE_利率变化的影响_非金融风险调整</strong></td>
+                        <td>直接汇总合同组内各保单的对应值：<br>
+                            <code>Σ[IF_待分摊IFIE_利率变化的影响_非金融风险调整(单保单)]</code>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>IF_LC分摊IFIE_赔付与费用</strong></td>
+                        <td>
+                            <code>(IF_待分摊IFIE_计息_赔付与费用(组) + IF_待分摊IFIE_利率变化的影响_赔付与费用(组)) × IF_LC IFIE分摊比例(组)</code><br>
+                            <p><strong>注意：</strong>使用组级分摊比例，而非单保单比例。</p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>IF_LC分摊IFIE_非金融风险调整</strong></td>
+                        <td>
+                            <code>(IF_待分摊IFIE_计息_非金融风险调整(组) + IF_待分摊IFIE_利率变化的影响_非金融风险调整(组)) × IF_LC IFIE分摊比例(组)</code>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>IF_LC分摊IFIE</strong></td>
+                        <td><code>IF_LC分摊IFIE_赔付与费用(组) + IF_LC分摊IFIE_非金融风险调整(组)</code></td>
+                    </tr>
+                    <tr>
+                        <td><strong>IF_分摊后IFIE后LC</strong></td>
+                        <td><code>IF_年初LC(组) + IF_LC分摊IFIE(组)</code></td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <h3>11.2.2 新增合同（NB）LC分摊IFIE</h3>
+            <table style="font-size: 0.9em;">
+                <thead>
+                    <tr>
+                        <th width="30%">项目</th>
+                        <th>组级计算逻辑</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>NB_新增LC</strong></td>
+                        <td>
+                            汇总当年各月新增合同中CSM/LC &lt; 0的值：<br>
+                            <code>NB_新增LC(组) = Σ[当年各月新增合同初始LC(单保单，仅取&lt;0的值)]</code>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>NB_LC IFIE分摊比例</strong></td>
+                        <td>
+                            <p>若 <code>NB_新增LC(组) &lt; 0</code>：</p>
+                            <code>NB_LC_Ratio = |NB_新增LC(组)| / Denom_NB(组)</code><br>
+                            <p><strong>分母（组级汇总，当年所有新增合同）：</strong></p>
+                            <code>Denom_NB(组) = Σ[当年各新增合同_预期赔付现金流_初始确认现值(单保单)] + Σ[当年各新增合同_预期维持费用现金流_初始确认现值(单保单)] + Σ[当年各新增合同_预期非金融风险调整_初始确认现值(单保单)]</code><br>
+                            <p><strong>说明：</strong>需取当前评估期当年所有新增合同，分子和分母分别汇总后再计算比例。</p>
+                            <p>否则：<code>NB_LC_Ratio = 0</code></p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>NB_待分摊IFIE_计息_赔付与费用</strong></td>
+                        <td>直接汇总合同组内各保单的对应值：<br>
+                            <code>Σ[NB_待分摊IFIE_计息_赔付与费用(单保单)]</code>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>NB_待分摊IFIE_计息_非金融风险调整</strong></td>
+                        <td>直接汇总合同组内各保单的对应值：<br>
+                            <code>Σ[NB_待分摊IFIE_计息_非金融风险调整(单保单)]</code>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>NB_待分摊IFIE_利率变化的影响_赔付与费用</strong></td>
+                        <td>直接汇总合同组内各保单的对应值：<br>
+                            <code>Σ[NB_待分摊IFIE_利率变化的影响_赔付与费用(单保单)]</code>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>NB_待分摊IFIE_利率变化的影响_非金融风险调整</strong></td>
+                        <td>直接汇总合同组内各保单的对应值：<br>
+                            <code>Σ[NB_待分摊IFIE_利率变化的影响_非金融风险调整(单保单)]</code>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>NB_LC分摊IFIE_赔付与费用</strong></td>
+                        <td>
+                            <code>(NB_待分摊IFIE_计息_赔付与费用(组) + NB_待分摊IFIE_利率变化的影响_赔付与费用(组)) × NB_LC IFIE分摊比例(组)</code><br>
+                            <p><strong>注意：</strong>使用组级分摊比例。</p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>NB_LC分摊IFIE_非金融风险调整</strong></td>
+                        <td>
+                            <code>(NB_待分摊IFIE_计息_非金融风险调整(组) + NB_待分摊IFIE_利率变化的影响_非金融风险调整(组)) × NB_LC IFIE分摊比例(组)</code>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>NB_LC分摊IFIE</strong></td>
+                        <td><code>NB_LC分摊IFIE_赔付与费用(组) + NB_LC分摊IFIE_非金融风险调整(组)</code></td>
+                    </tr>
+                    <tr>
+                        <td><strong>NB_分摊后IFIE后LC</strong></td>
+                        <td><code>NB_新增LC(组) + NB_LC分摊IFIE(组)</code></td>
+                    </tr>
+                </tbody>
+            </table>
+            
+            <h2>11.3 合同组CSM/LC判断（组级口径）</h2>
+            <p>在完成CSM计息和LC分摊IFIE后，需要判断合同组整体是处于盈利状态（CSM）还是亏损状态（LC）。</p>
+            
+            <div class="formula-box">
+                <span class="formula-title">净余额试算（Net Trial Balance）</span>
+                <p>汇总所有计息和IFIE分摊后的余额：</p>
+                <code>Net_Trial = IF_计息后CSM(组) + NB_计息后CSM(组) + IF_分摊后IFIE后LC(组) + NB_分摊后IFIE后LC(组)</code>
+                <p><strong>说明：</strong>此时汇总了期初余额、新增业务、利息累积和IFIE分摊，<strong>尚未包含</strong>当期履约现金流的变化（经验调整和假设变更）。</p>
+            </div>
+            
+            <table style="font-size: 0.9em;">
+                <thead>
+                    <tr>
+                        <th width="30%">项目</th>
+                        <th>组级计算逻辑</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>合同组CSM</strong></td>
+                        <td>
+                            <p>若 <code>Net_Trial >= 0</code>：</p>
+                            <code>合同组CSM = Net_Trial = IF_计息后CSM(组) + NB_计息后CSM(组) + IF_分摊后IFIE后LC(组) + NB_分摊后IFIE后LC(组)</code><br>
+                            <p>若 <code>Net_Trial &lt; 0</code>：</p>
+                            <code>合同组CSM = 0</code><br>
+                            <p><strong>含义：</strong>若净余额为正或零，表示合同组当前处于盈利状态，全部余额计入CSM。</p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>合同组LC</strong></td>
+                        <td>
+                            <p>若 <code>Net_Trial &lt; 0</code>：</p>
+                            <code>合同组LC = Net_Trial = IF_计息后CSM(组) + NB_计息后CSM(组) + IF_分摊后IFIE后LC(组) + NB_分摊后IFIE后LC(组)</code><br>
+                            <p>若 <code>Net_Trial >= 0</code>：</p>
+                            <code>合同组LC = 0</code><br>
+                            <p><strong>含义：</strong>若净余额为负，表示合同组当前处于亏损状态，全部余额计入LC（通常为负值）。</p>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+            
+            <div class="formula-box" style="background-color: #fff3cd; border-left-color: #ffc107;">
+                <span class="formula-title" style="color: #856404;">⚠️ 重要说明</span>
+                <p style="margin-bottom: 0; color: #856404;">
+                    <strong>互斥性：</strong>合同组CSM和合同组LC是互斥的，同一时点只能有一个非零值。<br>
+                    <strong>后续处理：</strong>在后续步骤（被CSM/LC吸收、摊销、期末结转）中，将根据合同组CSM/LC的判断结果，决定变化是被CSM吸收还是被LC吸收。
+                </p>
+            </div>
+            
+            <h2>11.4 CSM计量（组级口径）</h2>
+            <p>计算合同组CSM的摊销和期末余额。核心是确定有多少"履约现金流变化"被CSM吸收，以及按组级覆盖单元比例进行摊销。</p>
+            
+            <table style="font-size: 0.9em;">
+                <thead>
+                    <tr>
+                        <th width="30%">项目</th>
+                        <th>组级计算逻辑</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>CSM摊销比例</strong></td>
+                        <td>
+                            <p><strong>组级计算方式：</strong>合同组内所有保单的分子汇总、分母汇总后再计算比例。</p>
+                            <code>CSM摊销比例(组) = Σ[CU_released(单保单)] / Σ[CU_released(单保单) + CU_remaining(单保单)]</code><br>
+                            <p><strong>说明：</strong>不能先算单保单比例再平均，必须分别汇总分子和分母后再计算。</p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>年初CSM余额</strong></td>
+                        <td><code>IF_年初CSM余额(组)</code></td>
+                    </tr>
+                    <tr>
+                        <td><strong>当年新增CSM</strong></td>
+                        <td><code>NB_新增CSM(组)</code>（汇总当年各月新增合同中CSM≥0的值）</td>
+                    </tr>
+                    <tr>
+                        <td><strong>CSM计息</strong></td>
+                        <td><code>IF_CSM计息(组) + NB_CSM计息(组)</code></td>
+                    </tr>
+                    <tr>
+                        <td><strong>被CSM吸收的变化</strong></td>
+                        <td>
+                            <p><strong>复杂条件判断：</strong></p>
+                            <p>若满足以下任一条件：</p>
+                            <ul>
+                                <li><code>(合同组CSM > 0) AND (合同组CSM + 被CSM/LC吸收的变化合计 >= 0)</code>，或</li>
+                                <li><code>(合同组CSM = 0) AND (合同组LC + 分摊的LC_合计 + 被CSM/LC吸收的变化合计 >= 0)</code></li>
+                            </ul>
+                            <p>则：</p>
+                            <code>被CSM吸收的变化(组) = 被CSM/LC吸收的变化合计(组) + 年初LC余额_合计(组) + 当年新增LC_合计(组) + LC分摊IFIE_合计(组) + 分摊的LC_合计(组)</code><br>
+                            <p>否则：</p>
+                            <code>被CSM吸收的变化(组) = -(年初CSM余额(组) + 当年新增CSM(组) + CSM计息(组))</code><br>
+                            <p><strong>含义：</strong>若变化后仍为盈利或转为盈利，则全部变化被CSM吸收；否则，仅吸收至CSM归零。</p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>被CSM吸收的现金流变化</strong></td>
+                        <td>
+                            <code>被CSM吸收的现金流变化(组) = 预期现金流变化合计(组) - 被LC吸收的变化_预期现金流(组)</code>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>被CSM吸收的非金融风险调整变化</strong></td>
+                        <td>
+                            <code>被CSM吸收的非金融风险调整变化(组) = 非金融风险调整变化(组) - 被LC吸收的变化_非金融风险调整(组)</code>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>摊销的CSM</strong></td>
+                        <td>
+                            <code>CSM_Before_Amort(组) = 年初CSM余额(组) + 当年新增CSM(组) + CSM计息(组) + 被CSM吸收的变化(组)</code><br>
+                            <code>IF CSM_Before_Amort(组) <= 0 THEN 0</code><br>
+                            <code>ELSE 摊销的CSM(组) = -CSM_Before_Amort(组) × CSM摊销比例(组)</code><br>
+                            <p><strong>说明：</strong>负号表示减少负债（增加收入）。</p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>期末CSM余额</strong></td>
+                        <td>
+                            <code>期末CSM余额(组) = 年初CSM余额(组) + 当年新增CSM(组) + CSM计息(组) + 被CSM吸收的变化(组) + 摊销的CSM(组)</code>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+            
+            <h2>11.5 LC计量（组级口径）</h2>
+            <p>计算期末LC余额，需考虑当期履约现金流变化中被LC吸收的部分。分为三个维度分别计算：<strong>预期现金流</strong>、<strong>非金融风险调整</strong>和<strong>合计</strong>。</p>
+            
+            <h3>11.5.1 预期现金流部分</h3>
+            <table style="font-size: 0.9em;">
+                <thead>
+                    <tr>
+                        <th width="30%">项目</th>
+                        <th>组级计算逻辑</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>年初LC余额_预期现金流</strong></td>
+                        <td>直接取数：<code>IF_年初LC_预期现金流(组)</code></td>
+                    </tr>
+                    <tr>
+                        <td><strong>当年新增LC_预期现金流</strong></td>
+                        <td>
+                            <code>当年新增LC_预期现金流(组) = 当年新增LC_合计(组) × Ratio_CF</code><br>
+                            <p><strong>Ratio_CF计算：</strong></p>
+                            <code>Ratio_CF = (Σ[新增合同_预期赔付现金流_初始确认现值] + Σ[新增合同_预期维持费用现金流_初始确认现值]) / (Σ[新增合同_预期赔付现金流_初始确认现值] + Σ[新增合同_预期维持费用现金流_初始确认现值] + Σ[新增合同_预期非金融风险调整_初始确认现值])</code><br>
+                            <p><strong>说明：</strong>若分母为0，则返回0。</p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>LC分摊IFIE_预期现金流</strong></td>
+                        <td><code>IF_LC分摊IFIE_赔付与费用(组) + NB_LC分摊IFIE_赔付与费用(组)</code></td>
+                    </tr>
+                    <tr>
+                        <td><strong>分摊的LC_预期现金流</strong></td>
+                        <td>
+                            <code>分摊的LC_预期现金流(组) = -(PV_If_Cur_Claims + PV_If_Cur_Maint + PV_Nb_Cur_Claims + PV_Nb_Cur_Maint) × LC分摊比例(组)</code><br>
+                            <p><strong>PV字段说明：</strong></p>
+                            <ul>
+                                <li><code>PV_If_Cur_Claims</code>：有效合同-年初预期-预期当年-赔付现金流-期末现值（加权初始确认利率）</li>
+                                <li><code>PV_If_Cur_Maint</code>：有效合同-年初预期-预期当年-维持费用现金流-期末现值（加权初始确认利率）</li>
+                                <li><code>PV_Nb_Cur_Claims</code>：新增合同-初始确认-预期当期-赔付现金流-期末现值（加权初始确认利率）</li>
+                                <li><code>PV_Nb_Cur_Maint</code>：新增合同-初始确认-预期当期-维持费用现金流-期末现值（加权初始确认利率）</li>
+                            </ul>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>被LC吸收的变化_预期现金流</strong></td>
+                        <td>
+                            <p>若 <code>待调整LC余额_合计 = 0</code>：</p>
+                            <code>被LC吸收的变化_预期现金流(组) = -(年初LC余额_合计(组) + 当年新增LC_合计(组) + LC分摊IFIE_合计(组) + 分摊的LC_合计(组))</code><br>
+                            <p>否则：</p>
+                            <code>被LC吸收的变化_预期现金流(组) = 被LC吸收的变化_合计(组) × (预期现金流变化合计(组) / 被CSM/LC吸收的变化合计(组))</code><br>
+                            <p><strong>说明：</strong>若分母为0，则返回0。</p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>待调整LC余额_预期现金流</strong></td>
+                        <td>
+                            <code>待调整LC余额_预期现金流(组) = 年初LC余额_预期现金流(组) + 当年新增LC_预期现金流(组) + LC分摊IFIE_预期现金流(组) + 分摊的LC_预期现金流(组) + 被LC吸收的变化_预期现金流(组)</code>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>LC调整_预期现金流</strong></td>
+                        <td>
+                            <p>若 <code>CSM摊销比例 = 100%</code>：</p>
+                            <code>LC调整_预期现金流(组) = -待调整LC余额_预期现金流(组)</code><br>
+                            <p>否则：</p>
+                            <code>LC调整_预期现金流(组) = 0</code>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>期末LC余额_预期现金流</strong></td>
+                        <td>
+                            <code>期末LC余额_预期现金流(组) = 待调整LC余额_预期现金流(组) + LC调整_预期现金流(组)</code>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+            
+            <h3>11.5.2 非金融风险调整部分</h3>
+            <table style="font-size: 0.9em;">
+                <thead>
+                    <tr>
+                        <th width="30%">项目</th>
+                        <th>组级计算逻辑</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>年初LC余额_非金融风险调整</strong></td>
+                        <td>直接取数：<code>IF_年初LC_非金融风险调整(组)</code></td>
+                    </tr>
+                    <tr>
+                        <td><strong>当年新增LC_非金融风险调整</strong></td>
+                        <td><code>当年新增LC_合计(组) - 当年新增LC_预期现金流(组)</code></td>
+                    </tr>
+                    <tr>
+                        <td><strong>LC分摊IFIE_非金融风险调整</strong></td>
+                        <td><code>IF_LC分摊IFIE_非金融风险调整(组) + NB_LC分摊IFIE_非金融风险调整(组)</code></td>
+                    </tr>
+                    <tr>
+                        <td><strong>分摊的LC_非金融风险调整</strong></td>
+                        <td>
+                            <code>分摊的LC_非金融风险调整(组) = -(PV_If_Cur_RA + PV_Nb_Cur_RA) × LC分摊比例(组)</code><br>
+                            <p><strong>PV字段说明：</strong></p>
+                            <ul>
+                                <li><code>PV_If_Cur_RA</code>：有效合同-年初预期-预期当年-非金融风险调整-期末现值（加权初始确认利率）</li>
+                                <li><code>PV_Nb_Cur_RA</code>：新增合同-初始确认-预期当期-非金融风险调整-期末现值（加权初始确认利率）</li>
+                            </ul>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>被LC吸收的变化_非金融风险调整</strong></td>
+                        <td><code>被LC吸收的变化_合计(组) - 被LC吸收的变化_预期现金流(组)</code></td>
+                    </tr>
+                    <tr>
+                        <td><strong>待调整LC余额_非金融风险调整</strong></td>
+                        <td>
+                            <code>待调整LC余额_非金融风险调整(组) = 年初LC余额_非金融风险调整(组) + 当年新增LC_非金融风险调整(组) + LC分摊IFIE_非金融风险调整(组) + 分摊的LC_非金融风险调整(组) + 被LC吸收的变化_非金融风险调整(组)</code>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>LC调整_非金融风险调整</strong></td>
+                        <td>
+                            <p>若 <code>CSM摊销比例 = 100%</code>：</p>
+                            <code>LC调整_非金融风险调整(组) = -待调整LC余额_非金融风险调整(组)</code><br>
+                            <p>否则：</p>
+                            <code>LC调整_非金融风险调整(组) = 0</code>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>期末LC余额_非金融风险调整</strong></td>
+                        <td>
+                            <code>期末LC余额_非金融风险调整(组) = 待调整LC余额_非金融风险调整(组) + LC调整_非金融风险调整(组)</code>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+            
+            <h3>11.5.3 合计部分</h3>
+            <table style="font-size: 0.9em;">
+                <thead>
+                    <tr>
+                        <th width="30%">项目</th>
+                        <th>组级计算逻辑</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>LC分摊比例_合计</strong></td>
+                        <td>
+                            <p>若 <code>合同组LC &lt; 0</code>：</p>
+                            <code>LC分摊比例_合计(组) = |合同组LC(组)| / Denom(组)</code><br>
+                            <p><strong>分母（组级汇总）：</strong></p>
+                            <code>Denom(组) = Σ[IF_预期赔付现金流(上年12月期末值)] + Σ[当年NB各月汇总预期赔付现金流] + Σ[IF_预期维持费用现金流(上年12月期末值)] + Σ[当年NB各月汇总预期维持费用现金流] + Σ[IF_预期非金融风险调整(上年12月期末值)] + Σ[当年NB各月汇总预期非金融风险调整] + Σ[IF_待分摊IFIE_计息_赔付与费用] + Σ[NB_待分摊IFIE_计息_赔付与费用] + Σ[IF_待分摊IFIE_计息_非金融风险调整] + Σ[NB_待分摊IFIE_计息_非金融风险调整] + Σ[IF_待分摊IFIE_利率变化的影响_赔付与费用] + Σ[NB_待分摊IFIE_利率变化的影响_赔付与费用] + Σ[IF_待分摊IFIE_利率变化的影响_非金融风险调整] + Σ[NB_待分摊IFIE_利率变化的影响_非金融风险调整]</code><br>
+                            <p>否则：<code>LC分摊比例_合计(组) = 0</code></p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>年初LC余额_合计</strong></td>
+                        <td><code>IF_年初LC(组)</code></td>
+                    </tr>
+                    <tr>
+                        <td><strong>当年新增LC_合计</strong></td>
+                        <td><code>NB_新增LC(组)</code></td>
+                    </tr>
+                    <tr>
+                        <td><strong>LC分摊IFIE_合计</strong></td>
+                        <td><code>IF_LC分摊IFIE(组) + NB_LC分摊IFIE(组)</code></td>
+                    </tr>
+                    <tr>
+                        <td><strong>分摊的LC_合计</strong></td>
+                        <td>
+                            <code>分摊的LC_合计(组) = -(PV_If_Cur_Claims + PV_If_Cur_Maint + PV_If_Cur_RA + PV_Nb_Cur_Claims + PV_Nb_Cur_Maint + PV_Nb_Cur_RA) × LC分摊比例(组)</code><br>
+                            <p><strong>说明：</strong>包含预期现金流和非金融风险调整两部分。</p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>被LC吸收的变化_合计</strong></td>
+                        <td>
+                            <p><strong>复杂条件判断：</strong></p>
+                            <p>若满足以下任一条件：</p>
+                            <ul>
+                                <li><code>(合同组LC &lt; 0) AND (合同组LC + 分摊的LC_合计 + 被CSM/LC吸收的变化合计 &lt; 0)</code>，或</li>
+                                <li><code>(合同组LC = 0) AND (合同组CSM + 被CSM/LC吸收的变化合计 &lt; 0)</code></li>
+                            </ul>
+                            <p>则：</p>
+                            <code>被LC吸收的变化_合计(组) = 被CSM/LC吸收的变化合计(组) + 年初CSM余额(组) + 当年新增CSM(组) + CSM计息(组)</code><br>
+                            <p>否则：</p>
+                            <code>被LC吸收的变化_合计(组) = -(年初LC余额_合计(组) + 当年新增LC_合计(组) + LC分摊IFIE_合计(组) + 分摊的LC_合计(组))</code><br>
+                            <p><strong>含义：</strong>若变化后仍为亏损或转为亏损，则全部变化被LC吸收；否则，仅吸收至LC归零。</p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>待调整LC余额_合计</strong></td>
+                        <td>
+                            <code>待调整LC余额_合计(组) = 年初LC余额_合计(组) + 当年新增LC_合计(组) + LC分摊IFIE_合计(组) + 分摊的LC_合计(组) + 被LC吸收的变化_合计(组)</code>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>LC调整_合计</strong></td>
+                        <td>
+                            <p>若 <code>CSM摊销比例 = 100%</code>：</p>
+                            <code>LC调整_合计(组) = -待调整LC余额_合计(组)</code><br>
+                            <p>否则：</p>
+                            <code>LC调整_合计(组) = 0</code>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>期末LC余额_合计</strong></td>
+                        <td>
+                            <code>期末LC余额_合计(组) = 待调整LC余额_合计(组) + LC调整_合计(组)</code>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+            
+            <p class="source-ref">后续步骤（被CSM/LC吸收、摊销、期末结转）可在组级层面套用单保单同款公式，使用组级覆盖单元比例与组级LC分摊比例。</p>
+        </section>
     </div>
 
     <script>

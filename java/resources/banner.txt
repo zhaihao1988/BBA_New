@@ -1,0 +1,17 @@
+Application name: @project.artifactId@
+Application Version: @project.version@
+Application git.branch: ${git.branch}
+Application git.build.host: ${git.build.host}
+Application git.build.time: ${git.build.time}
+Application git.build.user.email: ${git.build.user.email}
+Application git.build.version: ${git.build.version}
+Application git.commit.id: ${git.commit.id}
+Application git.commit.id.abbrev: ${git.commit.id.abbrev}
+Spring Boot Version: ${spring-boot.version}
+
+#####    ##   #####   ##          ####  #####  #    # ###### #####  ######
+#    #  #  #    #    #  #        #      #    # #    # #      #    # #
+#    # #    #   #   #    # #####  ####  #    # ###### #####  #    # #####
+#    # ######   #   ######            # #####  #    # #      #####  #
+#    # #    #   #   #    #       #    # #      #    # #      #   #  #
+#####  #    #   #   #    #        ####  #      #    # ###### #    # ######

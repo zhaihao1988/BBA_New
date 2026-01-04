@@ -1,3 +1,14 @@
+"""
+IACF 摊销模块 (IACF Amortization)
+
+核心功能：
+1. 计算当年新增合同总 IACF 期末现值
+2. 计算 IACF 摊销比例和摊销金额
+3. 计算期末待摊 IACF 余额
+
+Rename Wlk->Lkd: 适配 pv_calculator.py 的字段更名
+"""
+
 from decimal import Decimal
 from datetime import date
 from typing import Optional, Any
@@ -14,8 +25,8 @@ def run(context, logger):
     # ==========================================================================================
     
     # 1.1 初始确认预期当年 IACF
-    # 公式：-[新增合同-初始确认-预期当期-预期IACF-期末现值(Wlk)]
-    # 注意：这里使用Wlk利率，从PV数据获取
+    # 公式：-[新增合同-初始确认-预期当期-预期IACF-期末现值(Lkd)]
+    # 注意：这里使用Lkd利率，从PV数据获取
     if context.pv_source_data:
         # 获取评估月的PV数据（所有数据都从当前评估期的PV数据读取）
         eop_month_str = context.val_month_str
@@ -23,19 +34,19 @@ def run(context, logger):
         
         if pv_data:
             # 1.1 初始确认预期当年 IACF
-            # 公式：-[新增合同-初始确认-预期当期-预期IACF-期末现值(Wlk)]
+            # 公式：-[新增合同-初始确认-预期当期-预期IACF-期末现值(Lkd)]
             # 从当前评估月的PV数据读取
-            init_expected_cur_iacf = pv_data.get_field('Pvfl_Nb_Ini_Cca_Rep_Wlk_Acq_Amt', Decimal('0'))
+            init_expected_cur_iacf = pv_data.get_field('Pvfl_Nb_Ini_Cca_Rep_Lkd_Acq_Amt', Decimal('0'))
             # 取负号
             init_expected_cur_iacf = -init_expected_cur_iacf
         else:
             init_expected_cur_iacf = Decimal('0')
             
         # 1.3 期末预期未来 IACF 现值
-        # 公式：-[新增合同-初始确认-预期未来-IACF-期末现值(Wlk)]
+        # 公式：-[新增合同-初始确认-预期未来-IACF-期末现值(Lkd)]
         # 从当前评估月的PV数据读取
         if pv_data:
-            end_expected_fut_iacf = pv_data.get_field('Pvfl_Nb_Ini_Cfa_Rep_Wlk_Acq_Amt', Decimal('0'))
+            end_expected_fut_iacf = pv_data.get_field('Pvfl_Nb_Ini_Cfa_Rep_Lkd_Acq_Amt', Decimal('0'))
             # 取负号
             end_expected_fut_iacf = -end_expected_fut_iacf
         else:
@@ -48,7 +59,7 @@ def run(context, logger):
     logger.log_item(
         "初始确认预期当年IACF",
         "[Step 1.1] 初始确认时预期的当年IACF流出（期末现值）",
-        "-[新增合同-初始确认-预期当期-预期IACF-期末现值(Wlk)]",
+        "-[新增合同-初始确认-预期当期-预期IACF-期末现值(Lkd)]",
         {},
         init_expected_cur_iacf
     )
@@ -67,7 +78,7 @@ def run(context, logger):
     logger.log_item(
         "期末预期未来IACF现值",
         "[Step 1.3] 期末时预期的未来IACF流出（期末现值）",
-        "-[新增合同-初始确认-预期未来-IACF-期末现值(Wlk)]",
+        "-[新增合同-初始确认-预期未来-IACF-期末现值(Lkd)]",
         {},
         end_expected_fut_iacf
     )
@@ -161,12 +172,18 @@ def run(context, logger):
     
     # 2.4 当年新增 IACF
     # 使用名义值（不折现）
-    context.nb_iacf_addition = context.expected_iacf_nominal
+    # 关键修正：只有在初始年度（新业务年度）才有新增IACF，非初始年度应该为0
+    # expected_iacf_nominal在非初始年度是从PV数据读取的有效合同IACF，不应该作为新增IACF
+    is_new_business = getattr(context, 'is_new_business', False)
+    if is_new_business:
+        context.nb_iacf_addition = context.expected_iacf_nominal
+    else:
+        context.nb_iacf_addition = Decimal('0')
     logger.log_item(
         "当年新增IACF",
         "[Step 2.4] 本期新增业务带来的获取费用 (名义值)",
-        "Expected IACF Nominal (不考虑时间价值)",
-        {"Expected IACF": context.expected_iacf_nominal},
+        "Expected IACF Nominal (不考虑时间价值) - 仅初始年度有值",
+        {"Expected IACF": context.expected_iacf_nominal, "Is New Business": is_new_business},
         context.nb_iacf_addition
     )
     
@@ -202,6 +219,8 @@ def run(context, logger):
     
     # 2.8 摊销的 IACF
     iacf_balance_base = context.bop_iacf + iacf_interest_bop + context.nb_iacf_addition + context.iacf_interest_nb + context.iacf_change
+    # 关键修正：根据文档，IACF摊销金额应该是正数（计入费用），但摊销会减少IACF余额
+    # 公式：IACF_Amort = (IACF_balance_base * Ratio + ExpAdj)，正数表示摊销金额
     context.iacf_amort_amount = (iacf_balance_base * context.iacf_amort_ratio + iacf_exp_adj)
     
     logger.log_item(
@@ -213,7 +232,15 @@ def run(context, logger):
     )
     
     # 2.9 期末待摊 IACF 余额
-    context.eop_iacf_balance = iacf_balance_base + iacf_exp_adj + context.iacf_amort_amount
+    # 关键修正：摊销减少IACF余额，所以应该是减去摊销金额
+    # 公式：EOP_IACF = BOP_IACF + New_IACF + Change + ExpAdj - Amort
+    # 即：eop_iacf_balance = iacf_balance_base + iacf_exp_adj - context.iacf_amort_amount
+    # 由于iacf_amort_amount = iacf_balance_base * ratio + iacf_exp_adj
+    # 所以：eop_iacf_balance = iacf_balance_base + iacf_exp_adj - (iacf_balance_base * ratio + iacf_exp_adj)
+    #     = iacf_balance_base - iacf_balance_base * ratio
+    #     = iacf_balance_base * (1 - ratio)
+    # 使用通用公式，即使iacf_exp_adj不为0也能正确计算
+    context.eop_iacf_balance = iacf_balance_base + iacf_exp_adj - context.iacf_amort_amount
     
     logger.log_item(
         "期末待摊IACF余额",
@@ -226,6 +253,3 @@ def run(context, logger):
         },
         context.eop_iacf_balance
     )
-
-
-

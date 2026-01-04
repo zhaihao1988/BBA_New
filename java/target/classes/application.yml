@@ -1,0 +1,64 @@
+# 日志配置
+logging:
+  level:
+    com.jdyx: info
+    com.kevin: error
+    org.springframework: error
+    com.bba: debug
+  # config: classpath:logback-plus.xml
+
+# 数据源配置
+spring:
+  datasource:
+    type: com.zaxxer.hikari.HikariDataSource
+    dynamic:
+      p6spy: false
+      # 设置默认的数据源或者数据源组,默认值即为 master
+      primary: pg_measure_platform
+      # 严格模式 匹配不到数据源则报错
+      strict: false
+      datasource:
+        # PG-公共数据源
+        pg_public:
+          type: ${spring.datasource.type}
+          driverClassName: org.postgresql.Driver
+          url: jdbc:postgresql://10.128.21.134:5432/cas25_dev_v3?currentSchema=public&useUnicode=true&characterEncoding=utf8&useSSL=true&autoReconnect=true&reWriteBatchedInserts=true
+          username: cas25_dev
+          password: cas25_dev
+        # PG-计量平台数据源
+        pg_measure_platform:
+          type: ${spring.datasource.type}
+          driverClassName: org.postgresql.Driver
+          url: jdbc:postgresql://10.128.21.134:5432/cas25_dev_v3?currentSchema=measure_platform&useUnicode=true&characterEncoding=utf8&useSSL=true&autoReconnect=true&reWriteBatchedInserts=true
+          username: cas25_dev
+          password: cas25_dev
+        # PG-会计引擎数据源
+        pg_ac_engine:
+          type: ${spring.datasource.type}
+          driverClassName: org.postgresql.Driver
+          url: jdbc:postgresql://10.128.21.134:5432/cas25_dev_v3?currentSchema=ac_engine&useUnicode=true&characterEncoding=utf8&useSSL=true&autoReconnect=true&reWriteBatchedInserts=true
+          username: cas25_dev
+          password: cas25_dev
+        master:
+          type: ${spring.datasource.type}
+          driverClassName: org.postgresql.Driver
+          url: jdbc:postgresql://10.128.21.134:5432/cas25_dev_v3?currentSchema=cas25_core&useUnicode=true&characterEncoding=utf8&useSSL=true&autoReconnect=true&reWriteBatchedInserts=true
+          username: cas25_dev
+          password: cas25_dev
+        pg_bi_to_cas25:
+          type: ${spring.datasource.type}
+          driverClassName: org.postgresql.Driver
+          url: jdbc:postgresql://10.128.21.134:5432/cas25_dev_v3?currentSchema=bi_to_cas25&useUnicode=true&characterEncoding=utf8&useSSL=true&autoReconnect=true&reWriteBatchedInserts=true
+          username: cas25_dev
+          password: cas25_dev
+
+      hikari:
+        maxPoolSize: 30
+        minIdle: 10
+        connectionTimeout: 60000
+        validationTimeout: 5000
+        idleTimeout: 60000
+        maxLifetime: 180000
+        connectionTestQuery: SELECT 1
+        keepaliveTime: 30000
+

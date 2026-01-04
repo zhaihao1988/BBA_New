@@ -24,6 +24,10 @@ class CalculationContext:
         self.init_fut_maint = None
         self.init_ra = None
         
+        # 初始确认时的预期现值（从PV数据读取，只读，不会被修改，用于104报表）
+        self.init_pv_premium = None      # 预期保费现值 (Pvfl_Nb_Ini_Cfa_Rec_Lkd_Pre_Amt)
+        self.init_pv_iacf = None         # 预期获取费用现值 (Pvfl_Nb_Ini_Cfa_Rec_Lkd_Acq_Amt)
+        
         self.nb_initial_csm = None
         self.nb_initial_lc = None
         
@@ -51,7 +55,7 @@ class CalculationContext:
         self.if_interest_lc = None
         self.total_csm_interest = None
         
-        self.nb_lc_ratio = None
+        self.nb_lc_ifie_ratio = None
         self.allocated_lc_exp_adj = None
         
         self.end_csm_before_amort = None

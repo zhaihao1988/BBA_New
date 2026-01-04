@@ -1,0 +1,1424 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IFRS 17 组级CSM/LC计量完整流程</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mermaid/10.9.0/mermaid.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;700&family=JetBrains+Mono:wght@400;700&display=swap');
+        body { font-family: 'Noto Sans SC', sans-serif; background-color: #f1f5f9; color: #1e293b; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        .card { background: white; border-radius: 0.75rem; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); border: 1px solid #e2e8f0; transition: all 0.2s; }
+        .step-badge { width: 2rem; height: 2rem; display: flex; align-items: center; justify-content: center; border-radius: 9999px; font-weight: bold; font-size: 1rem; flex-shrink: 0; }
+        
+        .tab-btn { padding: 0.75rem 1.5rem; font-weight: 600; border-bottom: 3px solid transparent; color: #64748b; transition: all 0.2s; cursor: pointer; }
+        .tab-btn:hover { color: #3b82f6; background-color: #f8fafc; }
+        .tab-btn.active { border-bottom-color: #3b82f6; color: #1d4ed8; background-color: #eff6ff; }
+        
+        .val-neg { color: #dc2626; font-weight: 700; }
+        .val-pos { color: #16a34a; font-weight: 700; }
+        .val-neu { color: #94a3b8; }
+        
+        .hidden-content { display: none; }
+        .fade-in { animation: fadeIn 0.3s ease-in-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+        
+        .formula-box { background: #f8fafc; border-left: 4px solid #3b82f6; padding: 1rem; margin: 0.5rem 0; border-radius: 0.25rem; }
+        .formula-box code { color: #1e40af; font-size: 0.875rem; }
+        .calc-step { background: #fef3c7; border-left: 4px solid #f59e0b; padding: 0.75rem; margin: 0.5rem 0; border-radius: 0.25rem; }
+    </style>
+</head>
+<body class="pb-20">
+
+    <!-- Header -->
+    <header class="bg-slate-900 text-white p-6 sticky top-0 z-50 shadow-lg">
+        <div class="max-w-7xl mx-auto flex justify-between items-center">
+            <div class="flex items-center gap-4">
+                <div class="bg-indigo-500 p-2 rounded-lg shadow-indigo-500/50 shadow-lg">
+                    <i class="fa-solid fa-calculator text-2xl"></i>
+                </div>
+                <div>
+                    <h1 class="text-2xl font-bold tracking-tight">IFRS 17 组级CSM/LC计量完整流程</h1>
+                    <p class="text-slate-400 text-xs uppercase tracking-wider">Group Level CSM/LC Measurement & Allocation</p>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto p-6 space-y-6">
+
+        <!-- 完整流程图 -->
+        <section class="card p-6">
+            <div class="flex items-center gap-3 mb-4 border-b border-slate-100 pb-3">
+                <span class="step-badge bg-indigo-100 text-indigo-600"><i class="fa-solid fa-sitemap"></i></span>
+                <h2 class="text-lg font-bold">组级CSM/LC计量完整流程图</h2>
+            </div>
+            <div class="mermaid text-sm">
+                flowchart TD
+                    Start([逐单汇总数据]) --> Step1[步骤1: CSM计息]
+                    Step1 --> Step1A[IF_CSM计息<br/>从1月起逐月复利]
+                    Step1 --> Step1B[NB_CSM计息<br/>首月半月+后续整月]
+                    
+                    Step1A & Step1B --> Step2[步骤2: LC分摊IFIE]
+                    Step2 --> Step2A[IF_LC分摊IFIE<br/>计息+利率变化影响]
+                    Step2 --> Step2B[NB_LC分摊IFIE<br/>计息+利率变化影响]
+                    
+                    Step2A & Step2B --> Step3[步骤3: 合同组CSM/LC判断]
+                    Step3 --> Check{Net Trial >= 0?}
+                    Check -->|是| CSMState[合同组CSM = Net Trial<br/>合同组LC = 0]
+                    Check -->|否| LCState[合同组CSM = 0<br/>合同组LC = Net Trial]
+                    
+                    CSMState & LCState --> Step4[步骤4: CSM计量]
+                    Step4 --> Step4A[被CSM吸收的变化<br/>复杂条件判断]
+                    Step4 --> Step4B[被CSM吸收的现金流变化]
+                    Step4 --> Step4C[被CSM吸收的非金融风险调整变化]
+                    Step4 --> Step4D[摊销的CSM]
+                    Step4 --> Step4E[期末CSM余额]
+                    
+                    Step4A & Step4B & Step4C & Step4D & Step4E --> Step5[步骤5: LC计量]
+                    Step5 --> Step5A[LC计量_预期现金流]
+                    Step5 --> Step5B[LC计量_非金融风险调整]
+                    Step5 --> Step5C[被LC吸收的变化_合计<br/>复杂条件判断]
+                    
+                    Step5A & Step5B & Step5C --> Step6[步骤6: 分摊回写到保单]
+                    Step6 --> Step6A[使用计息后CSM/分摊后LC<br/>作为分摊因子]
+                    Step6 --> Step6B[回写字段:<br/>被CSM吸收的变化<br/>被LC吸收的变化等]
+                    
+                    style Check fill:#eef2ff,stroke:#6366f1,stroke-width:2px
+                    style CSMState fill:#f0fdf4,stroke:#22c55e
+                    style LCState fill:#fef2f2,stroke:#ef4444
+            </div>
+        </section>
+
+        <!-- 场景切换 Tabs -->
+        <div class="bg-white rounded-t-xl shadow-sm border-b border-slate-200 flex overflow-x-auto">
+            <button onclick="switchTab('loss-to-loss')" id="tab-loss-to-loss" class="tab-btn active">
+                <i class="fa-solid fa-arrow-right-long text-red-400 mr-2"></i>亏转亏
+            </button>
+            <button onclick="switchTab('loss-to-profit')" id="tab-loss-to-profit" class="tab-btn">
+                <i class="fa-solid fa-arrow-trend-up text-green-500 mr-2"></i>亏转盈
+            </button>
+            <button onclick="switchTab('profit-to-loss')" id="tab-profit-to-loss" class="tab-btn">
+                <i class="fa-solid fa-arrow-trend-down text-red-500 mr-2"></i>盈转亏
+            </button>
+            <button onclick="switchTab('profit-to-profit')" id="tab-profit-to-profit" class="tab-btn">
+                <i class="fa-solid fa-arrow-right-long text-green-400 mr-2"></i>盈转盈
+            </button>
+        </div>
+
+        <!-- 场景内容容器 -->
+        <div id="scenario-container" class="space-y-6">
+            
+            <!-- 场景 1: 亏转亏 -->
+            <div id="content-loss-to-loss" class="scenario-content fade-in">
+                
+                <!-- 场景概览 -->
+                <div class="card p-6 bg-red-50 border-l-4 border-red-500">
+                    <h3 class="text-lg font-bold text-red-800 mb-4"><i class="fa-solid fa-arrow-right-long mr-2"></i>场景1: 亏转亏 (Loss to Loss)</h3>
+                    <div class="grid grid-cols-1 md:grid-cols-4 gap-4 text-sm">
+                        <div><span class="text-slate-600">期初状态:</span> <span class="font-bold text-red-600">LC = -150, CSM = 0</span></div>
+                        <div><span class="text-slate-600">本期变化:</span> <span class="font-bold text-blue-600">Delta = +10</span></div>
+                        <div><span class="text-slate-600">期末试算:</span> <span class="font-bold text-red-600">Net = -141.80 (仍亏损)</span></div>
+                        <div><span class="text-slate-600">判定结果:</span> <span class="font-bold">走LC逻辑</span></div>
+                    </div>
+                    <div class="mt-4 p-3 bg-white rounded text-xs">
+                        <strong>保单明细:</strong><br/>
+                        <strong>IF（有效合同-期初）:</strong> Pol_A: LC=-100, Pol_B: LC=-50 (合计LC=-150)<br/>
+                        <strong>NB（新增合同-初始确认）:</strong> Pol_C: CSM=+20 (盈利), Pol_D: LC=-20 (亏损)<br/>
+                        <strong>合计:</strong> LC=-170, CSM=+20, 净额=-150
+                    </div>
+                </div>
+
+                <!-- 步骤1: CSM计息 -->
+                <section class="card p-6">
+                    <h3 class="text-lg font-bold mb-4 border-b pb-2"><span class="step-badge bg-blue-100 text-blue-600">1</span> 步骤1: CSM计息</h3>
+                    
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                        <div>
+                            <h4 class="font-bold text-sm mb-2 text-slate-700">IF_年初CSM余额</h4>
+                            <div class="formula-box">
+                                <code>IF_年初CSM余额 = 年初CSM(直接取数) = 0.00</code>
+                                <div class="calc-step mt-2">
+                                    <p class="text-xs">IF两个保单都是亏损，无CSM</p>
+                                </div>
+                            </div>
+                            
+                            <h4 class="font-bold text-sm mb-2 mt-4 text-slate-700">IF_CSM计息</h4>
+                            <div class="formula-box">
+                                <code>IF_CSM计息 = IF_年初余额 × ((1+r₁)×(1+r₂)×...×(1+r₁₂) - 1)</code>
+                                <div class="calc-step mt-2">
+                                    <p class="text-xs">期初CSM = 0，计息 = 0</p>
+                                    <p class="text-xs"><strong>= 0.00</strong></p>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div>
+                            <h4 class="font-bold text-sm mb-2 text-slate-700">NB_新增CSM</h4>
+                            <div class="formula-box">
+                                <code>NB_新增CSM = SUM(当年各月新增CSM/LC中>=0的值)</code>
+                                <div class="calc-step mt-2">
+                                    <p class="text-xs">Pol_C: CSM=+20 (盈利合同)</p>
+                                    <p class="text-xs"><strong>= 20.00</strong></p>
+                                </div>
+                            </div>
+                            
+                            <h4 class="font-bold text-sm mb-2 mt-4 text-slate-700">NB_CSM计息</h4>
+                            <div class="formula-box">
+                                <code>NB_CSM计息 = SUM(各月新增CSM × ((1+r)^初始确认时点 - 1))</code>
+                                <div class="calc-step mt-2">
+                                    <p class="text-xs">假设Pol_C在6月签单，计息因子=0.03</p>
+                                    <p class="text-xs">= 20 × 0.03 = <strong>0.60</strong></p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="mt-4 p-4 bg-blue-50 rounded">
+                        <p class="text-sm"><strong>IF_计息后CSM</strong> = 0 + 0 = <span class="val-neu">0.00</span></p>
+                        <p class="text-sm"><strong>NB_计息后CSM</strong> = 20 + 0.60 = <span class="val-pos">20.60</span></p>
+                    </div>
+                </section>
+
+                <!-- 步骤2: LC分摊IFIE -->
+                <section class="card p-6">
+                    <h3 class="text-lg font-bold mb-4 border-b pb-2"><span class="step-badge bg-purple-100 text-purple-600">2</span> 步骤2: LC分摊IFIE</h3>
+                    
+                    <div class="space-y-4">
+                        <div>
+                            <h4 class="font-bold text-sm mb-2 text-slate-700">IF_年初LC</h4>
+                            <div class="formula-box">
+                                <code>IF_年初LC = 年初LC(直接取数) = -150.00</code>
+                                <div class="calc-step mt-2">
+                                    <p class="text-xs">Pol_A: LC=-100, Pol_B: LC=-50, 合计=-150</p>
+                                </div>
+                            </div>
+                            
+                            <h4 class="font-bold text-sm mb-2 mt-2 text-slate-700">IF_LC IFIE分摊比例</h4>
+                            <div class="formula-box">
+                                <code>IF(IF_年初LC < 0, IF_年初LC / (PV_赔付 + PV_费用 + PV_RA), 0)</code>
+                                <div class="calc-step mt-2">
+                                    <p class="text-xs">假设分母 = 750</p>
+                                    <p class="text-xs">= -150 / 750 = <strong>-0.20</strong> (注意：LC为负，比例也为负)</p>
+                                </div>
+                            </div>
+                            
+                            <h4 class="font-bold text-sm mb-2 mt-2 text-slate-700">NB_新增LC</h4>
+                            <div class="formula-box">
+                                <code>NB_新增LC = SUM(当年各月新增CSM/LC中<0的值)</code>
+                                <div class="calc-step mt-2">
+                                    <p class="text-xs">Pol_D: LC=-20 (亏损合同)</p>
+                                    <p class="text-xs"><strong>= -20.00</strong></p>
+                                </div>
+                            </div>
+                            
+                            <h4 class="font-bold text-sm mb-2 mt-2 text-slate-700">NB_LC IFIE分摊比例</h4>
+                            <div class="formula-box">
+                                <code>IF(NB_新增LC < 0, NB_新增LC / (PV_赔付 + PV_费用 + PV_RA), 0)</code>
+                                <div class="calc-step mt-2">
+                                    <p class="text-xs">假设分母 = 100</p>
+                                    <p class="text-xs">= -20 / 100 = <strong>-0.20</strong></p>
+                                </div>
+                            </div>
+                            
+                            <h4 class="font-bold text-sm mb-2 mt-2 text-slate-700">IF_待分摊IFIE_计息_赔付与费用</h4>
+                            <div class="formula-box">
+                                <code>【有效合同-年初预期-预期未来-预期赔付现金流-期末现值(加权初始确认利率)】+<br/>
+                                【有效合同-年初预期-预期未来-预期维持费用现金流-期末现值(加权初始确认利率)】+<br/>
+                                【有效合同-年初预期-预期当年-预期赔付现金流-期末现值(加权初始确认利率)】+<br/>
+                                【有效合同-年初预期-预期当年-预期维持费用现金流-期末现值(加权初始确认利率)】-<br/>
+                                【有效合同-年初预期-预期未来-预期赔付现金流-年初现值(上年)加权初始确认利率】-<br/>
+                                【有效合同-年初预期-预期未来-预期维持费用现金流-年初现值(上年)加权初始确认利率】</code>
+                                <div class="calc-step mt-2">
+                                    <p class="text-xs">假设计算结果 = <strong>5.00</strong></p>
+                                </div>
+                            </div>
+                            
+                            <h4 class="font-bold text-sm mb-2 mt-2 text-slate-700">IF_LC分摊IFIE_赔付与费用</h4>
+                            <div class="formula-box">
+                                <code>IF_LC分摊IFIE_赔付与费用 = (IF_待分摊IFIE_计息_赔付与费用 + IF_待分摊IFIE_利率变化的影响_赔付与费用) × IF_LC IFIE分摊比例</code>
+                                <div class="calc-step mt-2">
+                                    <p class="text-xs">假设待分摊IFIE = 5.00, 利率变化影响 = 2.00</p>
+                                    <p class="text-xs">= (5.00 + 2.00) × (-0.20) = <strong class="val-neg">-1.40</strong></p>
+                                    <p class="text-xs text-red-600">注意：LC为负，分摊IFIE也为负（与LC方向相同）</p>
+                                </div>
+                            </div>
+                            
+                            <h4 class="font-bold text-sm mb-2 mt-2 text-slate-700">NB_LC分摊IFIE_赔付与费用</h4>
+                            <div class="formula-box">
+                                <code>NB_LC分摊IFIE_赔付与费用 = (NB_待分摊IFIE_计息_赔付与费用 + NB_待分摊IFIE_利率变化的影响_赔付与费用) × NB_LC IFIE分摊比例</code>
+                                <div class="calc-step mt-2">
+                                    <p class="text-xs">假设待分摊IFIE = 1.00, 利率变化影响 = 0.50</p>
+                                    <p class="text-xs">= (1.00 + 0.50) × (-0.20) = <strong class="val-neg">-0.30</strong></p>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="mt-4 p-4 bg-purple-50 rounded">
+                            <p class="text-sm"><strong>IF_LC分摊IFIE</strong> = -1.40 + (-0.60) = <span class="val-neg">-2.00</span></p>
+                            <p class="text-sm"><strong>IF_分摊后IFIE后LC</strong> = -150 + (-2.00) = <span class="val-neg">-152.00</span></p>
+                            <p class="text-sm"><strong>NB_LC分摊IFIE</strong> = -0.30 + (-0.10) = <span class="val-neg">-0.40</span></p>
+                            <p class="text-sm"><strong>NB_分摊后IFIE后LC</strong> = -20 + (-0.40) = <span class="val-neg">-20.40</span></p>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 步骤3: 计算每张保单的Delta（被CSM/LC吸收的变化合计） -->
+                <section class="card p-6">
+                    <h3 class="text-lg font-bold mb-4 border-b pb-2"><span class="step-badge bg-teal-100 text-teal-600">3</span> 步骤3: 计算每张保单的Delta（被CSM/LC吸收的变化合计）</h3>
+                    
+                    <div class="space-y-4">
+                        <div class="formula-box">
+                            <code>Delta（被CSM/LC吸收的变化合计）= 预期现金流变化 + 非金融风险调整变化 + 其他变化</code>
+                            <div class="calc-step mt-2">
+                                <p class="text-xs"><strong>Pol_A (IF):</strong></p>
+                                <p class="text-xs">预期现金流变化 = +6.00, 非金融风险调整变化 = 0, 其他变化 = 0</p>
+                                <p class="text-xs">Delta_A = 6.00 + 0 + 0 = <strong class="val-pos">+6.00</strong></p>
+                            </div>
+                            <div class="calc-step mt-2">
+                                <p class="text-xs"><strong>Pol_B (IF):</strong></p>
+                                <p class="text-xs">预期现金流变化 = +4.00, 非金融风险调整变化 = 0, 其他变化 = 0</p>
+                                <p class="text-xs">Delta_B = 4.00 + 0 + 0 = <strong class="val-pos">+4.00</strong></p>
+                            </div>
+                            <div class="calc-step mt-2">
+                                <p class="text-xs"><strong>Pol_C (NB):</strong></p>
+                                <p class="text-xs">预期现金流变化 = 0, 非金融风险调整变化 = 0, 其他变化 = 0</p>
+                                <p class="text-xs">Delta_C = 0 + 0 + 0 = <strong>0.00</strong></p>
+                            </div>
+                            <div class="calc-step mt-2">
+                                <p class="text-xs"><strong>Pol_D (NB):</strong></p>
+                                <p class="text-xs">预期现金流变化 = 0, 非金融风险调整变化 = 0, 其他变化 = 0</p>
+                                <p class="text-xs">Delta_D = 0 + 0 + 0 = <strong>0.00</strong></p>
+                            </div>
+                            <div class="calc-step mt-2 bg-slate-50 p-2 rounded">
+                                <p class="text-xs"><strong>合计:</strong></p>
+                                <p class="text-xs">Delta_合计 = 6.00 + 4.00 + 0 + 0 = <strong class="val-pos">+10.00</strong></p>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 步骤4: 合同组CSM/LC判断 -->
+                <section class="card p-6">
+                    <h3 class="text-lg font-bold mb-4 border-b pb-2"><span class="step-badge bg-green-100 text-green-600">4</span> 步骤4: 合同组CSM/LC判断</h3>
+                    
+                    <div class="formula-box">
+                        <code>Net Trial = IF_计息后CSM + NB_计息后CSM + IF_分摊后IFIE后LC + NB_分摊后IFIE后LC + Delta_合计</code>
+                        <div class="calc-step mt-2">
+                            <p class="text-xs">= 0 + 20.60 + (-152.00) + (-20.40) + 10.00 = <strong class="val-neg">-141.80</strong></p>
+                            <p class="text-xs">(IF_计息后CSM=0, NB_计息后CSM=20.60, IF_分摊后IFIE后LC=-152.00, NB_分摊后IFIE后LC=-20.40, Delta_合计=+10.00)</p>
+                        </div>
+                    </div>
+                    
+                    <div class="formula-box mt-4">
+                        <code>IF(Net Trial >= 0, 合同组CSM = Net Trial, 合同组LC = Net Trial)</code>
+                        <div class="calc-step mt-2">
+                            <p class="text-xs">Net Trial = -141.80 < 0</p>
+                            <p class="text-xs"><strong>合同组CSM = 0</strong></p>
+                            <p class="text-xs"><strong>合同组LC = -141.80</strong></p>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 步骤5: CSM计量 -->
+                <section class="card p-6">
+                    <h3 class="text-lg font-bold mb-4 border-b pb-2"><span class="step-badge bg-yellow-100 text-yellow-600">5</span> 步骤5: CSM计量</h3>
+                    
+                    <div class="space-y-4">
+                        <div>
+                            <h4 class="font-bold text-sm mb-2 text-slate-700">被CSM吸收的变化</h4>
+                            <div class="formula-box">
+                                <code>IF(OR(AND(合同组CSM > 0, SUM(合同组CSM, 被CSM/LC吸收的变化合计) >= 0),<br/>
+                                AND(合同组CSM = 0, SUM(合同组LC, 分摊的LC, 被CSM/LC吸收的变化合计) >= 0)),<br/>
+                                SUM(被CSM/LC吸收的变化合计, 年初LC余额_合计, 当年新增LC_合计, LC分摊IFIE_合计, 分摊的LC_合计),<br/>
+                                -SUM(年初CSM余额, 当年新增CSM, CSM计息))</code>
+                                <div class="calc-step mt-2">
+                                    <p class="text-xs">条件1: 合同组CSM = 0, 不满足</p>
+                                    <p class="text-xs">条件2: 合同组CSM = 0, SUM(合同组LC, 分摊的LC, Delta) = -141.80 + (-5) + 10 = -136.80 < 0, 不满足</p>
+                                    <p class="text-xs">走ELSE分支: -SUM(0, 20, 0.60) = <strong class="val-neg">-20.60</strong></p>
+                                    <p class="text-xs">(年初CSM余额=0, 当年新增CSM=20, CSM计息=0.60)</p>
+                                    <p class="text-xs text-blue-600">注意：这20.60的CSM被LC吸收，Pol_C的"被CSM吸收的变化"为-20.60（减少CSM），同时这20.60会按分摊后LC比例分摊给A、B、D三个亏损保单（增加LC吸收）</p>
+                                </div>
+                            </div>
+                            
+                            <h4 class="font-bold text-sm mb-2 mt-2 text-slate-700">被CSM吸收的现金流变化</h4>
+                            <div class="formula-box">
+                                <code>被CSM吸收的现金流变化 = 预期现金流变化合计 - 被LC吸收的变化_预期现金流</code>
+                                <div class="calc-step mt-2">
+                                    <p class="text-xs">假设预期现金流变化合计 = 10, 被LC吸收的变化_预期现金流 = 30.60</p>
+                                    <p class="text-xs">= 10 - 30.60 = <strong class="val-neg">-20.60</strong></p>
+                                    <p class="text-xs text-blue-600">注意：这-20.60对应Pol_C的"被CSM吸收的现金流变化"为-20.60（减少CSM），同时这20.60会按分摊后LC比例分摊给A、B、D（增加LC吸收）</p>
+                                </div>
+                            </div>
+                            
+                            <h4 class="font-bold text-sm mb-2 mt-2 text-slate-700">被CSM吸收的非金融风险调整变化</h4>
+                            <div class="formula-box">
+                                <code>被CSM吸收的非金融风险调整变化 = 非金融风险调整变化 - 被LC吸收的变化_非金融风险调整</code>
+                                <div class="calc-step mt-2">
+                                    <p class="text-xs">假设非金融风险调整变化 = 0, 被LC吸收的变化_非金融风险调整 = 0</p>
+                                    <p class="text-xs">= 0 - 0 = <strong>0.00</strong></p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 步骤6: LC计量 -->
+                <section class="card p-6">
+                    <h3 class="text-lg font-bold mb-4 border-b pb-2"><span class="step-badge bg-orange-100 text-orange-600">6</span> 步骤6: LC计量</h3>
+                    
+                    <div class="space-y-4">
+                        <div>
+                            <h4 class="font-bold text-sm mb-2 text-slate-700">被LC吸收的变化_合计</h4>
+                            <div class="formula-box">
+                                <code>IF(OR(AND(合同组LC < 0, SUM(合同组LC, 分摊的LC, 被CSM/LC吸收的变化合计) < 0),<br/>
+                                AND(合同组LC = 0, SUM(合同组CSM, 被CSM/LC吸收的变化合计) < 0)),<br/>
+                                SUM(被CSM/LC吸收的变化合计, 年初CSM余额, 当年新增CSM, CSM计息),<br/>
+                                -SUM(年初LC余额_合计, 当年新增LC_合计, LC分摊IFIE_合计, 分摊的LC_合计))</code>
+                                <div class="calc-step mt-2">
+                                    <p class="text-xs">条件1: 合同组LC = -141.80 < 0, SUM(-141.80, -5, 10) = -136.80 < 0, <strong>满足</strong></p>
+                                    <p class="text-xs">走THEN分支: SUM(10, 0, 20, 0.60) = <strong class="val-pos">30.60</strong></p>
+                                    <p class="text-xs">(被CSM/LC吸收的变化合计 = Delta_合计 = 10.00, 年初CSM余额 = 0, 当年新增CSM = 20, CSM计息 = 0.60)</p>
+                                    <p class="text-xs text-blue-600">注意：虽然最终走LC逻辑，但NB的CSM(+20.60)也要被LC吸收</p>
+                                    <p class="text-xs text-red-600">实际被LC吸收的变化_合计 = 10.00 + 20.60 = 30.60</p>
+                                    <p class="text-xs text-red-600">其中Delta_合计(10.00)和NB的CSM(20.60)都按分摊后LC比例分摊给A、B、D三个亏损保单</p>
+                                </div>
+                            </div>
+                            
+                            <h4 class="font-bold text-sm mb-2 mt-2 text-slate-700">被LC吸收的变化_预期现金流</h4>
+                            <div class="formula-box">
+                                <code>被LC吸收的变化_预期现金流 = 被LC吸收的变化合计 × (预期现金流变化合计 / 被CSM/LC吸收的变化合计)</code>
+                                <div class="calc-step mt-2">
+                                    <p class="text-xs">= 30.60 × (10 / 10) = <strong>30.60</strong></p>
+                                    <p class="text-xs text-blue-600">注意：这30.60包括Delta的现金流变化(10.00)和NB的CSM(20.60)，都按分摊后LC比例分摊给A、B、D</p>
+                                </div>
+                            </div>
+                            
+                            <h4 class="font-bold text-sm mb-2 mt-2 text-slate-700">被LC吸收的变化_非金融风险调整</h4>
+                            <div class="formula-box">
+                                <code>被LC吸收的变化_非金融风险调整 = 被LC吸收的变化合计 - 被LC吸收的变化_预期现金流</code>
+                                <div class="calc-step mt-2">
+                                    <p class="text-xs">= 30.60 - 30.60 = <strong>0.00</strong></p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 步骤6: 分摊回写到保单 -->
+                <section class="card p-6">
+                    <h3 class="text-lg font-bold mb-4 border-b pb-2"><span class="step-badge bg-indigo-100 text-indigo-600">6</span> 步骤6: 分摊回写到保单</h3>
+                    
+                    <div class="mb-4">
+                        <h4 class="font-bold text-sm mb-2 text-slate-700">分摊因子计算</h4>
+                        <div class="formula-box">
+                            <code>分摊因子 = 分摊后LC (按保单汇总，只计算LC<0的保单)</code>
+                            <div class="calc-step mt-2">
+                                <p class="text-xs">使用分摊后LC作为分摊基数，只对LC<0的保单进行分摊</p>
+                                <p class="text-xs">Pol_A: -101.33, Pol_B: -50.67, Pol_D: -20.40, 合计: -172.40</p>
+                                <p class="text-xs">Pol_A权重 = -101.33 / (-172.40) = 58.75%</p>
+                                <p class="text-xs">Pol_B权重 = -50.67 / (-172.40) = 29.38%</p>
+                                <p class="text-xs">Pol_D权重 = -20.40 / (-172.40) = 11.87%</p>
+                                <p class="text-xs">合计权重 = 58.75% + 29.38% + 11.87% = 100.00%</p>
+                                <p class="text-xs text-blue-600">被LC吸收的变化_合计(30.60) = Delta变化(10.00) + NB的CSM(20.60)，按此权重分摊给A、B、D</p>
+                                <p class="text-xs">Pol_A: 30.60 × 58.75% = 17.98, Pol_B: 30.60 × 29.38% = 8.99, Pol_D: 30.60 × 11.87% = 3.63</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-sm border-collapse">
+                            <thead class="bg-slate-100">
+                                <tr>
+                                    <th class="px-4 py-2 border text-left">保单</th>
+                                    <th class="px-4 py-2 border text-left">类型</th>
+                                    <th class="px-4 py-2 border text-right">期初/初始LC</th>
+                                    <th class="px-4 py-2 border text-right">期初/初始CSM</th>
+                                    <th class="px-4 py-2 border text-right">计息后CSM</th>
+                                    <th class="px-4 py-2 border text-right">分摊后LC</th>
+                                    <th class="px-4 py-2 border text-right">分摊权重</th>
+                                    <th class="px-4 py-2 border text-right">被LC吸收的变化_合计</th>
+                                    <th class="px-4 py-2 border text-right">被LC吸收的变化_预期现金流</th>
+                                    <th class="px-4 py-2 border text-right">被LC吸收的变化_非金融风险调整</th>
+                                    <th class="px-4 py-2 border text-right">被CSM吸收的变化</th>
+                                    <th class="px-4 py-2 border text-right">被CSM吸收的现金流变化</th>
+                                    <th class="px-4 py-2 border text-right">期末LC</th>
+                                    <th class="px-4 py-2 border text-right">期末CSM</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td class="px-4 py-2 border">Pol_A</td>
+                                    <td class="px-4 py-2 border"><span class="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">IF</span></td>
+                                    <td class="px-4 py-2 border text-right val-neg">-100.00</td>
+                                    <td class="px-4 py-2 border text-right val-neu">0.00</td>
+                                    <td class="px-4 py-2 border text-right val-neu">0.00</td>
+                                    <td class="px-4 py-2 border text-right val-neg">-101.33</td>
+                                    <td class="px-4 py-2 border text-right">58.75%</td>
+                                    <td class="px-4 py-2 border text-right val-pos">+17.98</td>
+                                    <td class="px-4 py-2 border text-right val-pos">+17.98</td>
+                                    <td class="px-4 py-2 border text-right val-neu">0.00</td>
+                                    <td class="px-4 py-2 border text-right val-neu">0.00</td>
+                                    <td class="px-4 py-2 border text-right val-neu">0.00</td>
+                                    <td class="px-4 py-2 border text-right val-neg">-83.35</td>
+                                    <td class="px-4 py-2 border text-right val-neu">0.00</td>
+                                </tr>
+                                <tr>
+                                    <td class="px-4 py-2 border">Pol_B</td>
+                                    <td class="px-4 py-2 border"><span class="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">IF</span></td>
+                                    <td class="px-4 py-2 border text-right val-neg">-50.00</td>
+                                    <td class="px-4 py-2 border text-right val-neu">0.00</td>
+                                    <td class="px-4 py-2 border text-right val-neu">0.00</td>
+                                    <td class="px-4 py-2 border text-right val-neg">-50.67</td>
+                                    <td class="px-4 py-2 border text-right">29.38%</td>
+                                    <td class="px-4 py-2 border text-right val-pos">+8.99</td>
+                                    <td class="px-4 py-2 border text-right val-pos">+8.99</td>
+                                    <td class="px-4 py-2 border text-right val-neu">0.00</td>
+                                    <td class="px-4 py-2 border text-right val-neu">0.00</td>
+                                    <td class="px-4 py-2 border text-right val-neu">0.00</td>
+                                    <td class="px-4 py-2 border text-right val-neg">-41.68</td>
+                                    <td class="px-4 py-2 border text-right val-neu">0.00</td>
+                                </tr>
+                                <tr>
+                                    <td class="px-4 py-2 border">Pol_C</td>
+                                    <td class="px-4 py-2 border"><span class="text-xs bg-green-100 text-green-800 px-2 py-1 rounded">NB</span></td>
+                                    <td class="px-4 py-2 border text-right val-neu">0.00</td>
+                                    <td class="px-4 py-2 border text-right val-pos">+20.00</td>
+                                    <td class="px-4 py-2 border text-right val-pos">+20.60</td>
+                                    <td class="px-4 py-2 border text-right val-neu">0.00</td>
+                                    <td class="px-4 py-2 border text-right">0%</td>
+                                    <td class="px-4 py-2 border text-right val-neu">0.00</td>
+                                    <td class="px-4 py-2 border text-right val-neu">0.00</td>
+                                    <td class="px-4 py-2 border text-right val-neu">0.00</td>
+                                    <td class="px-4 py-2 border text-right val-neg">-20.60</td>
+                                    <td class="px-4 py-2 border text-right val-neg">-20.60</td>
+                                    <td class="px-4 py-2 border text-right val-neu">0.00</td>
+                                    <td class="px-4 py-2 border text-right val-neu">0.00</td>
+                                </tr>
+                                <tr>
+                                    <td class="px-4 py-2 border">Pol_D</td>
+                                    <td class="px-4 py-2 border"><span class="text-xs bg-green-100 text-green-800 px-2 py-1 rounded">NB</span></td>
+                                    <td class="px-4 py-2 border text-right val-neg">-20.00</td>
+                                    <td class="px-4 py-2 border text-right val-neu">0.00</td>
+                                    <td class="px-4 py-2 border text-right val-neu">0.00</td>
+                                    <td class="px-4 py-2 border text-right val-neg">-20.40</td>
+                                    <td class="px-4 py-2 border text-right">11.87%</td>
+                                    <td class="px-4 py-2 border text-right val-pos">+3.63</td>
+                                    <td class="px-4 py-2 border text-right val-pos">+3.63</td>
+                                    <td class="px-4 py-2 border text-right val-neu">0.00</td>
+                                    <td class="px-4 py-2 border text-right val-neu">0.00</td>
+                                    <td class="px-4 py-2 border text-right val-neu">0.00</td>
+                                    <td class="px-4 py-2 border text-right val-neg">-16.77</td>
+                                    <td class="px-4 py-2 border text-right val-neu">0.00</td>
+                                </tr>
+                                <tr class="bg-slate-50 font-bold">
+                                    <td class="px-4 py-2 border" colspan="2">合计</td>
+                                    <td class="px-4 py-2 border text-right val-neg">-170.00</td>
+                                    <td class="px-4 py-2 border text-right val-pos">+20.00</td>
+                                    <td class="px-4 py-2 border text-right val-pos">+20.60</td>
+                                    <td class="px-4 py-2 border text-right val-neg">-172.40</td>
+                                    <td class="px-4 py-2 border text-right">100.00%</td>
+                                    <td class="px-4 py-2 border text-right val-pos">+30.60</td>
+                                    <td class="px-4 py-2 border text-right val-pos">+30.60</td>
+                                    <td class="px-4 py-2 border text-right val-neu">0.00</td>
+                                    <td class="px-4 py-2 border text-right val-neg">-20.60</td>
+                                    <td class="px-4 py-2 border text-right val-neg">-20.60</td>
+                                    <td class="px-4 py-2 border text-right val-neg">-141.80</td>
+                                    <td class="px-4 py-2 border text-right val-neu">0.00</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+
+            </div>
+
+            <!-- 场景 2: 亏转盈 -->
+            <div id="content-loss-to-profit" class="scenario-content hidden-content fade-in">
+                
+                <div class="card p-6 bg-green-50 border-l-4 border-green-500">
+                    <h3 class="text-lg font-bold text-green-800 mb-4"><i class="fa-solid fa-arrow-trend-up mr-2"></i>场景2: 亏转盈 (Loss to Profit)</h3>
+                    <div class="grid grid-cols-1 md:grid-cols-4 gap-4 text-sm">
+                        <div><span class="text-slate-600">期初状态:</span> <span class="font-bold text-red-600">LC = -150, CSM = 0</span></div>
+                        <div><span class="text-slate-600">本期变化:</span> <span class="font-bold text-green-600">Delta = +200</span></div>
+                        <div><span class="text-slate-600">期末试算:</span> <span class="font-bold text-green-600">Net = +50 (转盈利)</span></div>
+                        <div><span class="text-slate-600">判定结果:</span> <span class="font-bold">走CSM逻辑</span></div>
+                    </div>
+                    <div class="mt-4 p-3 bg-white rounded text-xs">
+                        <strong>保单明细:</strong><br/>
+                        <strong>IF（有效合同-期初）:</strong> Pol_A: LC=-100, Pol_B: LC=-50 (合计LC=-150)<br/>
+                        <strong>NB（新增合同-初始确认）:</strong> Pol_C: CSM=+30 (盈利), Pol_D: LC=-20 (亏损)<br/>
+                        <strong>合计:</strong> LC=-170, CSM=+30, 净额=-140
+                    </div>
+                </div>
+
+                <!-- 步骤1: CSM计息 -->
+                <section class="card p-6">
+                    <h3 class="text-lg font-bold mb-4 border-b pb-2"><span class="step-badge bg-blue-100 text-blue-600">1</span> 步骤1: CSM计息</h3>
+                    
+                    <div class="space-y-4">
+                        <div>
+                            <h4 class="font-bold text-sm mb-2 text-slate-700">IF_CSM计息</h4>
+                            <div class="formula-box">
+                                <code>IF_CSM计息 = IF_期初CSM × 折现率</code>
+                                <div class="calc-step mt-2">
+                                    <p class="text-xs">假设: IF_期初CSM = 0, 折现率 = 2.4%</p>
+                                    <p class="text-xs">= 0 × 2.4% = <strong>0.00</strong></p>
+                                </div>
+                            </div>
+                            
+                            <h4 class="font-bold text-sm mb-2 mt-2 text-slate-700">IF_计息后CSM</h4>
+                            <div class="formula-box">
+                                <code>IF_计息后CSM = IF_期初CSM + IF_CSM计息</code>
+                                <div class="calc-step mt-2">
+                                    <p class="text-xs">= 0 + 0.00 = <strong>0.00</strong></p>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div>
+                            <h4 class="font-bold text-sm mb-2 text-slate-700">NB_CSM计息</h4>
+                            <div class="formula-box">
+                                <code>NB_CSM计息 = NB_初始确认CSM × 折现率</code>
+                                <div class="calc-step mt-2">
+                                    <p class="text-xs">假设: NB_初始确认CSM = 30 (Pol_C), 折现率 = 3%</p>
+                                    <p class="text-xs">= 30 × 3% = <strong class="val-pos">+0.90</strong></p>
+                                </div>
+                            </div>
+                            
+                            <h4 class="font-bold text-sm mb-2 mt-2 text-slate-700">NB_计息后CSM</h4>
+                            <div class="formula-box">
+                                <code>NB_计息后CSM = NB_初始确认CSM + NB_CSM计息</code>
+                                <div class="calc-step mt-2">
+                                    <p class="text-xs">= 30 + 0.90 = <strong class="val-pos">+30.90</strong></p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 步骤2: LC分摊IFIE -->
+                <section class="card p-6">
+                    <h3 class="text-lg font-bold mb-4 border-b pb-2"><span class="step-badge bg-purple-100 text-purple-600">2</span> 步骤2: LC分摊IFIE</h3>
+                    
+                    <div class="space-y-4">
+                        <div>
+                            <h4 class="font-bold text-sm mb-2 text-slate-700">IF_LC分摊IFIE</h4>
+                            <div class="formula-box">
+                                <code>IF_LC分摊IFIE = IF_待分摊IFIE × IF_LC IFIE分摊比例</code>
+                                <div class="calc-step mt-2">
+                                    <p class="text-xs">假设: IF_待分摊IFIE = -2.00, IF_LC IFIE分摊比例 = 1.0 (全部亏损)</p>
+                                    <p class="text-xs">= -2.00 × 1.0 = <strong class="val-neg">-2.00</strong></p>
+                                </div>
+                            </div>
+                            
+                            <h4 class="font-bold text-sm mb-2 mt-2 text-slate-700">IF_分摊后IFIE后LC</h4>
+                            <div class="formula-box">
+                                <code>IF_分摊后IFIE后LC = IF_期初LC + IF_LC分摊IFIE</code>
+                                <div class="calc-step mt-2">
+                                    <p class="text-xs">= -150 + (-2.00) = <strong class="val-neg">-152.00</strong></p>
+                                    <p class="text-xs">其中: Pol_A: -100 + (-1.33) = -101.33, Pol_B: -50 + (-0.67) = -50.67</p>
+                                    <p class="text-xs text-blue-600">注意：分摊后LC用于计算分摊权重，Pol_A和Pol_B分别为-101.33和-50.67</p>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div>
+                            <h4 class="font-bold text-sm mb-2 text-slate-700">NB_LC分摊IFIE</h4>
+                            <div class="formula-box">
+                                <code>NB_LC分摊IFIE = NB_待分摊IFIE × NB_LC IFIE分摊比例</code>
+                                <div class="calc-step mt-2">
+                                    <p class="text-xs">假设: NB_待分摊IFIE = -0.40, NB_LC IFIE分摊比例 = 1.0 (Pol_D全部亏损)</p>
+                                    <p class="text-xs">= -0.40 × 1.0 = <strong class="val-neg">-0.40</strong></p>
+                                </div>
+                            </div>
+                            
+                            <h4 class="font-bold text-sm mb-2 mt-2 text-slate-700">NB_分摊后IFIE后LC</h4>
+                            <div class="formula-box">
+                                <code>NB_分摊后IFIE后LC = NB_初始确认LC + NB_LC分摊IFIE</code>
+                                <div class="calc-step mt-2">
+                                    <p class="text-xs">= -20 + (-0.40) = <strong class="val-neg">-20.40</strong></p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 步骤3: 计算每张保单的Delta（被CSM/LC吸收的变化合计） -->
+                <section class="card p-6">
+                    <h3 class="text-lg font-bold mb-4 border-b pb-2"><span class="step-badge bg-teal-100 text-teal-600">3</span> 步骤3: 计算每张保单的Delta（被CSM/LC吸收的变化合计）</h3>
+                    
+                    <div class="space-y-4">
+                        <div class="formula-box">
+                            <code>Delta（被CSM/LC吸收的变化合计）= 预期现金流变化 + 非金融风险调整变化 + 其他变化</code>
+                            <div class="calc-step mt-2">
+                                <p class="text-xs"><strong>Pol_A (IF):</strong></p>
+                                <p class="text-xs">预期现金流变化 = +120.00, 非金融风险调整变化 = 0, 其他变化 = 0</p>
+                                <p class="text-xs">Delta_A = +120.00 + 0 + 0 = <strong class="val-pos">+120.00</strong></p>
+                            </div>
+                            <div class="calc-step mt-2">
+                                <p class="text-xs"><strong>Pol_B (IF):</strong></p>
+                                <p class="text-xs">预期现金流变化 = +80.00, 非金融风险调整变化 = 0, 其他变化 = 0</p>
+                                <p class="text-xs">Delta_B = +80.00 + 0 + 0 = <strong class="val-pos">+80.00</strong></p>
+                            </div>
+                            <div class="calc-step mt-2">
+                                <p class="text-xs"><strong>Pol_C (NB):</strong></p>
+                                <p class="text-xs">预期现金流变化 = 0, 非金融风险调整变化 = 0, 其他变化 = 0</p>
+                                <p class="text-xs">Delta_C = 0 + 0 + 0 = <strong>0.00</strong></p>
+                            </div>
+                            <div class="calc-step mt-2">
+                                <p class="text-xs"><strong>Pol_D (NB):</strong></p>
+                                <p class="text-xs">预期现金流变化 = 0, 非金融风险调整变化 = 0, 其他变化 = 0</p>
+                                <p class="text-xs">Delta_D = 0 + 0 + 0 = <strong>0.00</strong></p>
+                            </div>
+                            <div class="calc-step mt-2 bg-slate-50 p-2 rounded">
+                                <p class="text-xs"><strong>合计:</strong></p>
+                                <p class="text-xs">Delta_合计 = +120.00 + (+80.00) + 0 + 0 = <strong class="val-pos">+200.00</strong></p>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 步骤4: 合同组CSM/LC判断 -->
+                <section class="card p-6">
+                    <h3 class="text-lg font-bold mb-4 border-b pb-2"><span class="step-badge bg-green-100 text-green-600">4</span> 步骤4: 合同组CSM/LC判断</h3>
+                    
+                    <div class="formula-box">
+                        <code>Net Trial = IF_计息后CSM + NB_计息后CSM + IF_分摊后IFIE后LC + NB_分摊后IFIE后LC + Delta_合计</code>
+                        <div class="calc-step mt-2">
+                            <p class="text-xs">= 0 + 30.90 + (-152.00) + (-20.40) + 200.00 = <strong class="val-pos">+58.50</strong></p>
+                            <p class="text-xs">(IF_计息后CSM=0, NB_计息后CSM=30.90, IF_分摊后IFIE后LC=-152.00, NB_分摊后IFIE后LC=-20.40, Delta_合计=+200.00)</p>
+                        </div>
+                    </div>
+                    
+                    <div class="formula-box mt-4">
+                        <code>IF(Net Trial >= 0, 合同组CSM = Net Trial, 合同组LC = Net Trial)</code>
+                        <div class="calc-step mt-2">
+                            <p class="text-xs">Net Trial = +58.50 >= 0</p>
+                            <p class="text-xs"><strong>合同组CSM = +58.50</strong></p>
+                            <p class="text-xs"><strong>合同组LC = 0</strong></p>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="card p-6">
+                    <h3 class="text-lg font-bold mb-4 border-b pb-2"><span class="step-badge bg-yellow-100 text-yellow-600">5</span> 步骤5: CSM计量</h3>
+                    
+                    <div class="space-y-4">
+                        <div class="formula-box">
+                            <code>被CSM吸收的变化 = SUM(被CSM/LC吸收的变化合计, 年初LC余额_合计, 当年新增LC_合计, LC分摊IFIE_合计, 分摊的LC_合计)</code>
+                            <div class="calc-step mt-2">
+                                <p class="text-xs">条件: 合同组CSM > 0 且 SUM(合同组CSM, Delta_合计) >= 0, 满足</p>
+                                <p class="text-xs">= 200 + (-150) + (-20) + (-2.40) + 0 = <strong class="val-pos">+27.60</strong></p>
+                                <p class="text-xs text-blue-600">注意：被CSM吸收的变化包括LC转回和Delta变化</p>
+                            </div>
+                        </div>
+                        
+                        <div class="formula-box">
+                                <code>被CSM吸收的现金流变化 = 预期现金流变化合计 - 被LC吸收的变化_预期现金流</code>
+                                <div class="calc-step mt-2">
+                                    <p class="text-xs">= 170.00 - 146.54 = <strong>23.46</strong></p>
+                                    <p class="text-xs">(预期现金流变化合计=170.00, 被LC吸收的变化_预期现金流=146.54)</p>
+                                </div>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="card p-6">
+                    <h3 class="text-lg font-bold mb-4 border-b pb-2"><span class="step-badge bg-orange-100 text-orange-600">6</span> 步骤6: LC计量</h3>
+                    
+                    <div class="space-y-4">
+                        <div class="formula-box">
+                            <code>被LC吸收的变化_合计 = -SUM(年初LC余额_合计, 当年新增LC_合计, LC分摊IFIE_合计, 分摊的LC_合计)</code>
+                            <div class="calc-step mt-2">
+                                <p class="text-xs">= -(-150 + (-20) + (-2.40) + 0) = <strong class="val-pos">+172.40</strong> (LC清零转回)</p>
+                                <p class="text-xs">(年初LC余额_合计=-150, 当年新增LC_合计=-20, LC分摊IFIE_合计=-2.40, 分摊的LC_合计=0)</p>
+                                <p class="text-xs text-blue-600">注意：虽然最终走CSM逻辑，但LC需要清零，所以被LC吸收的变化为正（转回）</p>
+                            </div>
+                        </div>
+                        
+                        <div class="formula-box">
+                            <code>被LC吸收的变化_预期现金流 = 被LC吸收的变化合计 × (预期现金流变化合计 / 被CSM/LC吸收的变化合计)</code>
+                            <div class="calc-step mt-2">
+                                <p class="text-xs">= 172.40 × (170 / 200) = <strong>146.54</strong></p>
+                                <p class="text-xs">(预期现金流变化合计=170, 被CSM/LC吸收的变化合计=200)</p>
+                            </div>
+                        </div>
+                        
+                        <div class="formula-box">
+                            <code>被LC吸收的变化_非金融风险调整 = 被LC吸收的变化合计 - 被LC吸收的变化_预期现金流</code>
+                            <div class="calc-step mt-2">
+                                <p class="text-xs">= 172.40 - 146.54 = <strong>25.86</strong></p>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 步骤7: 分摊回写到保单 -->
+                <section class="card p-6">
+                    <h3 class="text-lg font-bold mb-4 border-b pb-2"><span class="step-badge bg-indigo-100 text-indigo-600">7</span> 步骤7: 分摊回写到保单</h3>
+                    
+                    <div class="mb-4">
+                        <h4 class="font-bold text-sm mb-2 text-slate-700">分摊因子计算</h4>
+                        <div class="formula-box">
+                            <code>被CSM吸收的变化: 分摊因子 = 计息后CSM (按保单汇总)<br/>被LC吸收的变化: 分摊因子 = 分摊后LC (按保单汇总，只计算LC<0的保单)</code>
+                            <div class="calc-step mt-2">
+                                <p class="text-xs"><strong>被CSM吸收的变化(+27.60)按计息后CSM分摊:</strong></p>
+                                <p class="text-xs">Pol_C: +30.90, 合计: +30.90</p>
+                                <p class="text-xs">Pol_C权重 = 30.90 / 30.90 = 100.00%</p>
+                                <p class="text-xs"><strong>被LC吸收的变化(+172.40)按分摊后LC分摊:</strong></p>
+                                <p class="text-xs">使用分摊后LC作为分摊基数，只对LC<0的保单进行分摊</p>
+                                <p class="text-xs">Pol_A: -101.33, Pol_B: -50.67, Pol_D: -20.40, 合计: -172.40</p>
+                                <p class="text-xs">Pol_A权重 = -101.33 / (-172.40) = 58.75%</p>
+                                <p class="text-xs">Pol_B权重 = -50.67 / (-172.40) = 29.38%</p>
+                                <p class="text-xs">Pol_D权重 = -20.40 / (-172.40) = 11.87%</p>
+                                <p class="text-xs">合计权重 = 58.75% + 29.38% + 11.87% = 100.00%</p>
+                                <p class="text-xs text-blue-600">被LC吸收的变化_合计(+172.40)按此权重分摊给A、B、D，用于LC清零转回</p>
+                                <p class="text-xs">Pol_A: 172.40 × 58.75% = 101.285 ≈ 101.29, Pol_B: 172.40 × 29.38% = 50.611 ≈ 50.61, Pol_D: 172.40 × 11.87% = 20.444 ≈ 20.50 (调整以匹配合计172.40)</p>
+                                <p class="text-xs">合计: 101.29 + 50.61 + 20.50 = 172.40 ✓</p>
+                                <p class="text-xs text-blue-600">被CSM吸收的变化(+27.60)100%分摊给Pol_C: Pol_C = 27.60 × 100.00% = +27.60</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-sm border-collapse">
+                            <thead class="bg-slate-100">
+                                <tr>
+                                    <th class="px-4 py-2 border text-left">保单</th>
+                                    <th class="px-4 py-2 border text-left">类型</th>
+                                    <th class="px-4 py-2 border text-right">期初/初始LC</th>
+                                    <th class="px-4 py-2 border text-right">期初/初始CSM</th>
+                                    <th class="px-4 py-2 border text-right">计息后CSM</th>
+                                    <th class="px-4 py-2 border text-right">分摊后LC</th>
+                                    <th class="px-4 py-2 border text-right">分摊权重</th>
+                                    <th class="px-4 py-2 border text-right">被LC吸收的变化_合计</th>
+                                    <th class="px-4 py-2 border text-right">被LC吸收的变化_预期现金流</th>
+                                    <th class="px-4 py-2 border text-right">被LC吸收的变化_非金融风险调整</th>
+                                    <th class="px-4 py-2 border text-right">被CSM吸收的变化</th>
+                                    <th class="px-4 py-2 border text-right">被CSM吸收的现金流变化</th>
+                                    <th class="px-4 py-2 border text-right">期末LC</th>
+                                    <th class="px-4 py-2 border text-right">期末CSM</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr><td class="px-4 py-2 border">Pol_A</td><td class="px-4 py-2 border"><span class="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">IF</span></td><td class="px-4 py-2 border text-right val-neg">-100</td><td class="px-4 py-2 border text-right val-neu">0</td><td class="px-4 py-2 border text-right val-neu">0.00</td><td class="px-4 py-2 border text-right val-neg">-101.33</td><td class="px-4 py-2 border text-right">58.75%</td><td class="px-4 py-2 border text-right val-pos">+101.29</td><td class="px-4 py-2 border text-right val-pos">+98.94</td><td class="px-4 py-2 border text-right val-pos">+2.35</td><td class="px-4 py-2 border text-right val-neu">0.00</td><td class="px-4 py-2 border text-right val-neu">0.00</td><td class="px-4 py-2 border text-right val-neu">0</td><td class="px-4 py-2 border text-right val-neu">0</td></tr>
+                                <tr><td class="px-4 py-2 border">Pol_B</td><td class="px-4 py-2 border"><span class="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">IF</span></td><td class="px-4 py-2 border text-right val-neg">-50</td><td class="px-4 py-2 border text-right val-neu">0</td><td class="px-4 py-2 border text-right val-neu">0.00</td><td class="px-4 py-2 border text-right val-neg">-50.67</td><td class="px-4 py-2 border text-right">29.38%</td><td class="px-4 py-2 border text-right val-pos">+50.61</td><td class="px-4 py-2 border text-right val-pos">+49.47</td><td class="px-4 py-2 border text-right val-pos">+1.14</td><td class="px-4 py-2 border text-right val-neu">0.00</td><td class="px-4 py-2 border text-right val-neu">0.00</td><td class="px-4 py-2 border text-right val-neu">0</td><td class="px-4 py-2 border text-right val-neu">0</td></tr>
+                                <tr><td class="px-4 py-2 border">Pol_C</td><td class="px-4 py-2 border"><span class="text-xs bg-green-100 text-green-800 px-2 py-1 rounded">NB</span></td><td class="px-4 py-2 border text-right val-neu">0</td><td class="px-4 py-2 border text-right val-pos">+30</td><td class="px-4 py-2 border text-right val-pos">+30.90</td><td class="px-4 py-2 border text-right val-neu">0.00</td><td class="px-4 py-2 border text-right">100.00%</td><td class="px-4 py-2 border text-right val-neu">0.00</td><td class="px-4 py-2 border text-right val-neu">0.00</td><td class="px-4 py-2 border text-right val-neu">0.00</td><td class="px-4 py-2 border text-right val-pos">+27.60</td><td class="px-4 py-2 border text-right val-pos">+27.60</td><td class="px-4 py-2 border text-right val-neu">0</td><td class="px-4 py-2 border text-right val-pos">+58.50</td></tr>
+                                <tr><td class="px-4 py-2 border">Pol_D</td><td class="px-4 py-2 border"><span class="text-xs bg-green-100 text-green-800 px-2 py-1 rounded">NB</span></td><td class="px-4 py-2 border text-right val-neg">-20</td><td class="px-4 py-2 border text-right val-neu">0</td><td class="px-4 py-2 border text-right val-neu">0.00</td><td class="px-4 py-2 border text-right val-neg">-20.40</td><td class="px-4 py-2 border text-right">11.87%</td><td class="px-4 py-2 border text-right val-pos">+20.50</td><td class="px-4 py-2 border text-right val-pos">+20.05</td><td class="px-4 py-2 border text-right val-pos">+0.45</td><td class="px-4 py-2 border text-right val-neu">0.00</td><td class="px-4 py-2 border text-right val-neu">0.00</td><td class="px-4 py-2 border text-right val-neu">0</td><td class="px-4 py-2 border text-right val-neu">0</td></tr>
+                                <tr class="bg-slate-50 font-bold"><td class="px-4 py-2 border" colspan="2">合计</td><td class="px-4 py-2 border text-right val-neg">-170</td><td class="px-4 py-2 border text-right val-pos">+30</td><td class="px-4 py-2 border text-right val-pos">+30.90</td><td class="px-4 py-2 border text-right val-neg">-172.40</td><td class="px-4 py-2 border text-right">100.00%</td><td class="px-4 py-2 border text-right val-pos">+172.40</td><td class="px-4 py-2 border text-right val-pos">+168.46</td><td class="px-4 py-2 border text-right val-pos">+3.94</td><td class="px-4 py-2 border text-right val-pos">+27.60</td><td class="px-4 py-2 border text-right val-pos">+27.60</td><td class="px-4 py-2 border text-right val-neu">0</td><td class="px-4 py-2 border text-right val-pos">+58.50</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="mt-4 p-4 bg-green-100 text-sm text-green-800">
+                        <i class="fa-solid fa-check"></i> 所有LC余额清零，剩余+58.50建立新的CSM。注意：Pol_C的CSM(+30.90)保留，Pol_D的LC(-20.40)清零转回。
+                    </div>
+                </section>
+
+            </div>
+
+            <!-- 场景 3: 盈转亏 -->
+            <div id="content-profit-to-loss" class="scenario-content hidden-content fade-in">
+                
+                <div class="card p-6 bg-red-50 border-l-4 border-red-500">
+                    <h3 class="text-lg font-bold text-red-800 mb-4"><i class="fa-solid fa-arrow-trend-down mr-2"></i>场景3: 盈转亏 (Profit to Loss)</h3>
+                    <div class="grid grid-cols-1 md:grid-cols-4 gap-4 text-sm">
+                        <div><span class="text-slate-600">期初状态:</span> <span class="font-bold text-green-600">CSM = +80, LC = 0</span></div>
+                        <div><span class="text-slate-600">本期变化:</span> <span class="font-bold text-red-600">Delta = -130</span></div>
+                        <div><span class="text-slate-600">期末试算:</span> <span class="font-bold text-red-600">Net = -50 (转亏损)</span></div>
+                        <div><span class="text-slate-600">判定结果:</span> <span class="font-bold">走LC逻辑</span></div>
+                    </div>
+                    <div class="mt-4 p-3 bg-white rounded text-xs">
+                        <strong>保单明细:</strong><br/>
+                        <strong>IF（有效合同-期初）:</strong> Pol_A: CSM=+50, Pol_B: CSM=+30 (合计CSM=+80)<br/>
+                        <strong>NB（新增合同-初始确认）:</strong> Pol_C: CSM=+20 (盈利), Pol_D: LC=-20 (亏损)<br/>
+                        <strong>合计:</strong> CSM=+100, LC=-20, 净额=+80
+                    </div>
+                </div>
+
+                <!-- 步骤1: CSM计息 -->
+                <section class="card p-6">
+                    <h3 class="text-lg font-bold mb-4 border-b pb-2"><span class="step-badge bg-blue-100 text-blue-600">1</span> 步骤1: CSM计息</h3>
+                    
+                    <div class="space-y-4">
+                        <div>
+                            <h4 class="font-bold text-sm mb-2 text-slate-700">IF_CSM计息</h4>
+                            <div class="formula-box">
+                                <code>IF_CSM计息 = IF_期初CSM × 折现率</code>
+                                <div class="calc-step mt-2">
+                                    <p class="text-xs">假设: IF_期初CSM = 80 (Pol_A: 50, Pol_B: 30), 折现率 = 2.4%</p>
+                                    <p class="text-xs">= 80 × 2.4% = <strong class="val-pos">+1.92</strong></p>
+                                    <p class="text-xs">其中: Pol_A: 50 × 2.4% = 1.20, Pol_B: 30 × 2.4% = 0.72</p>
+                                </div>
+                            </div>
+                            
+                            <h4 class="font-bold text-sm mb-2 mt-2 text-slate-700">IF_计息后CSM</h4>
+                            <div class="formula-box">
+                                <code>IF_计息后CSM = IF_期初CSM + IF_CSM计息</code>
+                                <div class="calc-step mt-2">
+                                    <p class="text-xs">= 80 + 1.92 = <strong class="val-pos">+81.92</strong></p>
+                                    <p class="text-xs">其中: Pol_A: 50 + 1.20 = 51.20, Pol_B: 30 + 0.72 = 30.72</p>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div>
+                            <h4 class="font-bold text-sm mb-2 text-slate-700">NB_CSM计息</h4>
+                            <div class="formula-box">
+                                <code>NB_CSM计息 = NB_初始确认CSM × 折现率</code>
+                                <div class="calc-step mt-2">
+                                    <p class="text-xs">假设: NB_初始确认CSM = 20 (Pol_C), 折现率 = 3%</p>
+                                    <p class="text-xs">= 20 × 3% = <strong class="val-pos">+0.60</strong></p>
+                                </div>
+                            </div>
+                            
+                            <h4 class="font-bold text-sm mb-2 mt-2 text-slate-700">NB_计息后CSM</h4>
+                            <div class="formula-box">
+                                <code>NB_计息后CSM = NB_初始确认CSM + NB_CSM计息</code>
+                                <div class="calc-step mt-2">
+                                    <p class="text-xs">= 20 + 0.60 = <strong class="val-pos">+20.60</strong></p>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="mt-4 p-4 bg-blue-50 rounded">
+                            <p class="text-sm"><strong>IF_计息后CSM</strong> = 81.92 (Pol_A: 51.20, Pol_B: 30.72)</p>
+                            <p class="text-sm"><strong>NB_计息后CSM</strong> = 20.60</p>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 步骤2: LC分摊IFIE -->
+                <section class="card p-6">
+                    <h3 class="text-lg font-bold mb-4 border-b pb-2"><span class="step-badge bg-purple-100 text-purple-600">2</span> 步骤2: LC分摊IFIE</h3>
+                    
+                    <div class="space-y-4">
+                        <div>
+                            <h4 class="font-bold text-sm mb-2 text-slate-700">IF_LC分摊IFIE</h4>
+                            <div class="formula-box">
+                                <code>IF_LC分摊IFIE = IF_待分摊IFIE × IF_LC IFIE分摊比例</code>
+                                <div class="calc-step mt-2">
+                                    <p class="text-xs">假设: IF_待分摊IFIE = 0 (IF保单都是盈利，无LC), IF_LC IFIE分摊比例 = 0</p>
+                                    <p class="text-xs">= 0 × 0 = <strong>0.00</strong></p>
+                                </div>
+                            </div>
+                            
+                            <h4 class="font-bold text-sm mb-2 mt-2 text-slate-700">IF_分摊后IFIE后LC</h4>
+                            <div class="formula-box">
+                                <code>IF_分摊后IFIE后LC = IF_期初LC + IF_LC分摊IFIE</code>
+                                <div class="calc-step mt-2">
+                                    <p class="text-xs">= 0 + 0 = <strong>0.00</strong></p>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div>
+                            <h4 class="font-bold text-sm mb-2 text-slate-700">NB_LC分摊IFIE</h4>
+                            <div class="formula-box">
+                                <code>NB_LC分摊IFIE = NB_待分摊IFIE × NB_LC IFIE分摊比例</code>
+                                <div class="calc-step mt-2">
+                                    <p class="text-xs">假设: NB_待分摊IFIE = -0.40, NB_LC IFIE分摊比例 = 1.0 (Pol_D全部亏损)</p>
+                                    <p class="text-xs">= -0.40 × 1.0 = <strong class="val-neg">-0.40</strong></p>
+                                </div>
+                            </div>
+                            
+                            <h4 class="font-bold text-sm mb-2 mt-2 text-slate-700">NB_分摊后IFIE后LC</h4>
+                            <div class="formula-box">
+                                <code>NB_分摊后IFIE后LC = NB_初始确认LC + NB_LC分摊IFIE</code>
+                                <div class="calc-step mt-2">
+                                    <p class="text-xs">= -20 + (-0.40) = <strong class="val-neg">-20.40</strong></p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 步骤3: 计算每张保单的Delta（被CSM/LC吸收的变化合计） -->
+                <section class="card p-6">
+                    <h3 class="text-lg font-bold mb-4 border-b pb-2"><span class="step-badge bg-teal-100 text-teal-600">3</span> 步骤3: 计算每张保单的Delta（被CSM/LC吸收的变化合计）</h3>
+                    
+                    <div class="space-y-4">
+                        <div class="formula-box">
+                            <code>Delta（被CSM/LC吸收的变化合计）= 预期现金流变化 + 非金融风险调整变化 + 其他变化</code>
+                            <div class="calc-step mt-2">
+                                <p class="text-xs"><strong>Pol_A (IF):</strong></p>
+                                <p class="text-xs">预期现金流变化 = -80.00, 非金融风险调整变化 = 0, 其他变化 = 0</p>
+                                <p class="text-xs">Delta_A = -80.00 + 0 + 0 = <strong class="val-neg">-80.00</strong></p>
+                            </div>
+                            <div class="calc-step mt-2">
+                                <p class="text-xs"><strong>Pol_B (IF):</strong></p>
+                                <p class="text-xs">预期现金流变化 = -50.00, 非金融风险调整变化 = 0, 其他变化 = 0</p>
+                                <p class="text-xs">Delta_B = -50.00 + 0 + 0 = <strong class="val-neg">-50.00</strong></p>
+                            </div>
+                            <div class="calc-step mt-2">
+                                <p class="text-xs"><strong>Pol_C (NB):</strong></p>
+                                <p class="text-xs">预期现金流变化 = 0, 非金融风险调整变化 = 0, 其他变化 = 0</p>
+                                <p class="text-xs">Delta_C = 0 + 0 + 0 = <strong>0.00</strong></p>
+                            </div>
+                            <div class="calc-step mt-2">
+                                <p class="text-xs"><strong>Pol_D (NB):</strong></p>
+                                <p class="text-xs">预期现金流变化 = 0, 非金融风险调整变化 = 0, 其他变化 = 0</p>
+                                <p class="text-xs">Delta_D = 0 + 0 + 0 = <strong>0.00</strong></p>
+                            </div>
+                            <div class="calc-step mt-2 bg-slate-50 p-2 rounded">
+                                <p class="text-xs"><strong>合计:</strong></p>
+                                <p class="text-xs">Delta_合计 = -80.00 + (-50.00) + 0 + 0 = <strong class="val-neg">-130.00</strong></p>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 步骤4: 合同组CSM/LC判断 -->
+                <section class="card p-6">
+                    <h3 class="text-lg font-bold mb-4 border-b pb-2"><span class="step-badge bg-green-100 text-green-600">4</span> 步骤4: 合同组CSM/LC判断</h3>
+                    
+                    <div class="formula-box">
+                        <code>Net Trial = IF_计息后CSM + NB_计息后CSM + IF_分摊后IFIE后LC + NB_分摊后IFIE后LC + Delta_合计</code>
+                        <div class="calc-step mt-2">
+                            <p class="text-xs">= 81.92 + 20.60 + 0 + (-20.40) + (-130.00) = <strong class="val-neg">-47.88</strong></p>
+                            <p class="text-xs">(IF_计息后CSM=81.92, NB_计息后CSM=20.60, IF_分摊后IFIE后LC=0, NB_分摊后IFIE后LC=-20.40, Delta_合计=-130.00)</p>
+                        </div>
+                    </div>
+                    
+                    <div class="formula-box mt-4">
+                        <code>IF(Net Trial < 0, 合同组CSM = 0, 合同组LC = Net Trial)</code>
+                        <div class="calc-step mt-2">
+                            <p class="text-xs">Net Trial = -47.88 < 0</p>
+                            <p class="text-xs"><strong>合同组CSM = 0</strong></p>
+                            <p class="text-xs"><strong>合同组LC = -47.88</strong></p>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="card p-6">
+                    <h3 class="text-lg font-bold mb-4 border-b pb-2"><span class="step-badge bg-yellow-100 text-yellow-600">5</span> 步骤5: CSM计量</h3>
+                    
+                    <div class="space-y-4">
+                        <div class="formula-box">
+                            <code>被CSM吸收的变化 = -SUM(年初CSM余额, 当年新增CSM, CSM计息)</code>
+                            <div class="calc-step mt-2">
+                                <p class="text-xs">= -SUM(80, 20, 3.00) = <strong class="val-neg">-103.00</strong></p>
+                                <p class="text-xs">(年初CSM余额=80, 当年新增CSM=20, CSM计息=3.00, 合计=103.00)</p>
+                                <p class="text-xs text-blue-600">注意：虽然最终走LC逻辑，但被CSM吸收的变化也要计算（CSM清零）</p>
+                            </div>
+                        </div>
+                        
+                        <div class="formula-box">
+                            <code>被CSM吸收的现金流变化 = 预期现金流变化合计 - 被LC吸收的变化_预期现金流</code>
+                            <div class="calc-step mt-2">
+                                <p class="text-xs">= -130.00 - (-27.60) = <strong class="val-neg">-102.40</strong></p>
+                                <p class="text-xs">(预期现金流变化合计=-130.00, 被LC吸收的变化_预期现金流=-27.60)</p>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="card p-6">
+                    <h3 class="text-lg font-bold mb-4 border-b pb-2"><span class="step-badge bg-orange-100 text-orange-600">6</span> 步骤6: LC计量</h3>
+                    
+                    <div class="space-y-4">
+                        <div class="formula-box">
+                            <code>被LC吸收的变化_合计 = SUM(被CSM/LC吸收的变化合计, 年初CSM余额, 当年新增CSM, CSM计息)</code>
+                            <div class="calc-step mt-2">
+                                <p class="text-xs">条件1: 合同组LC < 0 且 SUM(合同组LC, 分摊的LC, Delta_合计) < 0, 满足</p>
+                                <p class="text-xs">= -130.00 + 80 + 20 + 2.52 = <strong class="val-neg">-27.48</strong></p>
+                                <p class="text-xs">(被CSM/LC吸收的变化合计 = Delta_合计 = -130.00, 年初CSM余额 = 80, 当年新增CSM = 20, CSM计息 = 2.52)</p>
+                                <p class="text-xs text-blue-600">注意：虽然最终走LC逻辑，但IF和NB的CSM都要被LC吸收</p>
+                            </div>
+                        </div>
+                        
+                        <div class="formula-box">
+                            <code>被LC吸收的变化_预期现金流 = 被LC吸收的变化合计 × (预期现金流变化合计 / 被CSM/LC吸收的变化合计)</code>
+                            <div class="calc-step mt-2">
+                                <p class="text-xs">= -27.48 × (-130.00 / -130.00) = <strong class="val-neg">-27.48</strong></p>
+                                <p class="text-xs">(预期现金流变化合计=-130.00, 被CSM/LC吸收的变化合计=Delta_合计=-130.00)</p>
+                            </div>
+                        </div>
+                        
+                        <div class="formula-box">
+                            <code>被LC吸收的变化_非金融风险调整 = 被LC吸收的变化合计 - 被LC吸收的变化_预期现金流</code>
+                            <div class="calc-step mt-2">
+                                <p class="text-xs">= -27.48 - (-27.48) = <strong>0.00</strong></p>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 步骤6: 分摊回写到保单 -->
+                <section class="card p-6">
+                    <h3 class="text-lg font-bold mb-4 border-b pb-2"><span class="step-badge bg-indigo-100 text-indigo-600">6</span> 步骤6: 分摊回写到保单</h3>
+                    
+                    <div class="mb-4">
+                        <h4 class="font-bold text-sm mb-2 text-slate-700">分摊因子计算</h4>
+                        <div class="formula-box">
+                            <code>被LC吸收的变化: 分摊因子 = 分摊后LC (按保单汇总，只计算LC<0的保单)<br/>被CSM吸收的变化: 分摊因子 = 计息后CSM (按保单汇总)</code>
+                            <div class="calc-step mt-2">
+                                <p class="text-xs"><strong>被LC吸收的变化(-27.48)按分摊后LC分摊:</strong></p>
+                                <p class="text-xs">Pol_A: 0.00, Pol_B: 0.00, Pol_C: 0.00, Pol_D: -20.40, 合计: -20.40</p>
+                                <p class="text-xs">Pol_A权重 = 0 / (-20.40) = 0%, Pol_B权重 = 0 / (-20.40) = 0%, Pol_C权重 = 0 / (-20.40) = 0%</p>
+                                <p class="text-xs">Pol_D权重 = -20.40 / (-20.40) = 100.00%</p>
+                                <p class="text-xs">Pol_D: -27.48 × 100.00% = -27.48</p>
+                                <p class="text-xs text-blue-600">注意：只有Pol_D有分摊后LC，所以被LC吸收的变化100%分摊给Pol_D</p>
+                                <p class="text-xs"><strong>被CSM吸收的变化(-103.00)按计息后CSM分摊:</strong></p>
+                                <p class="text-xs">Pol_A: +51.20, Pol_B: +31.20, Pol_C: +20.60, 合计: +103.00</p>
+                                <p class="text-xs">Pol_A权重 = 51.20 / 103.00 = 49.71%, Pol_B权重 = 31.20 / 103.00 = 30.29%, Pol_C权重 = 20.60 / 103.00 = 20.00%</p>
+                                <p class="text-xs">Pol_A: -103.00 × 49.71% = -51.20, Pol_B: -103.00 × 30.29% = -31.20, Pol_C: -103.00 × 20.00% = -20.60</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-sm border-collapse">
+                            <thead class="bg-slate-100">
+                                <tr>
+                                    <th class="px-4 py-2 border text-left">保单</th>
+                                    <th class="px-4 py-2 border text-left">类型</th>
+                                    <th class="px-4 py-2 border text-right">期初/初始CSM</th>
+                                    <th class="px-4 py-2 border text-right">期初/初始LC</th>
+                                    <th class="px-4 py-2 border text-right">计息后CSM</th>
+                                    <th class="px-4 py-2 border text-right">分摊后LC</th>
+                                    <th class="px-4 py-2 border text-right">分摊权重(按PV)</th>
+                                    <th class="px-4 py-2 border text-right">被LC吸收的变化_合计</th>
+                                    <th class="px-4 py-2 border text-right">被LC吸收的变化_预期现金流</th>
+                                    <th class="px-4 py-2 border text-right">被LC吸收的变化_非金融风险调整</th>
+                                    <th class="px-4 py-2 border text-right">被CSM吸收的变化</th>
+                                    <th class="px-4 py-2 border text-right">被CSM吸收的现金流变化</th>
+                                    <th class="px-4 py-2 border text-right">期末LC</th>
+                                    <th class="px-4 py-2 border text-right">期末CSM</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr><td class="px-4 py-2 border">Pol_A</td><td class="px-4 py-2 border"><span class="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">IF</span></td><td class="px-4 py-2 border text-right val-pos">+50</td><td class="px-4 py-2 border text-right val-neu">0</td><td class="px-4 py-2 border text-right val-pos">+51.20</td><td class="px-4 py-2 border text-right val-neu">0.00</td><td class="px-4 py-2 border text-right">49.71%</td><td class="px-4 py-2 border text-right val-neu">0.00</td><td class="px-4 py-2 border text-right val-neu">0.00</td><td class="px-4 py-2 border text-right val-neu">0.00</td><td class="px-4 py-2 border text-right val-neg">-51.20</td><td class="px-4 py-2 border text-right val-neg">-51.20</td><td class="px-4 py-2 border text-right val-neu">0</td><td class="px-4 py-2 border text-right val-neu">0</td></tr>
+                                <tr><td class="px-4 py-2 border">Pol_B</td><td class="px-4 py-2 border"><span class="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">IF</span></td><td class="px-4 py-2 border text-right val-pos">+30</td><td class="px-4 py-2 border text-right val-neu">0</td><td class="px-4 py-2 border text-right val-pos">+31.20</td><td class="px-4 py-2 border text-right val-neu">0.00</td><td class="px-4 py-2 border text-right">30.29%</td><td class="px-4 py-2 border text-right val-neu">0.00</td><td class="px-4 py-2 border text-right val-neu">0.00</td><td class="px-4 py-2 border text-right val-neu">0.00</td><td class="px-4 py-2 border text-right val-neg">-31.20</td><td class="px-4 py-2 border text-right val-neg">-31.20</td><td class="px-4 py-2 border text-right val-neu">0</td><td class="px-4 py-2 border text-right val-neu">0</td></tr>
+                                <tr><td class="px-4 py-2 border">Pol_C</td><td class="px-4 py-2 border"><span class="text-xs bg-green-100 text-green-800 px-2 py-1 rounded">NB</span></td><td class="px-4 py-2 border text-right val-pos">+20</td><td class="px-4 py-2 border text-right val-neu">0</td><td class="px-4 py-2 border text-right val-pos">+20.60</td><td class="px-4 py-2 border text-right val-neu">0.00</td><td class="px-4 py-2 border text-right">20.00%</td><td class="px-4 py-2 border text-right val-neu">0.00</td><td class="px-4 py-2 border text-right val-neu">0.00</td><td class="px-4 py-2 border text-right val-neu">0.00</td><td class="px-4 py-2 border text-right val-neg">-20.60</td><td class="px-4 py-2 border text-right val-neg">-20.60</td><td class="px-4 py-2 border text-right val-neu">0</td><td class="px-4 py-2 border text-right val-neu">0</td></tr>
+                                <tr><td class="px-4 py-2 border">Pol_D</td><td class="px-4 py-2 border"><span class="text-xs bg-green-100 text-green-800 px-2 py-1 rounded">NB</span></td><td class="px-4 py-2 border text-right val-neu">0</td><td class="px-4 py-2 border text-right val-neg">-20</td><td class="px-4 py-2 border text-right val-neu">0.00</td><td class="px-4 py-2 border text-right val-neg">-20.40</td><td class="px-4 py-2 border text-right">100.00%</td><td class="px-4 py-2 border text-right val-neg">-27.48</td><td class="px-4 py-2 border text-right val-neg">-27.48</td><td class="px-4 py-2 border text-right val-neu">0.00</td><td class="px-4 py-2 border text-right val-neu">0.00</td><td class="px-4 py-2 border text-right val-neu">0.00</td><td class="px-4 py-2 border text-right val-neg">-47.88</td><td class="px-4 py-2 border text-right val-neu">0</td></tr>
+                                <tr class="bg-slate-50 font-bold"><td class="px-4 py-2 border" colspan="2">合计</td><td class="px-4 py-2 border text-right val-pos">+100</td><td class="px-4 py-2 border text-right val-neg">-20</td><td class="px-4 py-2 border text-right val-pos">+103.00</td><td class="px-4 py-2 border text-right val-neg">-20.40</td><td class="px-4 py-2 border text-right">100%</td><td class="px-4 py-2 border text-right val-neg">-27.48</td><td class="px-4 py-2 border text-right val-neg">-27.48</td><td class="px-4 py-2 border text-right val-neu">0.00</td><td class="px-4 py-2 border text-right val-neg">-103.00</td><td class="px-4 py-2 border text-right val-neg">-102.52</td><td class="px-4 py-2 border text-right val-neg">-47.88</td><td class="px-4 py-2 border text-right val-neu">0</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+
+            </div>
+
+            <!-- 场景 4: 盈转盈 -->
+            <div id="content-profit-to-profit" class="scenario-content hidden-content fade-in">
+                
+                <div class="card p-6 bg-green-50 border-l-4 border-green-500">
+                    <h3 class="text-lg font-bold text-green-800 mb-4"><i class="fa-solid fa-arrow-right-long mr-2"></i>场景4: 盈转盈 (Profit to Profit)</h3>
+                    <div class="grid grid-cols-1 md:grid-cols-4 gap-4 text-sm">
+                        <div><span class="text-slate-600">期初状态:</span> <span class="font-bold text-green-600">CSM = +80, LC = 0</span></div>
+                        <div><span class="text-slate-600">本期变化:</span> <span class="font-bold text-red-500">Delta = -10</span></div>
+                        <div><span class="text-slate-600">期末试算:</span> <span class="font-bold text-green-600">Net = +70 (仍盈利)</span></div>
+                        <div><span class="text-slate-600">判定结果:</span> <span class="font-bold">走CSM逻辑</span></div>
+                    </div>
+                    <div class="mt-4 p-3 bg-white rounded text-xs">
+                        <strong>保单明细:</strong><br/>
+                        <strong>IF（有效合同-期初）:</strong> Pol_A: CSM=+50, Pol_B: CSM=+30 (合计CSM=+80)<br/>
+                        <strong>NB（新增合同-初始确认）:</strong> Pol_C: CSM=+20 (盈利), Pol_D: LC=-20 (亏损)<br/>
+                        <strong>合计:</strong> CSM=+100, LC=-20, 净额=+80
+                    </div>
+                </div>
+
+                <!-- 步骤1: CSM计息 -->
+                <section class="card p-6">
+                    <h3 class="text-lg font-bold mb-4 border-b pb-2"><span class="step-badge bg-blue-100 text-blue-600">1</span> 步骤1: CSM计息</h3>
+                    
+                    <div class="space-y-4">
+                        <div>
+                            <h4 class="font-bold text-sm mb-2 text-slate-700">IF_CSM计息</h4>
+                            <div class="formula-box">
+                                <code>IF_CSM计息 = IF_期初CSM × 折现率</code>
+                                <div class="calc-step mt-2">
+                                    <p class="text-xs">假设: IF_期初CSM = 80 (Pol_A: 50, Pol_B: 30), 折现率 = 2.4%</p>
+                                    <p class="text-xs">= 80 × 2.4% = <strong class="val-pos">+1.92</strong></p>
+                                    <p class="text-xs">其中: Pol_A: 50 × 2.4% = 1.20, Pol_B: 30 × 2.4% = 0.72</p>
+                                </div>
+                            </div>
+                            
+                            <h4 class="font-bold text-sm mb-2 mt-2 text-slate-700">IF_计息后CSM</h4>
+                            <div class="formula-box">
+                                <code>IF_计息后CSM = IF_期初CSM + IF_CSM计息</code>
+                                <div class="calc-step mt-2">
+                                    <p class="text-xs">= 80 + 1.92 = <strong class="val-pos">+81.92</strong></p>
+                                    <p class="text-xs">其中: Pol_A: 50 + 1.20 = 51.20, Pol_B: 30 + 0.72 = 30.72</p>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div>
+                            <h4 class="font-bold text-sm mb-2 text-slate-700">NB_CSM计息</h4>
+                            <div class="formula-box">
+                                <code>NB_CSM计息 = NB_初始确认CSM × 折现率</code>
+                                <div class="calc-step mt-2">
+                                    <p class="text-xs">假设: NB_初始确认CSM = 20 (Pol_C), 折现率 = 3%</p>
+                                    <p class="text-xs">= 20 × 3% = <strong class="val-pos">+0.60</strong></p>
+                                </div>
+                            </div>
+                            
+                            <h4 class="font-bold text-sm mb-2 mt-2 text-slate-700">NB_计息后CSM</h4>
+                            <div class="formula-box">
+                                <code>NB_计息后CSM = NB_初始确认CSM + NB_CSM计息</code>
+                                <div class="calc-step mt-2">
+                                    <p class="text-xs">= 20 + 0.60 = <strong class="val-pos">+20.60</strong></p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 步骤2: LC分摊IFIE -->
+                <section class="card p-6">
+                    <h3 class="text-lg font-bold mb-4 border-b pb-2"><span class="step-badge bg-purple-100 text-purple-600">2</span> 步骤2: LC分摊IFIE</h3>
+                    
+                    <div class="space-y-4">
+                        <div>
+                            <h4 class="font-bold text-sm mb-2 text-slate-700">IF_LC分摊IFIE</h4>
+                            <div class="formula-box">
+                                <code>IF_LC分摊IFIE = IF_待分摊IFIE × IF_LC IFIE分摊比例</code>
+                                <div class="calc-step mt-2">
+                                    <p class="text-xs">假设: IF_待分摊IFIE = 0 (IF保单都是盈利，无LC), IF_LC IFIE分摊比例 = 0</p>
+                                    <p class="text-xs">= 0 × 0 = <strong>0.00</strong></p>
+                                </div>
+                            </div>
+                            
+                            <h4 class="font-bold text-sm mb-2 mt-2 text-slate-700">IF_分摊后IFIE后LC</h4>
+                            <div class="formula-box">
+                                <code>IF_分摊后IFIE后LC = IF_期初LC + IF_LC分摊IFIE</code>
+                                <div class="calc-step mt-2">
+                                    <p class="text-xs">= 0 + 0 = <strong>0.00</strong></p>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div>
+                            <h4 class="font-bold text-sm mb-2 text-slate-700">NB_LC分摊IFIE</h4>
+                            <div class="formula-box">
+                                <code>NB_LC分摊IFIE = NB_待分摊IFIE × NB_LC IFIE分摊比例</code>
+                                <div class="calc-step mt-2">
+                                    <p class="text-xs">假设: NB_待分摊IFIE = -0.40, NB_LC IFIE分摊比例 = 1.0 (Pol_D全部亏损)</p>
+                                    <p class="text-xs">= -0.40 × 1.0 = <strong class="val-neg">-0.40</strong></p>
+                                </div>
+                            </div>
+                            
+                            <h4 class="font-bold text-sm mb-2 mt-2 text-slate-700">NB_分摊后IFIE后LC</h4>
+                            <div class="formula-box">
+                                <code>NB_分摊后IFIE后LC = NB_初始确认LC + NB_LC分摊IFIE</code>
+                                <div class="calc-step mt-2">
+                                    <p class="text-xs">= -20 + (-0.40) = <strong class="val-neg">-20.40</strong></p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 步骤3: 计算每张保单的Delta（被CSM/LC吸收的变化合计） -->
+                <section class="card p-6">
+                    <h3 class="text-lg font-bold mb-4 border-b pb-2"><span class="step-badge bg-teal-100 text-teal-600">3</span> 步骤3: 计算每张保单的Delta（被CSM/LC吸收的变化合计）</h3>
+                    
+                    <div class="space-y-4">
+                        <div class="formula-box">
+                            <code>Delta（被CSM/LC吸收的变化合计）= 预期现金流变化 + 非金融风险调整变化 + 其他变化</code>
+                            <div class="calc-step mt-2">
+                                <p class="text-xs"><strong>Pol_A (IF):</strong></p>
+                                <p class="text-xs">预期现金流变化 = -6.00, 非金融风险调整变化 = 0, 其他变化 = 0</p>
+                                <p class="text-xs">Delta_A = -6.00 + 0 + 0 = <strong class="val-neg">-6.00</strong></p>
+                            </div>
+                            <div class="calc-step mt-2">
+                                <p class="text-xs"><strong>Pol_B (IF):</strong></p>
+                                <p class="text-xs">预期现金流变化 = -4.00, 非金融风险调整变化 = 0, 其他变化 = 0</p>
+                                <p class="text-xs">Delta_B = -4.00 + 0 + 0 = <strong class="val-neg">-4.00</strong></p>
+                            </div>
+                            <div class="calc-step mt-2">
+                                <p class="text-xs"><strong>Pol_C (NB):</strong></p>
+                                <p class="text-xs">预期现金流变化 = 0, 非金融风险调整变化 = 0, 其他变化 = 0</p>
+                                <p class="text-xs">Delta_C = 0 + 0 + 0 = <strong>0.00</strong></p>
+                            </div>
+                            <div class="calc-step mt-2">
+                                <p class="text-xs"><strong>Pol_D (NB):</strong></p>
+                                <p class="text-xs">预期现金流变化 = 0, 非金融风险调整变化 = 0, 其他变化 = 0</p>
+                                <p class="text-xs">Delta_D = 0 + 0 + 0 = <strong>0.00</strong></p>
+                            </div>
+                            <div class="calc-step mt-2 bg-slate-50 p-2 rounded">
+                                <p class="text-xs"><strong>合计:</strong></p>
+                                <p class="text-xs">Delta_合计 = -6.00 + (-4.00) + 0 + 0 = <strong class="val-neg">-10.00</strong></p>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 步骤4: 合同组CSM/LC判断 -->
+                <section class="card p-6">
+                    <h3 class="text-lg font-bold mb-4 border-b pb-2"><span class="step-badge bg-green-100 text-green-600">4</span> 步骤4: 合同组CSM/LC判断</h3>
+                    
+                    <div class="formula-box">
+                        <code>Net Trial = IF_计息后CSM + NB_计息后CSM + IF_分摊后IFIE后LC + NB_分摊后IFIE后LC + Delta_合计</code>
+                        <div class="calc-step mt-2">
+                            <p class="text-xs">= 81.92 + 20.60 + 0 + (-20.40) + (-10.00) = <strong class="val-pos">+72.12</strong></p>
+                            <p class="text-xs">(IF_计息后CSM=81.92, NB_计息后CSM=20.60, IF_分摊后IFIE后LC=0, NB_分摊后IFIE后LC=-20.40, Delta_合计=-10.00)</p>
+                        </div>
+                    </div>
+                    
+                    <div class="formula-box mt-4">
+                        <code>IF(Net Trial >= 0, 合同组CSM = Net Trial, 合同组LC = Net Trial)</code>
+                        <div class="calc-step mt-2">
+                            <p class="text-xs">Net Trial = +72.12 >= 0</p>
+                            <p class="text-xs"><strong>合同组CSM = +72.12</strong></p>
+                            <p class="text-xs"><strong>合同组LC = 0</strong></p>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="card p-6">
+                    <h3 class="text-lg font-bold mb-4 border-b pb-2"><span class="step-badge bg-yellow-100 text-yellow-600">5</span> 步骤5: CSM计量</h3>
+                    
+                    <div class="space-y-4">
+                        <div class="formula-box">
+                            <code>被CSM吸收的变化 = SUM(被CSM/LC吸收的变化合计, 年初LC余额_合计, 当年新增LC_合计, LC分摊IFIE_合计, 分摊的LC_合计)</code>
+                            <div class="calc-step mt-2">
+                                <p class="text-xs">条件: 合同组CSM > 0 且 SUM(合同组CSM, Delta_合计) >= 0, 满足</p>
+                                <p class="text-xs">= -10.00 + 0 + (-20) + (-0.40) + 0 = <strong class="val-neg">-30.40</strong></p>
+                                <p class="text-xs">(被CSM/LC吸收的变化合计=Delta_合计=-10.00, 年初LC余额_合计=0, 当年新增LC_合计=-20, LC分摊IFIE_合计=-0.40, 分摊的LC_合计=0)</p>
+                                <p class="text-xs text-blue-600">注意：被CSM吸收的变化包括Delta变化和LC转回</p>
+                            </div>
+                        </div>
+                        
+                        <div class="formula-box">
+                            <code>被CSM吸收的现金流变化 = 预期现金流变化合计 - 被LC吸收的变化_预期现金流</code>
+                            <div class="calc-step mt-2">
+                                <p class="text-xs">= -10.00 - 0.00 = <strong class="val-neg">-10.00</strong></p>
+                                <p class="text-xs">(预期现金流变化合计=-10.00, 被LC吸收的变化_预期现金流=0.00)</p>
+                            </div>
+                        </div>
+                        
+                        <div class="formula-box">
+                            <code>被CSM吸收的非金融风险调整变化 = 非金融风险调整变化 - 被LC吸收的变化_非金融风险调整</code>
+                            <div class="calc-step mt-2">
+                                <p class="text-xs">假设非金融风险调整变化 = 0, 被LC吸收的变化_非金融风险调整 = 20.40</p>
+                                <p class="text-xs">= 0 - 20.40 = <strong class="val-neg">-20.40</strong></p>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="card p-6">
+                    <h3 class="text-lg font-bold mb-4 border-b pb-2"><span class="step-badge bg-orange-100 text-orange-600">6</span> 步骤6: LC计量</h3>
+                    
+                    <div class="space-y-4">
+                        <div class="formula-box">
+                            <code>被LC吸收的变化_合计 = -SUM(年初LC余额_合计, 当年新增LC_合计, LC分摊IFIE_合计, 分摊的LC_合计)</code>
+                            <div class="calc-step mt-2">
+                                <p class="text-xs">= -(0 + (-20) + (-0.40) + 0) = <strong class="val-pos">+20.40</strong></p>
+                                <p class="text-xs">(年初LC余额_合计=0, 当年新增LC_合计=-20, LC分摊IFIE_合计=-0.40, 分摊的LC_合计=0)</p>
+                                <p class="text-xs text-blue-600">注意：虽然最终走CSM逻辑，但NB的LC需要清零转回</p>
+                            </div>
+                        </div>
+                        
+                        <div class="formula-box">
+                            <code>被LC吸收的变化_预期现金流 = 被LC吸收的变化合计 × (预期现金流变化合计 / 被CSM/LC吸收的变化合计)</code>
+                            <div class="calc-step mt-2">
+                                <p class="text-xs">= 20.40 × (0 / -10.00) = <strong>0.00</strong></p>
+                                <p class="text-xs">(预期现金流变化合计=0, 被CSM/LC吸收的变化合计=Delta_合计=-10.00)</p>
+                            </div>
+                        </div>
+                        
+                        <div class="formula-box">
+                            <code>被LC吸收的变化_非金融风险调整 = 被LC吸收的变化合计 - 被LC吸收的变化_预期现金流</code>
+                            <div class="calc-step mt-2">
+                                <p class="text-xs">= 20.40 - 0.00 = <strong>20.40</strong></p>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 步骤7: 分摊回写到保单 -->
+                <section class="card p-6">
+                    <h3 class="text-lg font-bold mb-4 border-b pb-2"><span class="step-badge bg-indigo-100 text-indigo-600">7</span> 步骤7: 分摊回写到保单</h3>
+                    
+                    <div class="mb-4">
+                        <h4 class="font-bold text-sm mb-2 text-slate-700">分摊因子计算</h4>
+                        <div class="formula-box">
+                            <code>被CSM吸收的变化: 分摊因子 = 计息后CSM (按保单汇总)<br/>被LC吸收的变化: 分摊因子 = 分摊后LC (按保单汇总，只计算LC<0的保单)</code>
+                            <div class="calc-step mt-2">
+                                <p class="text-xs"><strong>被CSM吸收的变化(-30.40)按计息后CSM分摊:</strong></p>
+                                <p class="text-xs">Pol_A: +51.20, Pol_B: +30.72, Pol_C: +20.60, 合计: +102.52</p>
+                                <p class="text-xs">Pol_A权重 = 51.20 / 102.52 = 49.90%</p>
+                                <p class="text-xs">Pol_B权重 = 30.72 / 102.52 = 29.98%</p>
+                                <p class="text-xs">Pol_C权重 = 20.60 / 102.52 = 20.08%</p>
+                                <p class="text-xs"><strong>被LC吸收的变化(+20.40)按分摊后LC分摊:</strong></p>
+                                <p class="text-xs">Pol_D: -20.40, 合计: -20.40</p>
+                                <p class="text-xs">Pol_D权重 = -20.40 / (-20.40) = 100.00%</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-sm border-collapse">
+                            <thead class="bg-slate-100">
+                                <tr>
+                                    <th class="px-4 py-2 border text-left">保单</th>
+                                    <th class="px-4 py-2 border text-left">类型</th>
+                                    <th class="px-4 py-2 border text-right">期初/初始CSM</th>
+                                    <th class="px-4 py-2 border text-right">期初/初始LC</th>
+                                    <th class="px-4 py-2 border text-right">计息后CSM</th>
+                                    <th class="px-4 py-2 border text-right">分摊后LC</th>
+                                    <th class="px-4 py-2 border text-right">分摊权重</th>
+                                    <th class="px-4 py-2 border text-right">被CSM吸收的变化</th>
+                                    <th class="px-4 py-2 border text-right">被CSM吸收的现金流变化</th>
+                                    <th class="px-4 py-2 border text-right">被LC吸收的变化_合计</th>
+                                    <th class="px-4 py-2 border text-right">被LC吸收的变化_预期现金流</th>
+                                    <th class="px-4 py-2 border text-right">被LC吸收的变化_非金融风险调整</th>
+                                    <th class="px-4 py-2 border text-right">期末CSM</th>
+                                    <th class="px-4 py-2 border text-right">期末LC</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr><td class="px-4 py-2 border">Pol_A</td><td class="px-4 py-2 border"><span class="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">IF</span></td><td class="px-4 py-2 border text-right val-pos">+50</td><td class="px-4 py-2 border text-right val-neu">0</td><td class="px-4 py-2 border text-right val-pos">+51.20</td><td class="px-4 py-2 border text-right val-neu">0.00</td><td class="px-4 py-2 border text-right">49.71%</td><td class="px-4 py-2 border text-right val-neu">0.00</td><td class="px-4 py-2 border text-right val-neu">0.00</td><td class="px-4 py-2 border text-right val-neu">0.00</td><td class="px-4 py-2 border text-right val-neg">-15.12</td><td class="px-4 py-2 border text-right val-neg">-5.00</td><td class="px-4 py-2 border text-right val-neu">0</td><td class="px-4 py-2 border text-right val-pos">+34.88</td></tr>
+                                <tr><td class="px-4 py-2 border">Pol_B</td><td class="px-4 py-2 border"><span class="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">IF</span></td><td class="px-4 py-2 border text-right val-pos">+30</td><td class="px-4 py-2 border text-right val-neu">0</td><td class="px-4 py-2 border text-right val-pos">+31.20</td><td class="px-4 py-2 border text-right val-neu">0.00</td><td class="px-4 py-2 border text-right">30.29%</td><td class="px-4 py-2 border text-right val-neu">0.00</td><td class="px-4 py-2 border text-right val-neu">0.00</td><td class="px-4 py-2 border text-right val-neu">0.00</td><td class="px-4 py-2 border text-right val-neg">-9.20</td><td class="px-4 py-2 border text-right val-neg">-3.00</td><td class="px-4 py-2 border text-right val-neu">0</td><td class="px-4 py-2 border text-right val-pos">+21.00</td></tr>
+                                <tr><td class="px-4 py-2 border">Pol_C</td><td class="px-4 py-2 border"><span class="text-xs bg-green-100 text-green-800 px-2 py-1 rounded">NB</span></td><td class="px-4 py-2 border text-right val-pos">+20</td><td class="px-4 py-2 border text-right val-neu">0</td><td class="px-4 py-2 border text-right val-pos">+20.60</td><td class="px-4 py-2 border text-right val-neu">0.00</td><td class="px-4 py-2 border text-right">20.00%</td><td class="px-4 py-2 border text-right val-neu">0.00</td><td class="px-4 py-2 border text-right val-neu">0.00</td><td class="px-4 py-2 border text-right val-neu">0.00</td><td class="px-4 py-2 border text-right val-neg">-6.08</td><td class="px-4 py-2 border text-right val-neg">-2.00</td><td class="px-4 py-2 border text-right val-neu">0</td><td class="px-4 py-2 border text-right val-pos">+13.92</td></tr>
+                                <tr><td class="px-4 py-2 border">Pol_D</td><td class="px-4 py-2 border"><span class="text-xs bg-green-100 text-green-800 px-2 py-1 rounded">NB</span></td><td class="px-4 py-2 border text-right val-neu">0</td><td class="px-4 py-2 border text-right val-neg">-20</td><td class="px-4 py-2 border text-right val-neu">0.00</td><td class="px-4 py-2 border text-right val-neg">-20.40</td><td class="px-4 py-2 border text-right">100.00%</td><td class="px-4 py-2 border text-right val-pos">+20.40</td><td class="px-4 py-2 border text-right val-neu">0.00</td><td class="px-4 py-2 border text-right val-pos">+20.40</td><td class="px-4 py-2 border text-right val-neu">0.00</td><td class="px-4 py-2 border text-right val-neu">0.00</td><td class="px-4 py-2 border text-right val-neu">0</td><td class="px-4 py-2 border text-right val-neu">0</td></tr>
+                                <tr class="bg-slate-50 font-bold"><td class="px-4 py-2 border" colspan="2">合计</td><td class="px-4 py-2 border text-right val-pos">+100</td><td class="px-4 py-2 border text-right val-neg">-20</td><td class="px-4 py-2 border text-right val-pos">+103.00</td><td class="px-4 py-2 border text-right val-neg">-20.40</td><td class="px-4 py-2 border text-right">100%</td><td class="px-4 py-2 border text-right val-neg">-30.40</td><td class="px-4 py-2 border text-right val-neg">-10.00</td><td class="px-4 py-2 border text-right val-pos">+20.40</td><td class="px-4 py-2 border text-right val-neu">0.00</td><td class="px-4 py-2 border text-right val-neu">0.00</td><td class="px-4 py-2 border text-right val-pos">+69.60</td><td class="px-4 py-2 border text-right val-neu">0</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+
+            </div>
+
+        </div>
+
+    </main>
+
+    <footer class="text-center py-8 text-slate-400 text-sm">
+        <p>IFRS 17 Group Level CSM/LC Measurement | Complete Calculation Flow</p>
+    </footer>
+
+    <script>
+        mermaid.initialize({ startOnLoad: true, theme: 'default' });
+
+        function switchTab(tabId) {
+            // Hide all content
+            document.querySelectorAll('.scenario-content').forEach(el => {
+                el.classList.add('hidden-content');
+                el.classList.remove('fade-in');
+            });
+            
+            // Show selected content
+            const selectedContent = document.getElementById('content-' + tabId);
+            selectedContent.classList.remove('hidden-content');
+            void selectedContent.offsetWidth; 
+            selectedContent.classList.add('fade-in');
+
+            // Update Tab styles
+            document.querySelectorAll('.tab-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            
+            const activeBtn = document.getElementById('tab-' + tabId);
+            activeBtn.classList.add('active');
+        }
+    </script>
+</body>
+</html>

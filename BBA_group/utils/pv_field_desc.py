@@ -15,8 +15,7 @@ SEGMENT_TRANSLATIONS = {
     "Rec": "初始确认现值",
     "Rep": "期末现值",
     "Beg": "年初现值",
-    "Lkd": "当月初始利率",
-    "Wlk": "加权初始确认利率",
+    "Lkd": "锁定利率", # Renamed from Wlk (was "加权初始确认利率")
     "Cur": "期末利率",
     "Lcu": "上年期末利率",
     "Pre": "保费现金流",
@@ -38,7 +37,7 @@ def describe_field(field_name: str) -> str:
         field_name: PV字段名，如 "Pvfl_Nb_Ini_Cfa_Rec_Lkd_Cla_Amt"
     
     Returns:
-        中文描述，如 "新增合同 - 初始确认 - 预期未来 - 初始确认现值 - 当月初始利率 - 赔付现金流"
+        中文描述，如 "新增合同 - 初始确认 - 预期未来 - 初始确认现值 - 锁定利率 - 赔付现金流"
     """
     # 移除 "Pvfl_" 前缀和 "_Amt" 后缀
     if field_name.startswith("Pvfl_"):
@@ -64,8 +63,7 @@ def format_pv_field_in_formula(field_name: str) -> str:
         field_name: PV字段名
     
     Returns:
-        格式化的公式字符串，如 "新增合同-初始确认-预期未来-初始确认现值-当月初始利率-赔付现金流"
+        格式化的公式字符串，如 "新增合同-初始确认-预期未来-初始确认现值-锁定利率-赔付现金流"
     """
     desc = describe_field(field_name)
     return desc.replace(" - ", "-")  # 在公式中使用短横线连接
-
