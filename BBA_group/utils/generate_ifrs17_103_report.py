@@ -326,7 +326,10 @@ def generate_report_data(init_data, data_by_year):
         # 修正：每年都应该读取nb_initial_lc，因为每年都可能有新签单的保单
         # 初始确认亏损应该在每张保单的签单年度被计入，组级汇总时已经汇总了所有保单的nb_initial_lc
         initial_loss_recog = -get_d('nb_initial_lc')
-        lc_change_est = get_d('亏损合同损益_不调整CSM的预期现金流变动') + get_d('亏损合同损益_不调整CSM的非金融风险调整变动')
+        # 【修复】：预期现金流变动和非金融风险调整变动应该跟初始确认亏损符号方向相反
+        lc_change_cf = -get_d('亏损合同损益_不调整CSM的预期现金流变动')
+        lc_change_ra = -get_d('亏损合同损益_不调整CSM的非金融风险调整变动')
+        lc_change_est = lc_change_cf + lc_change_ra
         
         # LC release (分摊的LC) reduces LC but is not counted as revenue (per user instruction).
         # So net LC recognition = initial loss + changes - LC release
@@ -362,13 +365,13 @@ def generate_report_data(init_data, data_by_year):
                     <tr>
                         <td style="padding: 8px;">预期现金流变动</td>
                         <td style="text-align: right; padding: 8px;">0.00</td>
-                        <td style="text-align: right; padding: 8px;">{format_decimal(get_d('亏损合同损益_不调整CSM的预期现金流变动'))}</td>
+                        <td style="text-align: right; padding: 8px;">{format_decimal(lc_change_cf)}</td>
                         <td style="text-align: right; padding: 8px;">0.00</td>
                     </tr>
                     <tr>
                         <td style="padding: 8px;">非金融风险调整变动</td>
                         <td style="text-align: right; padding: 8px;">0.00</td>
-                        <td style="text-align: right; padding: 8px;">{format_decimal(get_d('亏损合同损益_不调整CSM的非金融风险调整变动'))}</td>
+                        <td style="text-align: right; padding: 8px;">{format_decimal(lc_change_ra)}</td>
                         <td style="text-align: right; padding: 8px;">0.00</td>
                     </tr>
                     <tr>

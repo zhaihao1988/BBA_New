@@ -411,3 +411,27 @@ def get_all_policy_entries(run_date: str = '202412', val_method: str = '7') -> L
         print(f"❌ 获取保单/批单组合失败: {exc}")
         return []
 
+
+def get_all_group_ids(run_date: str = '202412', val_method: str = '7') -> List[str]:
+    """
+    获取指定批次与计量方法下的唯一 group_id 列表。
+    """
+    engine = get_sa_engine('qa')
+    try:
+        query = """
+            SELECT DISTINCT group_id
+            FROM zh.t_pp_jl_contract
+            WHERE run_date = :run_date
+              AND val_method = :val_method
+              AND group_id IS NOT NULL
+              AND TRIM(group_id) <> ''
+        """
+        with engine.connect() as conn:
+            df = pd.read_sql_query(text(query), conn, params={"run_date": run_date, "val_method": val_method})
+        if df.empty:
+            print(f"⚠️  警告: run_date={run_date}, val_method={val_method} 未检索到 group_id")
+            return []
+        return df['group_id'].dropna().astype(str).tolist()
+    except Exception as exc:
+        print(f"❌ 获取 group_id 列表失败: {exc}")
+        return []

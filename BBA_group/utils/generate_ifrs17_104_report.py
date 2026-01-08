@@ -215,20 +215,30 @@ def generate_report_data(init_data, data_by_year):
                 "content": nb_explanation
             })
 
-        # CSM Adjusting
-        csm_adj_pv = get_d('未到期_调整CSM的预期现金流变动')
-        csm_adj_ra = get_d('未到期_调整CSM的非金融风险调整变动')
+        # CSM Adjusting：调整CSM的估计变更
+        # 报表口径：CSM列显示被CSM吸收的变化（通常为负，表示CSM减少），
+        #           BEL/RA列应体现对冲方向，因此在报表中取反显示，使(9)行的PV/RA符号与CSM相反。
+        raw_csm_adj_pv = get_d('未到期_调整CSM的预期现金流变动')
+        raw_csm_adj_ra = get_d('未到期_调整CSM的非金融风险调整变动')
         csm_adj_csm = get_d('未到期_调整CSM的估计变更')
+
+        # 报表中展示取反后的PV/RA，以体现“CSM减少 ↔ BEL/RA增加”
+        csm_adj_pv = -raw_csm_adj_pv
+        csm_adj_ra = -raw_csm_adj_ra
+
         add_row('9', '调整合同服务边际的估计变更(9)', csm_adj_pv, csm_adj_ra, csm_adj_csm, indent=1)
 
-        # Non-CSM Adjusting
-        non_csm_pv = get_d('亏损合同损益_不调整CSM的预期现金流变动')
-        non_csm_ra = get_d('亏损合同损益_不调整CSM的非金融风险调整变动')
+        # Non-CSM Adjusting：不调整CSM的估计变更，只影响PV和RA，CSM列始终为0
+        # 报表口径：PV/RA列取反显示，与CSM列符号相反
+        raw_non_csm_pv = get_d('亏损合同损益_不调整CSM的预期现金流变动')
+        raw_non_csm_ra = get_d('亏损合同损益_不调整CSM的非金融风险调整变动')
+        non_csm_pv = -raw_non_csm_pv
+        non_csm_ra = -raw_non_csm_ra
         add_row('10', '不调整合同服务边际的估计变更(10)', non_csm_pv, non_csm_ra, Decimal('0'), indent=1)
         
         add_row('11', '其他与未来服务相关变动(11)', Decimal('0'), Decimal('0'), Decimal('0'), indent=1)
 
-        # Sum Future Service
+        # Sum Future Service：(8)+(9)+(10)+(11)
         future_service_sum = {
             'pv': nb_bel + csm_adj_pv + non_csm_pv,
             'ra': nb_ra + csm_adj_ra + non_csm_ra,

@@ -19,6 +19,6 @@ USE_OCI_OPTION  = True             # OCI 选择权 (True = 拆分, 利率变动�
 VAL_METHOD = '7'  # 计量方法，用于查询精算假设表（'7' 表示 BBA 方法）
 
 # 组配置
-GROUP_ID = 'QHPLIA2023ABBA300'  # 合同组ID，用于组维度生命周期仿真
+GROUP_ID = 'QHPLIA2017ABBA100'  # 合同组ID，用于组维度生命周期仿真
 
 

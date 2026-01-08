@@ -30,11 +30,13 @@ DECIMAL_ZERO = Decimal('0')
 # ==============================================================================
 @dataclass
 class PolicyContextInput:
-    """单保单context输入数据（用于组级汇总）"""
-    policy_id: str
+    """单计量单元context输入数据（用于组级汇总）"""
+    unit_id: str
     is_if: bool
     bop_csm: Decimal
     bop_lc: Decimal
+    bop_lc_cf: Decimal
+    bop_lc_ra: Decimal
     nb_initial_csm: Decimal
     nb_initial_lc: Decimal
     if_interest_csm: Decimal
@@ -77,13 +79,11 @@ class GroupAbsorptionResult:
     group_csm_absorbed_cf: Decimal
     group_csm_absorbed_ra: Decimal
     group_lc_absorbed_total: Decimal
-    group_lc_absorbed_cf: Decimal
-    group_lc_absorbed_ra: Decimal
 
 @dataclass
 class PolicyAllocationResult:
-    """单保单分摊结果"""
-    policy_id: str
+    """单计量单元分摊结果"""
+    unit_id: str
     csm_absorbed: Decimal
     csm_absorbed_cf: Decimal
     csm_absorbed_ra: Decimal
@@ -98,13 +98,46 @@ class PolicyAllocationResult:
 # 组级汇总与分摊逻辑 (Group Aggregation & Allocation)
 # ==============================================================================
 
+def _build_unit_id_from_context(ctx: Any, fallback_index: int | None = None) -> str:
+    """
+    从 context 构造计量单元 ID（unit_id）
+
+    规则：
+      - 先取 policy_no（没有就用内部生成的 POL_xxx）
+      - 如果 certi_no 不为空，则 unit_id = "policy_no-certi_no"
+      - 如果 certi_no 为空/None/空串，则 unit_id = policy_no
+    """
+    policy_no = getattr(ctx, "policy_no", None) or getattr(ctx, "policy_id", None)
+    if policy_no is None:
+        base_id = f"POL_{fallback_index}" if fallback_index is not None else "POL_UNKNOWN"
+    else:
+        base_id = str(policy_no)
+
+    certi_no = getattr(ctx, "certi_no", None)
+    if certi_no is None:
+        return base_id
+
+    certi_str = str(certi_no).strip()
+    if not certi_str:
+        return base_id
+
+    return f"{base_id}-{certi_str}"
+
+
 def collect_policy_data(contexts: List[Any]) -> List[PolicyContextInput]:
     """从多张保单的context收集数据"""
     policy_inputs = []
     
-    for ctx in contexts:
+    for idx, ctx in enumerate(contexts):
+        # 构造 unit_id
+        unit_id = _build_unit_id_from_context(ctx, fallback_index=idx)
+        # 方便后续其它模块用到，在 context 上挂一个属性
+        setattr(ctx, "unit_id", unit_id)
+        
         bop_csm = getattr(ctx, 'bop_csm', None) or DECIMAL_ZERO
         bop_lc = getattr(ctx, 'bop_lc', None) or DECIMAL_ZERO
+        bop_lc_cf = getattr(ctx, 'bop_lc_cf', None) or DECIMAL_ZERO
+        bop_lc_ra = getattr(ctx, 'bop_lc_ra', None) or DECIMAL_ZERO
         nb_initial_csm = getattr(ctx, 'nb_initial_csm', None) or DECIMAL_ZERO
         nb_initial_lc = getattr(ctx, 'nb_initial_lc', None) or DECIMAL_ZERO
         
@@ -141,10 +174,9 @@ def collect_policy_data(contexts: List[Any]) -> List[PolicyContextInput]:
         nb_initial_lc_cf = getattr(ctx, 'nb_initial_lc_cf', None) or DECIMAL_ZERO
         nb_initial_lc_ra = getattr(ctx, 'nb_initial_lc_ra', None) or DECIMAL_ZERO
         
-        policy_id = getattr(ctx, 'policy_no', None) or getattr(ctx, 'policy_id', None) or f"POL_{len(policy_inputs)}"
-        
         policy_inputs.append(PolicyContextInput(
-            policy_id=policy_id, is_if=is_if, bop_csm=bop_csm, bop_lc=bop_lc,
+            unit_id=unit_id, is_if=is_if, bop_csm=bop_csm, bop_lc=bop_lc,
+            bop_lc_cf=bop_lc_cf, bop_lc_ra=bop_lc_ra,
             nb_initial_csm=nb_initial_csm, nb_initial_lc=nb_initial_lc,
             if_interest_csm=if_interest_csm, nb_interest_csm=nb_interest_csm,
             if_lc_ifie_total=if_lc_ifie_total, nb_lc_ifie_total=nb_lc_ifie_total,
@@ -222,11 +254,158 @@ def calculate_group_status(
     )
 
 
+def allocate_group_csm_lc_to_policies(
+    policy_inputs: List[PolicyContextInput],
+    group_status: GroupStatusResult,
+    contexts: List[Any],
+    is_reversal: bool = False,
+    logger: Optional[Any] = None
+) -> None:
+    """
+    分摊合同组CSM和LC到逐单
+    
+    分摊合同组CSM：使用每个单的"计息后CSM"作为分摊因子
+    分摊合同组LC：使用每个单的"分摊后IFIE后LC"作为分摊因子（不使用绝对值）
+    
+    将分摊结果保存到context中：
+    - allocated_group_csm: 合同组分摊CSM
+    - allocated_group_lc: 合同组分摊LC
+    """
+    cohort_csm = group_status.cohort_csm
+    cohort_lc = group_status.cohort_lc
+    
+    if logger:
+        logger.log_section("分摊合同组CSM和LC到逐单")
+        logger.log_text(f"  - 合同组CSM: {cohort_csm:,.2f}")
+        logger.log_text(f"  - 合同组LC: {cohort_lc:,.2f}")
+    
+    # 创建unit_id到context的映射
+    unit_id_to_context: Dict[str, Any] = {}
+    for idx, ctx in enumerate(contexts):
+        unit_id = getattr(ctx, "unit_id", None)
+        if not unit_id:
+            unit_id = _build_unit_id_from_context(ctx, fallback_index=idx)
+            setattr(ctx, "unit_id", unit_id)
+        unit_id_to_context[unit_id] = ctx
+    
+    # 1. 分摊合同组CSM
+    if cohort_csm != DECIMAL_ZERO:
+        # 计算总的分摊因子（计息后CSM合计，只计算>0的）
+        total_csm_after_interest = sum(
+            p.csm_after_interest for p in policy_inputs 
+            if p.csm_after_interest > 0
+        )
+        
+        if logger:
+            logger.log_text(f"  - CSM分摊因子合计（计息后CSM合计）: {total_csm_after_interest:,.2f}")
+        
+        if total_csm_after_interest > 0:
+            for p in policy_inputs:
+                ctx = unit_id_to_context.get(p.unit_id)
+                if not ctx:
+                    continue
+                
+                if p.csm_after_interest > 0:
+                    # 计算分摊比例
+                    csm_weight = p.csm_after_interest / total_csm_after_interest
+                    # 计算分摊值
+                    allocated_group_csm = cohort_csm * csm_weight
+                    # 保存到context
+                    ctx.allocated_group_csm = allocated_group_csm
+                    
+                    if logger:
+                        logger.log_text(f"  - 单元 {p.unit_id}: 计息后CSM={p.csm_after_interest:,.2f}, "
+                                      f"占比={csm_weight:.4f}, 合同组分摊CSM={allocated_group_csm:,.2f}")
+                else:
+                    # 如果计息后CSM <= 0，不参与CSM分摊
+                    ctx.allocated_group_csm = DECIMAL_ZERO
+                    if logger:
+                        logger.log_text(f"  - 单元 {p.unit_id}: 计息后CSM={p.csm_after_interest:,.2f} <= 0, "
+                                      f"不参与CSM分摊，合同组分摊CSM=0")
+        else:
+            # 如果没有有效的CSM分摊因子，所有单的合同组分摊CSM = 0
+            for p in policy_inputs:
+                ctx = unit_id_to_context.get(p.unit_id)
+                if ctx:
+                    ctx.allocated_group_csm = DECIMAL_ZERO
+            if logger:
+                logger.log_text(f"  - 无有效的CSM分摊因子，所有单的合同组分摊CSM=0")
+    else:
+        # 如果合同组CSM = 0，所有单的合同组分摊CSM = 0
+        for p in policy_inputs:
+            ctx = unit_id_to_context.get(p.unit_id)
+            if ctx:
+                ctx.allocated_group_csm = DECIMAL_ZERO
+        if logger:
+            logger.log_text(f"  - 合同组CSM=0，所有单的合同组分摊CSM=0")
+    
+    # 2. 分摊合同组LC
+    if cohort_lc != DECIMAL_ZERO:
+        # 计算总的分摊因子（分摊后IFIE后LC合计，不使用绝对值）
+        # 只计算符号符合的保单（正常保单LC应为负，批减单LC应为正）
+        total_lc_after_ifie = DECIMAL_ZERO
+        valid_policies = []
+        
+        for p in policy_inputs:
+            # 判断符号是否符合
+            is_lc_policy = (p.lc_after_ifie < 0) if (not is_reversal) else (p.lc_after_ifie > 0)
+            if is_lc_policy and p.lc_after_ifie != DECIMAL_ZERO:
+                total_lc_after_ifie += p.lc_after_ifie
+                valid_policies.append(p)
+        
+        if logger:
+            logger.log_text(f"  - LC分摊因子合计（分摊后IFIE后LC合计）: {total_lc_after_ifie:,.2f}")
+            logger.log_text(f"  - 有效保单数: {len(valid_policies)}")
+        
+        if total_lc_after_ifie != DECIMAL_ZERO:
+            for p in policy_inputs:
+                ctx = unit_id_to_context.get(p.unit_id)
+                if not ctx:
+                    continue
+                
+                # 判断符号是否符合
+                is_lc_policy = (p.lc_after_ifie < 0) if (not is_reversal) else (p.lc_after_ifie > 0)
+                if is_lc_policy and p.lc_after_ifie != DECIMAL_ZERO:
+                    # 计算分摊比例（不使用绝对值）
+                    lc_weight = p.lc_after_ifie / total_lc_after_ifie
+                    # 计算分摊值
+                    allocated_group_lc = cohort_lc * lc_weight
+                    # 保存到context
+                    ctx.allocated_group_lc = allocated_group_lc
+                    
+                    if logger:
+                        logger.log_text(f"  - 单元 {p.unit_id}: 分摊后IFIE后LC={p.lc_after_ifie:,.2f}, "
+                                      f"占比={lc_weight:.4f}, 合同组分摊LC={allocated_group_lc:,.2f}")
+                else:
+                    # 如果分摊后IFIE后LC = 0或符号不符合，不参与LC分摊
+                    ctx.allocated_group_lc = DECIMAL_ZERO
+                    if logger:
+                        logger.log_text(f"  - 单元 {p.unit_id}: 分摊后IFIE后LC={p.lc_after_ifie:,.2f}, "
+                                      f"符号不符合或为0，不参与LC分摊，合同组分摊LC=0")
+        else:
+            # 如果没有有效的LC分摊因子，所有单的合同组分摊LC = 0
+            for p in policy_inputs:
+                ctx = unit_id_to_context.get(p.unit_id)
+                if ctx:
+                    ctx.allocated_group_lc = DECIMAL_ZERO
+            if logger:
+                logger.log_text(f"  - 无有效的LC分摊因子，所有单的合同组分摊LC=0")
+    else:
+        # 如果合同组LC = 0，所有单的合同组分摊LC = 0
+        for p in policy_inputs:
+            ctx = unit_id_to_context.get(p.unit_id)
+            if ctx:
+                ctx.allocated_group_lc = DECIMAL_ZERO
+        if logger:
+            logger.log_text(f"  - 合同组LC=0，所有单的合同组分摊LC=0")
+
+
 def calculate_group_absorption(
     policy_inputs: List[PolicyContextInput],
     group_status: GroupStatusResult,
     is_reversal: bool = False,
-    logger: Optional[Any] = None
+    logger: Optional[Any] = None,
+    assumptions: Optional[Assumptions] = None
 ) -> GroupAbsorptionResult:
     """计算组级吸收变化（第三部分使用）"""
     cohort_csm = group_status.cohort_csm
@@ -298,38 +477,28 @@ def calculate_group_absorption(
         logger.log_text(f"  - 被LC吸收的变化_合计: {group_lc_absorbed_total:,.2f}")
         logger.log_text(f"  - 被CSM吸收的变化_合计: {group_csm_absorbed_total:,.2f}")
     
-    # 拆分被LC吸收的变化
-    bop_lc_cf_total = bop_lc_total
-    bop_lc_ra_total = DECIMAL_ZERO
-    nb_initial_lc_cf_total = sum(p.nb_initial_lc_cf for p in policy_inputs)
-    nb_initial_lc_ra_total = sum(p.nb_initial_lc_ra for p in policy_inputs)
-    lc_ifie_cf_total = sum(p.if_lc_ifie_cf + p.nb_lc_ifie_cf for p in policy_inputs)
-    lc_ifie_ra_total = sum(p.if_lc_ifie_ra + p.nb_lc_ifie_ra for p in policy_inputs)
-    allocated_lc_cf_total = sum(p.allocated_lc_cf for p in policy_inputs)
-    allocated_lc_ra_total = sum(p.allocated_lc_ra for p in policy_inputs)
+    # 拆分被CSM吸收的变化（使用与LC一致的ra比例，而不是作为残差）
+    # 报表口径：被CSM吸收的现金流变化 = 被CSM吸收的变化_合计 × 1/(1+ra)
+    #         被CSM吸收的非金融风险调整变化 = 被CSM吸收的变化_合计 - 被CSM吸收的现金流变化
+    if not assumptions:
+        raise ValueError("❌ 错误：计算被CSM吸收的现金流/非金融风险调整变化时，assumptions不能为None。必须提供当前评估月份的精算假设。")
     
-    lc_cf_total = bop_lc_cf_total + nb_initial_lc_cf_total + lc_ifie_cf_total + allocated_lc_cf_total
-    lc_ra_total = bop_lc_ra_total + nb_initial_lc_ra_total + lc_ifie_ra_total + allocated_lc_ra_total
-    lc_total = lc_cf_total + lc_ra_total
+    if not hasattr(assumptions, 'ra_ratio') or assumptions.ra_ratio is None:
+        raise ValueError(f"❌ 错误：精算假设中缺少ra_ratio（用于CSM部分）。当前assumptions类型: {type(assumptions)}, 属性: {dir(assumptions)}")
     
-    if (is_lc_bucket and lc_stays_lc) or ((not is_lc_bucket) and csm_turns_lc):
-        if group_delta_total != 0:
-            cf_ratio = group_delta_cf / group_delta_total
-        else:
-            cf_ratio = DECIMAL_ZERO
-        group_lc_absorbed_cf = group_lc_absorbed_total * cf_ratio
-        group_lc_absorbed_ra = group_lc_absorbed_total - group_lc_absorbed_cf
-    else:
-        if lc_total != 0:
-            lc_cf_ratio = lc_cf_total / lc_total
-        else:
-            lc_cf_ratio = DECIMAL_ZERO
-        group_lc_absorbed_cf = group_lc_absorbed_total * lc_cf_ratio
-        group_lc_absorbed_ra = group_lc_absorbed_total - group_lc_absorbed_cf
-        
-    # 拆分被CSM吸收的变化
-    group_csm_absorbed_cf = group_delta_cf - group_lc_absorbed_cf
-    group_csm_absorbed_ra = group_delta_ra - group_lc_absorbed_ra
+    ra_ratio_csm = Decimal(str(assumptions.ra_ratio))
+    if ra_ratio_csm == -1:
+        raise ValueError(f"❌ 错误：ra_ratio不能为-1，会导致除以0（CSM部分）。当前ra_ratio值: {ra_ratio_csm}")
+    
+    cf_ratio_from_ra_csm = Decimal('1') / (Decimal('1') + ra_ratio_csm)
+    
+    if logger:
+        logger.log_text(f"  - 使用ra_ratio计算被CSM吸收的变化CF/RA拆分")
+        logger.log_text(f"    - ra_ratio(CSM): {ra_ratio_csm}")
+        logger.log_text(f"    - cf_ratio_from_ra_csm = 1/(1+ra_ratio) = {cf_ratio_from_ra_csm:.6f}")
+    
+    group_csm_absorbed_cf = group_csm_absorbed_total * cf_ratio_from_ra_csm
+    group_csm_absorbed_ra = group_csm_absorbed_total - group_csm_absorbed_cf
     
     return GroupAbsorptionResult(
         cohort_csm=cohort_csm,
@@ -339,15 +508,14 @@ def calculate_group_absorption(
         group_csm_absorbed_cf=group_csm_absorbed_cf,
         group_csm_absorbed_ra=group_csm_absorbed_ra,
         group_lc_absorbed_total=group_lc_absorbed_total,
-        group_lc_absorbed_cf=group_lc_absorbed_cf,
-        group_lc_absorbed_ra=group_lc_absorbed_ra,
     )
 
 
 def allocate_absorption_to_policies(
     policy_inputs: List[PolicyContextInput],
     group_result: GroupAbsorptionResult,
-    is_reversal: bool = False
+    is_reversal: bool = False,
+    assumptions: Optional[Assumptions] = None
 ) -> List[PolicyAllocationResult]:
     """
     第三部分-步骤4：按因子分摊到各保单
@@ -383,9 +551,45 @@ def allocate_absorption_to_policies(
         is_lc_policy = (p.lc_after_ifie < 0) if (not is_reversal) else (p.lc_after_ifie > 0)
         if is_lc_policy and total_lc_after_ifie_abs > 0:
             lc_weight = abs(p.lc_after_ifie) / total_lc_after_ifie_abs
+            # 第一步：先用组级合计分摊到逐单
             lc_absorbed_total = group_result.group_lc_absorbed_total * lc_weight
-            lc_absorbed_cf = group_result.group_lc_absorbed_cf * lc_weight
-            lc_absorbed_ra = group_result.group_lc_absorbed_ra * lc_weight
+            
+            # 第二步：用逐单的 lc_absorbed_total 去拆分 CF 和 RA（和组级拆分逻辑一致）
+            # 计算逐单的"待调整LC余额_合计（不含吸收）"
+            lc_balance_to_adjust_before_absorption = (
+                p.bop_lc + 
+                p.nb_initial_lc + 
+                (p.if_lc_ifie_total + p.nb_lc_ifie_total) + 
+                p.allocated_lc_total
+            )
+            
+            # 拆分逻辑（按文档单一条件公式）
+            # IF(待调整LC余额_合计=0,
+            #    -SUM(年初LC余额_CF, 新增LC_CF, LC分摊IFIE_CF, 分摊的LC_CF),
+            #    被LC吸收的变化_合计 * 1/(1+ra_ratio)
+            # )
+            if lc_balance_to_adjust_before_absorption == DECIMAL_ZERO:
+                # 分支1：待调整LC余额_合计 = 0
+                lc_absorbed_cf = -(
+                    p.bop_lc_cf + 
+                    p.nb_initial_lc_cf + 
+                    (p.if_lc_ifie_cf + p.nb_lc_ifie_cf) + 
+                    p.allocated_lc_cf
+                )
+                lc_absorbed_ra = lc_absorbed_total - lc_absorbed_cf
+            else:
+                # 分支2：待调整LC余额_合计 ≠ 0，用 ra_ratio 拆分
+                if not assumptions:
+                    raise ValueError("❌ 错误：计算逐单被LC吸收的变化_预期现金流时，assumptions不能为None。必须提供当前评估月份的精算假设。")
+                if not hasattr(assumptions, 'ra_ratio') or assumptions.ra_ratio is None:
+                    raise ValueError(f"❌ 错误：精算假设中缺少ra_ratio（逐单拆分）。当前assumptions类型: {type(assumptions)}, 属性: {dir(assumptions)}")
+                ra_ratio = Decimal(str(assumptions.ra_ratio))
+                if ra_ratio == -1:
+                    raise ValueError(f"❌ 错误：ra_ratio不能为-1，会导致除以0（逐单拆分）。当前ra_ratio值: {ra_ratio}")
+                cf_ratio_from_ra = Decimal('1') / (Decimal('1') + ra_ratio)
+                lc_absorbed_cf = lc_absorbed_total * cf_ratio_from_ra
+                lc_absorbed_ra = lc_absorbed_total - lc_absorbed_cf
+            
             lc_allocation_weight = lc_weight * Decimal('100')
         else:
             lc_absorbed_total = DECIMAL_ZERO
@@ -394,7 +598,7 @@ def allocate_absorption_to_policies(
             lc_allocation_weight = DECIMAL_ZERO
         
         allocation_results.append(PolicyAllocationResult(
-            policy_id=p.policy_id,
+            unit_id=p.unit_id,
             csm_absorbed=csm_absorbed,
             csm_absorbed_cf=csm_absorbed_cf,
             csm_absorbed_ra=csm_absorbed_ra,
@@ -412,15 +616,19 @@ def write_back_to_contexts(
     contexts: List[Any],
     allocation_results: List[PolicyAllocationResult]
 ):
-    """将分摊结果回写到保单context"""
-    result_map = {r.policy_id: r for r in allocation_results}
+    """将分摊结果回写到计量单元context"""
+    result_map = {r.unit_id: r for r in allocation_results}
     
-    for ctx in contexts:
-        policy_id = getattr(ctx, 'policy_no', None) or getattr(ctx, 'policy_id', None)
-        if policy_id not in result_map:
+    for idx, ctx in enumerate(contexts):
+        unit_id = getattr(ctx, "unit_id", None)
+        if not unit_id:
+            unit_id = _build_unit_id_from_context(ctx, fallback_index=idx)
+            setattr(ctx, "unit_id", unit_id)
+        
+        if unit_id not in result_map:
             continue
         
-        result = result_map[policy_id]
+        result = result_map[unit_id]
         
         ctx.csm_absorbed = result.csm_absorbed
         ctx.csm_absorbed_cf = result.csm_absorbed_cf
@@ -429,11 +637,6 @@ def write_back_to_contexts(
         ctx.lc_absorbed_total = result.lc_absorbed_total
         ctx.lc_absorbed_cf = result.lc_absorbed_cf
         ctx.lc_absorbed_ra = result.lc_absorbed_ra
-        
-        ctx.lc_change = result.lc_absorbed_total
-        ctx.allocated_lc_exp_adj_total = result.lc_absorbed_total
-        ctx.allocated_lc_exp_adj_cf = result.lc_absorbed_cf
-        ctx.allocated_lc_exp_adj_ra = result.lc_absorbed_ra
         
         # 注意：LC调整项的计算在 calculate_closing_balances 函数中完成
         # 这里只写回吸收变化相关的字段
@@ -448,7 +651,8 @@ def run_group_absorption_allocation(
     contexts: List[Any], 
     group_status: GroupStatusResult,
     logger: Optional[Any] = None, 
-    is_reversal: bool = False
+    is_reversal: bool = False,
+    assumptions: Optional[Assumptions] = None
 ) -> GroupAbsorptionResult:
     """
     第三部分-步骤3&4：组级吸收变化汇总与分摊
@@ -460,8 +664,8 @@ def run_group_absorption_allocation(
         logger.log_section("第三部分-步骤3&4: 组级吸收变化汇总与分摊")
     
     policy_inputs = collect_policy_data(contexts)
-    group_result = calculate_group_absorption(policy_inputs, group_status, is_reversal, logger)
-    allocation_results = allocate_absorption_to_policies(policy_inputs, group_result, is_reversal)
+    group_result = calculate_group_absorption(policy_inputs, group_status, is_reversal, logger, assumptions)
+    allocation_results = allocate_absorption_to_policies(policy_inputs, group_result, is_reversal, assumptions)
     write_back_to_contexts(contexts, allocation_results)
     
     return group_result
@@ -497,8 +701,8 @@ def months_from_uw_to_target(uw_date: date, target_month_str: str) -> int:
         return max(months, 0)
     except Exception: return 0
 
-def get_wlk_curve_from_pv_data(context, uw_month_str: str):
-    # (保持原样)
+def get_lkd_curve_from_pv_data(context, uw_month_str: str):
+    """从PV数据获取锁定利率曲线（LKD）"""
     if not context.pv_source_data: return None
     pv_data = context.pv_source_data.get_data(uw_month_str)
     if pv_data and pv_data.metadata:
@@ -509,18 +713,161 @@ def get_wlk_curve_from_pv_data(context, uw_month_str: str):
     try: return get_discount_factors("locked", uw_month_str)
     except Exception: return None
 
-# (calculate_nb_csm_interest, calculate_if_csm_interest 保持原样，省略以节省空间)
-def calculate_nb_csm_interest(principal: Decimal, rates_df, uw_date: date, val_month_str: str, stop_date: Optional[date] = None) -> Tuple[Decimal, Decimal]:
-    # ... (您的原有代码) ...
+def calculate_nb_csm_interest(
+    principal: Decimal,
+    rates_df,
+    uw_date: date,
+    val_month_str: str,
+    stop_date: Optional[date] = None
+) -> Tuple[Decimal, Decimal]:
+    """
+    新增合同CSM计息
+    
+    逻辑：
+    - 签单月：CSM × (1 + lkd[1]/2)
+    - 第二个月：CSM × (1 + lkd[1]/2) × (1 + lkd[2])
+    - 第三个月：CSM × (1 + lkd[1]/2) × (1 + lkd[2]) × (1 + lkd[3])
+    - 以此类推
+    
+    Args:
+        principal: CSM本金
+        rates_df: Lkd利率曲线
+        uw_date: 签单日期
+        val_month_str: 评估月份（YYYYMM格式）
+        stop_date: 合同止期（可选）
+    
+    Returns:
+        (利息金额, 计息因子)
+    """
     if rates_df is None or rates_df.empty or principal is None or principal == DECIMAL_ZERO:
         return DECIMAL_ZERO, DECIMAL_ZERO
+    
+    # 计算从签单月到评估月的月数差
     months_diff = months_from_uw_to_target(uw_date, val_month_str)
-    # ...
-    return DECIMAL_ZERO, DECIMAL_ZERO # Placeholder for full logic
+    if months_diff <= 0:
+        return DECIMAL_ZERO, DECIMAL_ZERO
+    
+    # 处理止期：止期当月正常计息，止期之后使用止期当月的累计利息
+    # 例如：7月止期，7月正常计息，8月及之后使用7月的累计利息
+    actual_months_diff = months_diff
+    if stop_date:
+        try:
+            val_date = datetime.strptime(val_month_str, '%Y%m').date()
+            if stop_date.year == val_date.year:
+                if stop_date.month < val_date.month:
+                    # 止期在评估月之前，使用止期当月（止期当月正常计息）
+                    stop_month_str = stop_date.strftime('%Y%m')
+                    actual_months_diff = months_from_uw_to_target(uw_date, stop_month_str)
+                # 如果止期在评估月当月或之后，正常计息
+        except Exception:
+            pass
+    
+    if actual_months_diff <= 0:
+        return DECIMAL_ZERO, DECIMAL_ZERO
+    
+    # 构建利率映射
+    rates_map = dict(zip(rates_df['term_month'], rates_df['forward_disrate_value'].apply(Decimal)))
+    max_term = rates_df['term_month'].max() if not rates_df.empty else 0
+    
+    # 计算计息因子
+    # 第一期：使用 lkd[1]/2（因为初始确认在月中）
+    # 第二期及以后：使用 lkd[2], lkd[3], ...
+    factor = Decimal('1.0')
+    
+    # 第一期：lkd[1]/2
+    r1 = rates_map.get(1, Decimal('0'))
+    factor *= (Decimal('1.0') + r1 / Decimal('2'))
+    
+    # 第二期到第actual_months_diff期：累乘整月利率
+    for term in range(2, actual_months_diff + 1):
+        r = rates_map.get(term, rates_map.get(max_term, Decimal('0')) if max_term > 0 else Decimal('0'))
+        factor *= (Decimal('1.0') + r)
+    
+    # 利息 = 本金 × (因子 - 1)
+    interest = principal * (factor - Decimal('1'))
+    
+    return interest, factor - Decimal('1')
 
-def calculate_if_csm_interest(principal: Decimal, rates_df, uw_date: date, bop_month_str: str, val_month_str: str, stop_date: Optional[date] = None) -> Tuple[Decimal, Decimal]:
-    # ... (您的原有代码) ...
-    return DECIMAL_ZERO, DECIMAL_ZERO # Placeholder for full logic
+def calculate_if_csm_interest(
+    principal: Decimal,
+    rates_df,
+    uw_date: date,
+    bop_month_str: str,
+    val_month_str: str,
+    stop_date: Optional[date] = None
+) -> Tuple[Decimal, Decimal]:
+    """
+    期初有效合同CSM计息
+    
+    逻辑：
+    - 从年初开始，每个月使用 (该月-签单月的月份差+1) 这一期的lkd利率
+    - 例如：签单月202205，评估月202301
+    - 1月：使用 lkd[(1月-签单月的月份差+1)] = lkd[8+1] = lkd[9]
+    - 2月：累乘 lkd[9] × lkd[10]
+    - 3月：累乘 lkd[9] × lkd[10] × lkd[11]
+    
+    Args:
+        principal: CSM本金
+        rates_df: Lkd利率曲线
+        uw_date: 签单日期
+        bop_month_str: 年初月份（YYYYMM格式）
+        val_month_str: 评估月份（YYYYMM格式）
+        stop_date: 合同止期（可选）
+    
+    Returns:
+        (利息金额, 计息因子)
+    """
+    if rates_df is None or rates_df.empty or principal is None or principal == DECIMAL_ZERO:
+        return DECIMAL_ZERO, DECIMAL_ZERO
+    
+    # 计算年初月份差和评估月月份差
+    bop_months_diff = months_from_uw_to_target(uw_date, bop_month_str)
+    val_months_diff = months_from_uw_to_target(uw_date, val_month_str)
+    
+    if val_months_diff <= bop_months_diff:
+        return DECIMAL_ZERO, DECIMAL_ZERO
+    
+    # 处理止期：止期当月正常计息，止期之后使用止期当月的累计利息
+    # 例如：7月止期，7月正常计息，8月及之后使用7月的累计利息
+    actual_val_months_diff = val_months_diff
+    if stop_date:
+        try:
+            val_date = datetime.strptime(val_month_str, '%Y%m').date()
+            if stop_date.year == val_date.year:
+                if stop_date.month < val_date.month:
+                    # 止期在评估月之前，使用止期当月（止期当月正常计息）
+                    stop_month_str = stop_date.strftime('%Y%m')
+                    actual_val_months_diff = months_from_uw_to_target(uw_date, stop_month_str)
+                # 如果止期在评估月当月或之后，正常计息
+        except Exception:
+            pass
+    
+    if actual_val_months_diff <= bop_months_diff:
+        return DECIMAL_ZERO, DECIMAL_ZERO
+    
+    # 构建利率映射
+    rates_map = dict(zip(rates_df['term_month'], rates_df['forward_disrate_value'].apply(Decimal)))
+    max_term = rates_df['term_month'].max() if not rates_df.empty else 0
+    
+    # 计算计息因子
+    # 从年初开始，每个月使用 (该月-签单月的月份差+1) 这一期的利率
+    # 例如：签单月202205，年初202301（1月），评估月202303（3月）
+    # 1月：使用 lkd[(1月-签单月的月份差+1)] = lkd[bop_months_diff+1]
+    # 2月：累乘 lkd[bop_months_diff+1] × lkd[bop_months_diff+2]
+    # 3月：累乘 lkd[bop_months_diff+1] × lkd[bop_months_diff+2] × lkd[val_months_diff+1]
+    factor = Decimal('1.0')
+    
+    # 从年初月份到评估月份，累乘对应期数的利率
+    # 年初月份对应的期数 = bop_months_diff + 1
+    # 评估月份对应的期数 = actual_val_months_diff + 1
+    for term in range(bop_months_diff + 1, actual_val_months_diff + 1):
+        r = rates_map.get(term, rates_map.get(max_term, Decimal('0')) if max_term > 0 else Decimal('0'))
+        factor *= (Decimal('1.0') + r)
+    
+    # 利息 = 本金 × (因子 - 1)
+    interest = principal * (factor - Decimal('1'))
+    
+    return interest, factor - Decimal('1')
 
 def calculate_csm_interest(context, logger, cohort_state: Optional[CohortState] = None, policy_state: Optional[PolicyState] = None):
     """Part 3: CSM计息"""
@@ -530,19 +877,38 @@ def calculate_csm_interest(context, logger, cohort_state: Optional[CohortState] 
     if context.pv_source_data is None: raise ValueError("PV Data missing")
     if not hasattr(context, 'eop_date') or context.eop_date is None: context.eop_date = datetime(context.year, 12, 31).date()
     
+    # 判断是否为新业务年度
+    current_year = context.year
+    is_new_business = getattr(context, 'is_new_business', None)
+    if is_new_business is None:
+        # 如果没有设置，通过比较year和under_write_date.year来判断
+        uw_date = getattr(context, 'under_write_date', None)
+        if uw_date:
+            is_new_business = (current_year == uw_date.year)
+        else:
+            # 兜底：如果没有under_write_date，使用is_initial_year
+            is_new_business = getattr(context, 'is_initial_year', False)
+    is_new_business = bool(is_new_business)
+    
     uw_date = getattr(context, 'under_write_date', None)
     uw_month_str = uw_date.strftime('%Y%m') if uw_date else None
     val_month_str = getattr(context, 'val_month_str', None) or context.eop_date.strftime('%Y%m')
-    lkd_curve = get_wlk_curve_from_pv_data(context, uw_month_str)
+    lkd_curve = get_lkd_curve_from_pv_data(context, uw_month_str)
     
     stop_date = None
     if policy_state and hasattr(policy_state, 'end_date'): stop_date = policy_state.end_date
     elif hasattr(context, 'end_date'): stop_date = context.end_date
     
     bop_csm_lc = _get_bop_csm_lc(context, cohort_state)
-    nb_initial_csm = context.nb_initial_csm or DECIMAL_ZERO
     bop_csm = bop_csm_lc if bop_csm_lc >= 0 else DECIMAL_ZERO
     bop_month_str = date(context.year, 1, 1).strftime('%Y%m')
+    
+    # 【修复】：如果不是新业务年度，强制 nb_initial_csm = 0，避免在非新业务年度计算NB_CSM计息
+    if not is_new_business:
+        nb_initial_csm = DECIMAL_ZERO
+        context.nb_initial_csm = DECIMAL_ZERO  # 清理残留值
+    else:
+        nb_initial_csm = context.nb_initial_csm or DECIMAL_ZERO
     
     # 这里调用完整的计息函数 (需确保上方已定义或导入)
     if_interest_csm, _ = calculate_if_csm_interest(bop_csm, lkd_curve, uw_date, bop_month_str, val_month_str, stop_date)
@@ -1129,9 +1495,18 @@ def calculate_lc_measurement(context, logger, group_lc_status: Decimal):
         logger.log_text(f"  - 合同组LC={group_lc_status:,.2f} >= 0，LC分摊比例为0")
         return
 
-    # 2. 分子 (Numerator): 保单自己的LC余额（IF_分摊后IFIE后LC或NB_分摊后IFIE后LC）
-    policy_lc = getattr(context, 'end_lc_before_amort', DECIMAL_ZERO)
-    numerator = policy_lc
+    # 2. 分子 (Numerator): 合同组分摊LC（如果已计算，否则回退到保单自己的LC余额）
+    allocated_group_lc = getattr(context, 'allocated_group_lc', None)
+    if allocated_group_lc is not None:
+        # 使用合同组分摊LC
+        numerator = allocated_group_lc
+        numerator_source = "合同组分摊LC"
+    else:
+        # 回退到保单自己的LC余额（兼容旧逻辑）
+        policy_lc = getattr(context, 'end_lc_before_amort', DECIMAL_ZERO)
+        numerator = policy_lc
+        numerator_source = "保单LC余额"
+        numerator_source = "保单LC余额"
     
     # 3. 分母 (Denominator): Policy Basis
     # 【修复】：必须包含 2024 (IF) 的期初现值 + 2023 (NB) 的初始现值
@@ -1166,11 +1541,12 @@ def calculate_lc_measurement(context, logger, group_lc_status: Decimal):
         
     context.lc_allocation_ratio_total = ratio
     
-    logger.log_item("LC分摊比例_合计", "Ratio = |保单LC余额| / 分母", 
-                    "判断条件使用合同组LC（不是单级别LC）", 
+    # 记录日志时区分使用的是合同组分摊LC还是保单自己的LC余额
+    logger.log_item("LC分摊比例_合计", f"Ratio = |{numerator_source}| / 分母", 
+                    "判断条件使用合同组LC（不是单级别LC），分子使用合同组分摊LC", 
                     {
                         "合同组LC(判断条件)": group_lc_status,
-                        "保单LC余额(分子)": numerator, 
+                        f"{numerator_source}(分子)": numerator, 
                         "分母(基数)": denominator, 
                         "IF_PV": pv_if_sum,
                         "NB_PV": pv_nb_sum,
@@ -1225,11 +1601,14 @@ def calculate_lc_measurement(context, logger, group_lc_status: Decimal):
     )
     # 合计（有效合同 + 新增合同）
     lc_release_basis_cf = lc_release_basis_cf_if + lc_release_basis_cf_nb
+    lc_release_basis_ra = lc_release_basis - lc_release_basis_cf
     
-    # 分摊的LC_预期现金流（取负号，因为这是减项）
-    allocated_lc_cf = -lc_release_basis_cf * ratio
-    # 分摊的LC_非金融风险调整 = allocated_lc_total - allocated_lc_cf
-    allocated_lc_ra = allocated_amt - allocated_lc_cf
+    # 分摊的LC_预期现金流 = CF基数 × LC分摊比例（不取负号）
+    allocated_lc_cf = lc_release_basis_cf * ratio
+    # 分摊的LC_非金融风险调整 = RA基数 × LC分摊比例（不取负号）
+    allocated_lc_ra = lc_release_basis_ra * ratio
+    # 分摊的LC_合计 = CF分摊 + RA分摊
+    allocated_amt = allocated_lc_cf + allocated_lc_ra
     
     context.allocated_lc_cf = allocated_lc_cf
     context.allocated_lc_ra = allocated_lc_ra
@@ -1256,6 +1635,19 @@ def calculate_csm_measurement(context, logger):
     """
     logger.log_section("第三部分-步骤5: CSM计量")
     
+    # 判断是否为新业务年度
+    current_year = context.year
+    is_new_business = getattr(context, 'is_new_business', None)
+    if is_new_business is None:
+        # 如果没有设置，通过比较year和under_write_date.year来判断
+        uw_date = getattr(context, 'under_write_date', None)
+        if uw_date:
+            is_new_business = (current_year == uw_date.year)
+        else:
+            # 兜底：如果没有under_write_date，使用is_initial_year
+            is_new_business = getattr(context, 'is_initial_year', False)
+    is_new_business = bool(is_new_business)
+    
     # 1. 获取 IF/NB_计息后CSM（第一部分计算的结果）
     # IF保单：IF_计息后CSM = IF_年初余额 + IF_CSM计息
     # NB保单：NB_计息后CSM = NB_新增CSM + NB_CSM计息
@@ -1264,15 +1656,24 @@ def calculate_csm_measurement(context, logger):
     
     bop_csm = getattr(context, 'bop_csm', DECIMAL_ZERO) or DECIMAL_ZERO
     if_interest_csm = getattr(context, 'if_interest_csm', DECIMAL_ZERO) or DECIMAL_ZERO
-    nb_initial_csm = getattr(context, 'nb_initial_csm', DECIMAL_ZERO) or DECIMAL_ZERO
-    nb_interest_csm = getattr(context, 'nb_interest_csm', DECIMAL_ZERO) or DECIMAL_ZERO
+    
+    # 【修复】：如果不是新业务年度，强制 nb_initial_csm 和 nb_interest_csm 为 0
+    if not is_new_business:
+        nb_initial_csm = DECIMAL_ZERO
+        nb_interest_csm = DECIMAL_ZERO
+    else:
+        nb_initial_csm = getattr(context, 'nb_initial_csm', DECIMAL_ZERO) or DECIMAL_ZERO
+        nb_interest_csm = getattr(context, 'nb_interest_csm', DECIMAL_ZERO) or DECIMAL_ZERO
     
     if bop_csm != DECIMAL_ZERO:
         # IF保单
         if_csm_after_interest = bop_csm + if_interest_csm
     else:
-        # NB保单
-        nb_csm_after_interest = nb_initial_csm + nb_interest_csm
+        # NB保单（仅在新业务年度有效）
+        if is_new_business:
+            nb_csm_after_interest = nb_initial_csm + nb_interest_csm
+        else:
+            nb_csm_after_interest = DECIMAL_ZERO
     
     csm_after_interest = if_csm_after_interest + nb_csm_after_interest
     
@@ -1338,26 +1739,9 @@ def calculate_closing_balances(context, logger):
     
     # 2. 获取分摊的LC和被LC吸收的变化
     allocated_lc_total = getattr(context, 'allocated_lc_total', DECIMAL_ZERO) or DECIMAL_ZERO
-    allocated_lc_exp_adj_total = getattr(context, 'allocated_lc_exp_adj_total', None)
-    if allocated_lc_exp_adj_total is None:
-        # 优先从lc_absorbed_total获取（组级分摊后回写）
-        allocated_lc_exp_adj_total = getattr(context, 'lc_absorbed_total', None)
-    if allocated_lc_exp_adj_total is None:
-        # 其次从lc_change获取
-        allocated_lc_exp_adj_total = getattr(context, 'lc_change', None)
-    allocated_lc_exp_adj_total = allocated_lc_exp_adj_total or DECIMAL_ZERO
+    lc_absorbed_total = getattr(context, 'lc_absorbed_total', DECIMAL_ZERO) or DECIMAL_ZERO
     
-    # 3. 计算待调整LC余额_合计
-    # 公式：待调整LC余额 = 年初LC + 新增LC + IFIE + 分摊的LC + 被LC吸收的变化
-    lc_balance_to_adjust_total = (
-        bop_lc_total + 
-        nb_initial_lc_total + 
-        lc_ifie_total + 
-        allocated_lc_total + 
-        allocated_lc_exp_adj_total
-    )
-    
-    # 4. 获取CSM摊销比例（用于判断是否需要LC调整）
+    # 3. 获取CSM摊销比例（用于判断是否需要LC调整）
     csm_amort_ratio = getattr(context, 'csm_amort_ratio', None)
     if csm_amort_ratio is None:
         # 尝试从csm_amort_amount和end_csm_before_amort计算
@@ -1370,14 +1754,7 @@ def calculate_closing_balances(context, logger):
             csm_amort_ratio = getattr(context, 'iacf_amort_ratio', DECIMAL_ZERO) or DECIMAL_ZERO
     csm_amort_ratio = Decimal(str(csm_amort_ratio)) if csm_amort_ratio is not None else DECIMAL_ZERO
     
-    # 5. 计算LC调整_合计：如果CSM摊销比例=100%，则等于负的待调整LC余额_合计；否则为0
-    if csm_amort_ratio >= Decimal('1'):
-        lc_adjust_total = -lc_balance_to_adjust_total
-    else:
-        lc_adjust_total = DECIMAL_ZERO
-    
-    # 【修复】：拆分 LC调整_合计 为 CF 和 RA
-    # 需要获取待调整LC余额的CF和RA部分
+    # 4. 逐栏计算待调整LC余额_CF
     # 待调整LC余额_预期现金流 = 年初LC_预期现金流 + 新增LC_预期现金流 + IFIE_预期现金流 + 分摊的LC_预期现金流 + 被LC吸收的变化_预期现金流
     bop_lc_cf = getattr(context, 'bop_lc_cf', bop_lc_total) or bop_lc_total  # 默认使用total
     nb_initial_lc_cf = getattr(context, 'nb_initial_lc_cf', DECIMAL_ZERO) or DECIMAL_ZERO
@@ -1385,31 +1762,59 @@ def calculate_closing_balances(context, logger):
     nb_lc_ifie_cf = getattr(context, 'nb_lc_ifie_cf', DECIMAL_ZERO) or DECIMAL_ZERO
     lc_ifie_cf = if_lc_ifie_cf + nb_lc_ifie_cf
     allocated_lc_cf = getattr(context, 'allocated_lc_cf', DECIMAL_ZERO) or DECIMAL_ZERO
-    allocated_lc_exp_adj_cf = getattr(context, 'allocated_lc_exp_adj_cf', DECIMAL_ZERO) or DECIMAL_ZERO
+    lc_absorbed_cf = getattr(context, 'lc_absorbed_cf', DECIMAL_ZERO) or DECIMAL_ZERO
     
     lc_balance_to_adjust_cf = (
-        bop_lc_cf + 
-        nb_initial_lc_cf + 
-        lc_ifie_cf + 
-        allocated_lc_cf + 
-        allocated_lc_exp_adj_cf
+        bop_lc_cf +
+        nb_initial_lc_cf +
+        lc_ifie_cf +
+        allocated_lc_cf +
+        lc_absorbed_cf
     )
     
-    # LC调整_预期现金流 = IF(CSM摊销比例=100%, -待调整LC余额_预期现金流, 0)
+    # 计算待调整LC余额_非金融风险调整
+    # 待调整LC余额_非金融风险调整 = 年初LC_非金融风险调整 + 新增LC_非金融风险调整 + IFIE_非金融风险调整 + 分摊的LC_非金融风险调整 + 被LC吸收的变化_非金融风险调整
+    bop_lc_ra = getattr(context, 'bop_lc_ra', DECIMAL_ZERO) or DECIMAL_ZERO
+    nb_initial_lc_ra = getattr(context, 'nb_initial_lc_ra', DECIMAL_ZERO) or DECIMAL_ZERO
+    if_lc_ifie_ra = getattr(context, 'if_lc_ifie_ra', DECIMAL_ZERO) or DECIMAL_ZERO
+    nb_lc_ifie_ra = getattr(context, 'nb_lc_ifie_ra', DECIMAL_ZERO) or DECIMAL_ZERO
+    lc_ifie_ra = if_lc_ifie_ra + nb_lc_ifie_ra
+    allocated_lc_ra = getattr(context, 'allocated_lc_ra', DECIMAL_ZERO) or DECIMAL_ZERO
+    lc_absorbed_ra = getattr(context, 'lc_absorbed_ra', DECIMAL_ZERO) or DECIMAL_ZERO
+    
+    lc_balance_to_adjust_ra = (
+        bop_lc_ra +
+        nb_initial_lc_ra +
+        lc_ifie_ra +
+        allocated_lc_ra +
+        lc_absorbed_ra
+    )
+    
+    # 5. 合计待调整LC余额 = CF + RA（不再单独重复计算一次）
+    lc_balance_to_adjust_total = lc_balance_to_adjust_cf + lc_balance_to_adjust_ra
+    
+    # 6. 逐栏计算LC调整：如果CSM摊销比例=100%，则等于负的待调整余额；否则为0
     if csm_amort_ratio >= Decimal('1'):
         lc_adjust_cf = -lc_balance_to_adjust_cf
+        lc_adjust_ra = -lc_balance_to_adjust_ra
     else:
         lc_adjust_cf = DECIMAL_ZERO
+        lc_adjust_ra = DECIMAL_ZERO
+    lc_adjust_total = lc_adjust_cf + lc_adjust_ra
     
-    # LC调整_非金融风险调整 = LC调整_合计 - LC调整_预期现金流
-    lc_adjust_ra = lc_adjust_total - lc_adjust_cf
-    
-    # 6. 计算期末LC余额_合计
+    # 7. 计算期末LC余额_合计、预期现金流和非金融风险调整
+    # 期末LC余额_合计 = 待调整LC余额_合计 + LC调整_合计
     end_lc_final = lc_balance_to_adjust_total + lc_adjust_total
+    # 期末LC余额_预期现金流 = 待调整LC余额_预期现金流 + LC调整_预期现金流
+    end_lc_cf = lc_balance_to_adjust_cf + lc_adjust_cf
+    # 期末LC余额_非金融风险调整 = 待调整LC余额_非金融风险调整 + LC调整_非金融风险调整
+    end_lc_ra = lc_balance_to_adjust_ra + lc_adjust_ra
     
     # 7. 保存到context
     context.end_lc_final = end_lc_final
     context.closing_lc = end_lc_final  # 兼容不同命名
+    context.end_lc_cf = end_lc_cf  # 保存期末LC余额_预期现金流
+    context.end_lc_ra = end_lc_ra  # 保存期末LC余额_非金融风险调整
     context.lc_adjust_total = lc_adjust_total  # 保存LC调整项供后续使用
     context.lc_adjust_cf = lc_adjust_cf  # 保存LC调整_预期现金流
     context.lc_adjust_ra = lc_adjust_ra  # 保存LC调整_非金融风险调整
@@ -1423,7 +1828,7 @@ def calculate_closing_balances(context, logger):
             "新增LC": nb_initial_lc_total,
             "IFIE": lc_ifie_total,
             "分摊的LC": allocated_lc_total,
-            "被LC吸收的变化": allocated_lc_exp_adj_total,
+            "被LC吸收的变化": lc_absorbed_total,
             "待调整LC余额": lc_balance_to_adjust_total,
             "CSM摊销比例": csm_amort_ratio,
             "LC调整": lc_adjust_total,

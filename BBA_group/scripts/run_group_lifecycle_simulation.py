@@ -51,7 +51,10 @@ from BBA_group.logic import (
     ifie,
     lrc_closing
 )
-from BBA_group.logic.group_csm_lc_measurement import run_group_absorption_allocation
+from BBA_group.logic.group_csm_lc_measurement import (
+    run_group_absorption_allocation,
+    _build_unit_id_from_context
+)
 from BBA_group.logic.coverage_units import (
     calculate_coverage_units_released,
     calculate_coverage_units_remaining
@@ -115,13 +118,13 @@ class GroupLifecycleSimulator:
         self.group_cohort_state: Optional[GroupCohortState] = None
         self.assumptions_history: Dict[str, Assumptions] = {}
         self.rates_history: Dict[str, pd.DataFrame] = {}  # 历史利率曲线（按月份）
-        self._pv_collections: Dict[str, PVSourceDataCollection] = {}  # 每张保单的PV数据
+        self._pv_collections: Dict[str, PVSourceDataCollection] = {}  # unitid -> PV数据
         
         # 逐单计算结果（用于后续汇总）
-        self.policy_results: Dict[str, Dict] = {}  # policy_no -> {计算结果}
+        self.policy_results: Dict[str, Dict] = {}  # unitid -> {计算结果}
         
         # 每张保单的年度结果（用于生成逐单报表）
-        self.policy_yearly_results: Dict[str, List[Dict]] = {}  # policy_no -> [年度结果列表]
+        self.policy_yearly_results: Dict[str, List[Dict]] = {}  # unitid -> [年度结果列表]
     
     def cleanup(self):
         """清理资源，包括数据库连接池"""
@@ -130,13 +133,41 @@ class GroupLifecycleSimulator:
         if self.enable_logging:
             self.logger.close()
     
-    def _merge_pv_collection(self, policy_no: str, new_collection: PVSourceDataCollection) -> PVSourceDataCollection:
+    def _get_unit_id(self, policy_no: str, certi_no: Optional[str] = None) -> str:
+        """
+        生成 unitid（唯一标识符）
+        
+        规则：
+        - 如果 certi_no 不为空，则 unitid = "policy_no-certi_no"
+        - 如果 certi_no 为空/None/空串，则 unitid = policy_no
+        """
+        if certi_no:
+            certi_str = str(certi_no).strip()
+            if certi_str:
+                return f"{policy_no}-{certi_str}"
+        return policy_no
+    
+    def _format_policy_display_name(self, policy_state: GroupPolicyState) -> str:
+        """
+        格式化保单显示名称（用于日志输出）
+        
+        如果存在批单号，则显示为 "policy_no (批单: certi_no)"
+        否则只显示 policy_no
+        """
+        certi_no = getattr(policy_state, 'certi_no', None)
+        if certi_no:
+            certi_str = str(certi_no).strip()
+            if certi_str:
+                return f"{policy_state.policy_no} (批单: {certi_str})"
+        return policy_state.policy_no
+    
+    def _merge_pv_collection(self, unitid: str, new_collection: PVSourceDataCollection) -> PVSourceDataCollection:
         """合并PV数据集合"""
-        if policy_no not in self._pv_collections:
-            self._pv_collections[policy_no] = new_collection
-            return self._pv_collections[policy_no]
-        self._pv_collections[policy_no].data_by_month.update(new_collection.data_by_month)
-        return self._pv_collections[policy_no]
+        if unitid not in self._pv_collections:
+            self._pv_collections[unitid] = new_collection
+            return self._pv_collections[unitid]
+        self._pv_collections[unitid].data_by_month.update(new_collection.data_by_month)
+        return self._pv_collections[unitid]
     
     def _generate_dynamic_pv_data(self, policy_no: str, certi_no: Optional[str], months: List[str]) -> Tuple[PVSourceDataCollection, Optional[str]]:
         """动态生成PV数据"""
@@ -301,19 +332,20 @@ class GroupLifecycleSimulator:
         
         init_month = context.val_month_str
         if self.dynamic_pv_mode:
-            if policy_state.policy_no not in self._pv_collections:
+            unitid = self._get_unit_id(policy_state.policy_no, getattr(policy_state, 'certi_no', None))
+            if unitid not in self._pv_collections:
                 pv_collection, file_path = self._generate_dynamic_pv_data(
                     policy_state.policy_no,
                     getattr(policy_state, 'certi_no', None),
                     [init_month]
                 )
-                self._merge_pv_collection(policy_state.policy_no, pv_collection)
+                self._merge_pv_collection(unitid, pv_collection)
                 if file_path and os.path.exists(file_path):
                     try:
                         os.remove(file_path)
                     except OSError:
                         pass
-            context.pv_source_data = self._pv_collections[policy_state.policy_no]
+            context.pv_source_data = self._pv_collections[unitid]
         else:
             pv_source_data = load_pv_source_data(policy_state.policy_no)
             if pv_source_data is None:
@@ -333,7 +365,8 @@ class GroupLifecycleSimulator:
         policy_state.initial_lc = context.nb_initial_lc or Decimal('0')
         policy_state.initial_csm_for_weight = policy_state.initial_csm
         
-        self.policy_results[policy_state.policy_no] = {
+        unitid = self._get_unit_id(policy_state.policy_no, getattr(policy_state, 'certi_no', None))
+        self.policy_results[unitid] = {
             'initial_csm': policy_state.initial_csm,
             'initial_lc': policy_state.initial_lc,
             'context': context
@@ -346,7 +379,8 @@ class GroupLifecycleSimulator:
         self.logger.log_section(f"Part 1: 组内所有保单初始确认 (Initial Recognition)")
         
         for policy_state in self.policy_states:
-            self.logger.log_text(f"### 处理保单: {policy_state.policy_no}")
+            policy_display = self._format_policy_display_name(policy_state)
+            self.logger.log_text(f"### 处理保单: {policy_display}")
             
             uw_month_str = policy_state.uw_month_str
             if uw_month_str not in self.rates_history:
@@ -619,7 +653,8 @@ class GroupLifecycleSimulator:
         
         # 从逐单context中汇总数据
         for policy_state in self.policy_states:
-            ctx = policy_contexts.get(policy_state.policy_no)
+            unitid = self._get_unit_id(policy_state.policy_no, getattr(policy_state, 'certi_no', None))
+            ctx = policy_contexts.get(unitid)
             if not ctx:
                 continue
             
@@ -883,7 +918,7 @@ class GroupLifecycleSimulator:
         self.logger.log_text(f"- 当年新增LC_预期现金流: {group_nb_initial_lc_cf:,.2f}")
         self.logger.log_text(f"- LC分摊IFIE_预期现金流: {group_lc_ifie_cf:,.2f}")
         self.logger.log_text(f"- 分摊的LC_预期现金流: {group_allocated_lc_cf:,.2f}")
-        self.logger.log_text(f"- 被LC吸收的变化_预期现金流: {group_result.group_lc_absorbed_cf:,.2f}")
+        self.logger.log_text(f"- 被LC吸收的变化_预期现金流: {group_lc_absorbed_cf:,.2f}")
         self.logger.log_text(f"- 待调整LC余额_预期现金流: {group_bop_lc_cf + group_nb_initial_lc_cf + group_lc_ifie_cf + group_allocated_lc_cf:,.2f}")
         self.logger.log_text(f"- LC调整_预期现金流: {group_lc_adjust_cf:,.2f}")
         self.logger.log_text(f"- 期末LC余额_预期现金流: {group_eop_lc_cf:,.2f}")
@@ -891,7 +926,7 @@ class GroupLifecycleSimulator:
         self.logger.log_text(f"- 当年新增LC_非金融风险调整: {group_nb_initial_lc_ra:,.2f}")
         self.logger.log_text(f"- LC分摊IFIE_非金融风险调整: {group_lc_ifie_ra:,.2f}")
         self.logger.log_text(f"- 分摊的LC_非金融风险调整: {group_allocated_lc_ra:,.2f}")
-        self.logger.log_text(f"- 被LC吸收的变化_非金融风险调整: {group_result.group_lc_absorbed_ra:,.2f}")
+        self.logger.log_text(f"- 被LC吸收的变化_非金融风险调整: {group_lc_absorbed_ra:,.2f}")
         self.logger.log_text(f"- 待调整LC余额_非金融风险调整: {group_bop_lc_ra + group_nb_initial_lc_ra + group_lc_ifie_ra + group_allocated_lc_ra:,.2f}")
         self.logger.log_text(f"- LC调整_非金融风险调整: {group_lc_adjust_ra:,.2f}")
         self.logger.log_text(f"- 期末LC余额_非金融风险调整: {group_eop_lc_ra:,.2f}")
@@ -946,7 +981,8 @@ class GroupLifecycleSimulator:
         # 计算CSM分摊因子
         total_csm_after_interest = Decimal('0')
         for policy_state in self.policy_states:
-            ctx = policy_contexts.get(policy_state.policy_no)
+            unitid = self._get_unit_id(policy_state.policy_no, getattr(policy_state, 'certi_no', None))
+            ctx = policy_contexts.get(unitid)
             if not ctx:
                 continue
             csm_after_interest = self._to_decimal(getattr(ctx, 'end_csm_before_amort', Decimal('0'))) or Decimal('0')
@@ -956,21 +992,25 @@ class GroupLifecycleSimulator:
         if total_csm_after_interest > 0:
             self.logger.log_text(f"- CSM分摊因子（基于计息后CSM）:")
             for policy_state in self.policy_states:
-                ctx = policy_contexts.get(policy_state.policy_no)
+                unitid = self._get_unit_id(policy_state.policy_no, getattr(policy_state, 'certi_no', None))
+                ctx = policy_contexts.get(unitid)
                 if not ctx:
                     continue
                 csm_after_interest = self._to_decimal(getattr(ctx, 'end_csm_before_amort', Decimal('0'))) or Decimal('0')
                 if csm_after_interest > 0:
                     csm_weight = csm_after_interest / total_csm_after_interest
-                    self.logger.log_text(f"  - 保单 {policy_state.policy_no}: {csm_weight:,.4f} ({csm_weight * Decimal('100'):,.2f}%)")
+                    policy_display = self._format_policy_display_name(policy_state)
+                    self.logger.log_text(f"  - 保单 {policy_display}: {csm_weight:,.4f} ({csm_weight * Decimal('100'):,.2f}%)")
             
             self.logger.log_text(f"- 逐单分摊值:")
             for policy_state in self.policy_states:
-                ctx = policy_contexts.get(policy_state.policy_no)
+                unitid = self._get_unit_id(policy_state.policy_no, getattr(policy_state, 'certi_no', None))
+                ctx = policy_contexts.get(unitid)
                 if not ctx:
                     continue
                 csm_absorbed = self._to_decimal(getattr(ctx, 'csm_absorbed', Decimal('0'))) or Decimal('0')
-                self.logger.log_text(f"  - 保单 {policy_state.policy_no}: {csm_absorbed:,.2f}")
+                policy_display = self._format_policy_display_name(policy_state)
+                self.logger.log_text(f"  - 保单 {policy_display}: {csm_absorbed:,.2f}")
         else:
             self.logger.log_text(f"- CSM分摊因子: 无（无计息后CSM）")
             self.logger.log_text(f"- 逐单分摊值: 无")
@@ -982,7 +1022,8 @@ class GroupLifecycleSimulator:
         # 计算LC分摊因子
         total_lc_after_ifie_abs = Decimal('0')
         for policy_state in self.policy_states:
-            ctx = policy_contexts.get(policy_state.policy_no)
+            unitid = self._get_unit_id(policy_state.policy_no, getattr(policy_state, 'certi_no', None))
+            ctx = policy_contexts.get(unitid)
             if not ctx:
                 continue
             lc_after_ifie = self._to_decimal(getattr(ctx, 'end_lc_before_amort', Decimal('0'))) or Decimal('0')
@@ -993,22 +1034,26 @@ class GroupLifecycleSimulator:
         if total_lc_after_ifie_abs > 0:
             self.logger.log_text(f"- LC分摊因子（基于分摊后LC）:")
             for policy_state in self.policy_states:
-                ctx = policy_contexts.get(policy_state.policy_no)
+                unitid = self._get_unit_id(policy_state.policy_no, getattr(policy_state, 'certi_no', None))
+                ctx = policy_contexts.get(unitid)
                 if not ctx:
                     continue
                 lc_after_ifie = self._to_decimal(getattr(ctx, 'end_lc_before_amort', Decimal('0'))) or Decimal('0')
                 is_reversal = getattr(ctx, 'is_reversal_policy', False)
                 if (not is_reversal and lc_after_ifie < 0) or (is_reversal and lc_after_ifie > 0):
                     lc_weight = abs(lc_after_ifie) / total_lc_after_ifie_abs
-                    self.logger.log_text(f"  - 保单 {policy_state.policy_no}: {lc_weight:,.4f} ({lc_weight * Decimal('100'):,.2f}%)")
+                    policy_display = self._format_policy_display_name(policy_state)
+                    self.logger.log_text(f"  - 保单 {policy_display}: {lc_weight:,.4f} ({lc_weight * Decimal('100'):,.2f}%)")
             
             self.logger.log_text(f"- 逐单分摊值:")
             for policy_state in self.policy_states:
-                ctx = policy_contexts.get(policy_state.policy_no)
+                unitid = self._get_unit_id(policy_state.policy_no, getattr(policy_state, 'certi_no', None))
+                ctx = policy_contexts.get(unitid)
                 if not ctx:
                     continue
                 lc_absorbed_total = self._to_decimal(getattr(ctx, 'lc_absorbed_total', Decimal('0'))) or Decimal('0')
-                self.logger.log_text(f"  - 保单 {policy_state.policy_no}: {lc_absorbed_total:,.2f}")
+                policy_display = self._format_policy_display_name(policy_state)
+                self.logger.log_text(f"  - 保单 {policy_display}: {lc_absorbed_total:,.2f}")
         else:
             self.logger.log_text(f"- LC分摊因子: 无（无分摊后LC）")
             self.logger.log_text(f"- 逐单分摊值: 无")
@@ -1016,7 +1061,8 @@ class GroupLifecycleSimulator:
         # ========== 第四部分：逐单结果 ==========
         self.logger.log_text("### 逐单结果")
         for policy_state in self.policy_states:
-            ctx = policy_contexts.get(policy_state.policy_no)
+            unitid = self._get_unit_id(policy_state.policy_no, getattr(policy_state, 'certi_no', None))
+            ctx = policy_contexts.get(unitid)
             if not ctx:
                 continue
             
@@ -1132,7 +1178,8 @@ class GroupLifecycleSimulator:
             ifie_ra_lc = self._to_decimal(getattr(ctx, 'ifie_pl_ra_lc', Decimal('0'))) or Decimal('0')
             
             # 输出逐单字段值（按照用户要求的顺序）
-            self.logger.log_text(f"#### 保单 {policy_state.policy_no}")
+            policy_display = self._format_policy_display_name(policy_state)
+            self.logger.log_text(f"#### 保单 {policy_display}")
             self.logger.log_text(f"- IF_年初CSM余额: {if_bop_csm:,.2f}")
             self.logger.log_text(f"- 当年新增合同CSM: {nb_initial_csm:,.2f}")
             self.logger.log_text(f"- 期初有效合同CSM计息: {if_interest_csm:,.2f}")
@@ -1278,8 +1325,8 @@ class GroupLifecycleSimulator:
         
         allocated_lc_cf = self._to_decimal(getattr(context, 'allocated_lc_cf', Decimal('0')))
         allocated_lc_ra = self._to_decimal(getattr(context, 'allocated_lc_ra', Decimal('0')))
-        allocated_lc_exp_adj_cf = self._to_decimal(getattr(context, 'allocated_lc_exp_adj_cf', Decimal('0')))
-        allocated_lc_exp_adj_ra = self._to_decimal(getattr(context, 'allocated_lc_exp_adj_ra', Decimal('0')))
+        lc_absorbed_cf = self._to_decimal(getattr(context, 'lc_absorbed_cf', Decimal('0')))
+        lc_absorbed_ra = self._to_decimal(getattr(context, 'lc_absorbed_ra', Decimal('0')))
         
         iacf_amort_expense = self._to_decimal(getattr(context, 'iacf_amort_amount', Decimal('0')))
         
@@ -1320,6 +1367,22 @@ class GroupLifecycleSimulator:
         lrc_bel_non_lc = lrc_bel_total - lrc_bel_lc
         lrc_ra_non_lc = lrc_ra - lrc_ra_lc
         
+        # 获取被CSM吸收的变化（已从组级分摊结果回写）
+        csm_absorbed_cf = self._to_decimal(getattr(context, 'csm_absorbed_cf', Decimal('0')))
+        csm_absorbed_ra = self._to_decimal(getattr(context, 'csm_absorbed_ra', Decimal('0')))
+        csm_absorbed_total = self._to_decimal(getattr(context, 'csm_absorbed', Decimal('0')))
+        
+        # 调试：检查为什么这些值可能为0
+        policy_no = getattr(context, 'policy_no', 'UNKNOWN')
+        exp_adj_csm_impact = self._to_decimal(getattr(context, 'exp_adj_csm_impact', Decimal('0')))
+        delta_cf_total = self._to_decimal(getattr(context, 'delta_cf_total', Decimal('0')))
+        if csm_absorbed_total == Decimal('0') and exp_adj_csm_impact != Decimal('0'):
+            # 如果exp_adj_csm_impact不为0但csm_absorbed为0，说明组级吸收计算或分摊可能有问题
+            import logging
+            logging.warning(f"[调试] 保单 {policy_no}: exp_adj_csm_impact={exp_adj_csm_impact}, "
+                          f"但 csm_absorbed_total={csm_absorbed_total}, csm_absorbed_cf={csm_absorbed_cf}, "
+                          f"csm_absorbed_ra={csm_absorbed_ra}. 可能原因：组级吸收计算结果为0或分摊权重为0")
+        
         is_reversal = getattr(context, 'is_reversal_policy', False)
         
         result = {
@@ -1339,8 +1402,8 @@ class GroupLifecycleSimulator:
             "赔付与费用_摊销的IACF": self._apply_reversal_if_needed(iacf_amort_expense, is_reversal),
             "亏损合同损益_新增合同预期现金流_赔付与费用现金流_亏损": self._apply_reversal_if_needed(nb_initial_lc_cf, is_reversal),
             "亏损合同损益_新增合同非金融风险调整_亏损": self._apply_reversal_if_needed(nb_initial_lc_ra, is_reversal),
-            "亏损合同损益_不调整CSM的预期现金流变动": self._apply_reversal_if_needed(allocated_lc_exp_adj_cf, is_reversal),
-            "亏损合同损益_不调整CSM的非金融风险调整变动": self._apply_reversal_if_needed(allocated_lc_exp_adj_ra, is_reversal),
+            "亏损合同损益_不调整CSM的预期现金流变动": self._apply_reversal_if_needed(lc_absorbed_cf, is_reversal),
+            "亏损合同损益_不调整CSM的非金融风险调整变动": self._apply_reversal_if_needed(lc_absorbed_ra, is_reversal),
             "IFIE_P&L_未到期_预期现金流_非亏损": self._apply_reversal_if_needed(ifie_pl_cf_non_lc, is_reversal),
             "IFIE_P&L_未到期_预期现金流_亏损": self._apply_reversal_if_needed(ifie_pl_cf_lc, is_reversal),
             "IFIE_P&L_未到期_非金融风险调整_非亏损": self._apply_reversal_if_needed(ifie_pl_ra_non_lc, is_reversal),
@@ -1355,9 +1418,9 @@ class GroupLifecycleSimulator:
             "未到期责任负债_非金融风险调整_非亏损": self._apply_reversal_if_needed(lrc_ra_non_lc, is_reversal),
             "未到期责任负债_非金融风险调整_亏损": self._apply_reversal_if_needed(lrc_ra_lc, is_reversal),
             "未到期责任负债_CSM": self._apply_reversal_if_needed(end_csm, is_reversal),
-            "未到期_调整CSM的预期现金流变动": self._apply_reversal_if_needed(getattr(context, 'csm_absorbed', Decimal('0')), is_reversal),
-            "未到期_调整CSM的非金融风险调整变动": 0.0,
-            "未到期_调整CSM的估计变更": self._apply_reversal_if_needed(getattr(context, 'csm_absorbed', Decimal('0')), is_reversal),
+            "未到期_调整CSM的预期现金流变动": self._apply_reversal_if_needed(csm_absorbed_cf, is_reversal),
+            "未到期_调整CSM的非金融风险调整变动": self._apply_reversal_if_needed(csm_absorbed_ra, is_reversal),
+            "未到期_调整CSM的估计变更": self._apply_reversal_if_needed(csm_absorbed_total, is_reversal),  # 注意：直接使用csm_absorbed_total，负值表示减少CSM余额
             "新增合同预期现金流_保费现金流_盈利合同": self._apply_reversal_if_needed(getattr(context, 'actual_premium', Decimal('0')) if is_new_business and nb_initial_lc >= 0 else Decimal('0'), is_reversal),
             "新增合同预期现金流_IACF_盈利合同": self._apply_reversal_if_needed(getattr(context, 'actual_iacf_incurred', Decimal('0')) if is_new_business and nb_initial_lc >= 0 else Decimal('0'), is_reversal),
             "新增合同预期现金流_赔付与费用现金流_盈利合同": self._apply_reversal_if_needed((getattr(context, 'init_fut_claim', Decimal('0')) + getattr(context, 'init_fut_maint', Decimal('0'))) if is_new_business and nb_initial_lc >= 0 else Decimal('0'), is_reversal),
@@ -1387,10 +1450,15 @@ class GroupLifecycleSimulator:
         is_initial_year: bool = False,
         logger: Optional[CalculationLogger] = None,
     ) -> CalculationContext:
+        # 如果评估年度早于签单年度，该保单在本年度不参与计量，返回 None
+        if year < policy_state.valuation_date.year:
+            return None
         if logger is None:
             logger = self.logger
-        if policy_state.policy_no in self.policy_results:
-            init_context = self.policy_results[policy_state.policy_no].get('context')
+        
+        unitid = self._get_unit_id(policy_state.policy_no, getattr(policy_state, 'certi_no', None))
+        if unitid in self.policy_results:
+            init_context = self.policy_results[unitid].get('context')
             # 调试：检查init_context中的nb_initial_lc
             if init_context and hasattr(logger, 'log_text') and logger != _SilentLogger():
                 init_nb_lc = getattr(init_context, 'nb_initial_lc', 'NOT_SET')
@@ -1398,7 +1466,7 @@ class GroupLifecycleSimulator:
         else:
             init_context = None
             if hasattr(logger, 'log_text') and logger != _SilentLogger():
-                logger.log_text(f"🔍 调试：⚠️ init_context为None，policy_no={policy_state.policy_no}不在policy_results中")
+                logger.log_text(f"🔍 调试：⚠️ init_context为None，unitid={unitid}不在policy_results中")
         
         context = CalculationContext()
         context.policy_no = policy_state.policy_no
@@ -1421,22 +1489,22 @@ class GroupLifecycleSimulator:
             context.rates_df_locked = rates_df_current
         
         if self.dynamic_pv_mode:
-            bop_month_str = date(year, 1, 1).strftime('%Y%m')
-            months_needed = [bop_month_str, val_month_str] if not is_initial_year else [val_month_str]
+            # 只请求期末评估月（12月），不再请求年初评估月
+            months_needed = [val_month_str]
             for month in months_needed:
-                if policy_state.policy_no not in self._pv_collections or month not in self._pv_collections[policy_state.policy_no].data_by_month:
+                if unitid not in self._pv_collections or month not in self._pv_collections[unitid].data_by_month:
                     pv_collection, file_path = self._generate_dynamic_pv_data(
                         policy_state.policy_no,
                         getattr(policy_state, 'certi_no', None),
                         [month]
                     )
-                    self._merge_pv_collection(policy_state.policy_no, pv_collection)
+                    self._merge_pv_collection(unitid, pv_collection)
                     if file_path and os.path.exists(file_path):
                         try:
                             os.remove(file_path)
                         except OSError:
                             pass
-            context.pv_source_data = self._pv_collections[policy_state.policy_no]
+            context.pv_source_data = self._pv_collections[unitid]
         else:
             pv_source_data = load_pv_source_data(policy_state.policy_no)
             if pv_source_data:
@@ -1459,24 +1527,63 @@ class GroupLifecycleSimulator:
                 context.init_fut_claim = self._to_decimal(getattr(init_context, 'init_fut_claim', Decimal('0')))
                 context.init_fut_maint = self._to_decimal(getattr(init_context, 'init_fut_maint', Decimal('0')))
                 context.init_ra = self._to_decimal(getattr(init_context, 'init_ra', Decimal('0')))
+                # 新业务年度：确保 nb_initial_lc 及 CF/RA 拆分按文档公式写入
+                context.nb_initial_lc = self._to_decimal(getattr(init_context, 'nb_initial_lc', Decimal('0')))
+                total_cf_init = context.init_fut_claim + context.init_fut_maint
+                total_ra_init = context.init_ra
+                denom_init = total_cf_init + total_ra_init
+                if denom_init != 0:
+                    cf_ratio_init = total_cf_init / denom_init
+                else:
+                    cf_ratio_init = Decimal('0')
+                context.nb_initial_lc_cf = context.nb_initial_lc * cf_ratio_init
+                context.nb_initial_lc_ra = context.nb_initial_lc - context.nb_initial_lc_cf
             else:
                 # 如果没有初始确认的 context，尝试从 policy_results 中获取
-                init_recognition_context = self.policy_results.get(policy_state.policy_no, {}).get('context')
+                init_recognition_context = self.policy_results.get(unitid, {}).get('context')
                 if init_recognition_context:
                     context.init_fut_claim = self._to_decimal(getattr(init_recognition_context, 'init_fut_claim', Decimal('0')))
                     context.init_fut_maint = self._to_decimal(getattr(init_recognition_context, 'init_fut_maint', Decimal('0')))
                     context.init_ra = self._to_decimal(getattr(init_recognition_context, 'init_ra', Decimal('0')))
+                    context.nb_initial_lc = self._to_decimal(getattr(init_recognition_context, 'nb_initial_lc', Decimal('0')))
+                    total_cf_init = context.init_fut_claim + context.init_fut_maint
+                    total_ra_init = context.init_ra
+                    denom_init = total_cf_init + total_ra_init
+                    if denom_init != 0:
+                        cf_ratio_init = total_cf_init / denom_init
+                    else:
+                        cf_ratio_init = Decimal('0')
+                    context.nb_initial_lc_cf = context.nb_initial_lc * cf_ratio_init
+                    context.nb_initial_lc_ra = context.nb_initial_lc - context.nb_initial_lc_cf
                 else:
                     # 如果仍然没有，设置为 0（这种情况不应该发生）
                     context.init_fut_claim = Decimal('0')
                     context.init_fut_maint = Decimal('0')
                     context.init_ra = Decimal('0')
+                    context.nb_initial_lc = Decimal('0')
+                    context.nb_initial_lc_cf = Decimal('0')
+                    context.nb_initial_lc_ra = Decimal('0')
         elif init_context:
             # 非初始年度：从上一年的期末值获取期初值
             # 注意：这里应该从上一年的期末值（eop_csm, eop_lc, eop_iacf_balance）获取，而不是从nb_initial_csm/nb_initial_lc/actual_iacf_incurred获取
             # 因为nb_initial_csm/nb_initial_lc/actual_iacf_incurred是初始确认时的值，不应该作为期初值
             context.bop_csm = self._to_decimal(getattr(init_context, 'eop_csm', Decimal('0'))) or Decimal('0')
             context.bop_lc = self._to_decimal(getattr(init_context, 'eop_lc', Decimal('0'))) or Decimal('0')
+            # 新增：设置 bop_lc_cf 和 bop_lc_ra（从上一年的期末值获取）
+            # 年初LC余额_预期现金流 = 上一年期末LC余额_预期现金流
+            context.bop_lc_cf = self._to_decimal(getattr(init_context, 'eop_lc_cf', None))
+            if context.bop_lc_cf is None:
+                # 如果上一年的 eop_lc_cf 不存在，尝试从 end_lc_cf 获取（兼容性处理）
+                context.bop_lc_cf = self._to_decimal(getattr(init_context, 'end_lc_cf', Decimal('0'))) or Decimal('0')
+            else:
+                context.bop_lc_cf = context.bop_lc_cf or Decimal('0')
+            # 年初LC余额_非金融风险调整 = 上一年期末LC余额_非金融风险调整
+            context.bop_lc_ra = self._to_decimal(getattr(init_context, 'eop_lc_ra', None))
+            if context.bop_lc_ra is None:
+                # 如果上一年的 eop_lc_ra 不存在，尝试从 end_lc_ra 获取（兼容性处理）
+                context.bop_lc_ra = self._to_decimal(getattr(init_context, 'end_lc_ra', Decimal('0'))) or Decimal('0')
+            else:
+                context.bop_lc_ra = context.bop_lc_ra or Decimal('0')
             # 修复：bop_iacf应该从上一年的期末IACF余额获取，而不是从actual_iacf_incurred获取
             context.bop_iacf = self._to_decimal(getattr(init_context, 'eop_iacf_balance', Decimal('0'))) or Decimal('0')
             context.actual_premium = self._to_decimal(getattr(init_context, 'actual_premium', policy_state.written_premium))
@@ -1487,6 +1594,9 @@ class GroupLifecycleSimulator:
             # 如果没有上一年的context，也设置为0
             context.bop_csm = Decimal('0')
             context.bop_lc = Decimal('0')
+            # 新增：初始年度也设置 bop_lc_cf 和 bop_lc_ra 为 0
+            context.bop_lc_cf = Decimal('0')
+            context.bop_lc_ra = Decimal('0')
             context.bop_iacf = Decimal('0')
             context.actual_premium = policy_state.written_premium
             context.init_fut_claim = Decimal('0')
@@ -1675,7 +1785,8 @@ class GroupLifecycleSimulator:
             nb_csm_group = _D('0')
             nb_lc_group = _D('0')
             for policy_state in self.policy_states:
-                ctx_prev = self.policy_results.get(policy_state.policy_no, {}).get('context')
+                unitid = self._get_unit_id(policy_state.policy_no, getattr(policy_state, 'certi_no', None))
+                ctx_prev = self.policy_results.get(unitid, {}).get('context')
                 if ctx_prev is None:
                     continue
                 nb_initial_csm = self._to_decimal(getattr(ctx_prev, 'nb_initial_csm', _D('0')))
@@ -1716,7 +1827,11 @@ class GroupLifecycleSimulator:
                 is_initial_year=is_initial_year,
                 logger=per_policy_logger,
             )
-            policy_contexts[policy_state.policy_no] = policy_context
+            # 如果本年度对该保单不进行计量（例如评估年度早于签单年度），跳过
+            if policy_context is None:
+                continue
+            unitid = self._get_unit_id(policy_state.policy_no, getattr(policy_state, 'certi_no', None))
+            policy_contexts[unitid] = policy_context
             
             # 判断是否为初始年度（新业务年度）
             is_new_business = self._is_new_business_year_for_context(policy_context)
@@ -1785,7 +1900,8 @@ class GroupLifecycleSimulator:
             calculate_lc_measurement,
             calculate_csm_measurement,
             calculate_closing_balances,
-            run_group_absorption_allocation
+            run_group_absorption_allocation,
+            allocate_group_csm_lc_to_policies
         )
         
         policy_inputs = collect_policy_data(policy_contexts_list)
@@ -1799,6 +1915,15 @@ class GroupLifecycleSimulator:
         group_csm_status = group_status.cohort_csm
         group_lc_status = group_status.cohort_lc
         net_trial = group_status.net_trial
+        
+        # 分摊合同组CSM和LC到逐单
+        allocate_group_csm_lc_to_policies(
+            policy_inputs=policy_inputs,
+            group_status=group_status,
+            contexts=policy_contexts_list,
+            is_reversal=is_reversal,
+            logger=self.logger
+        )
         
         # 更新组级状态
         self.group_cohort_state.net_trial = net_trial
@@ -1816,7 +1941,8 @@ class GroupLifecycleSimulator:
         # 步骤1&2：逐单计算LC分摊比例和分摊的LC
         self.logger.log_text("### [第三部分-步骤1&2] 逐单计算LC分摊比例和分摊的LC")
         for policy_state in self.policy_states:
-            ctx = policy_contexts.get(policy_state.policy_no)
+            unitid = self._get_unit_id(policy_state.policy_no, getattr(policy_state, 'certi_no', None))
+            ctx = policy_contexts.get(unitid)
             if not ctx:
                 continue
             # 使用合同组LC作为判断条件
@@ -1824,11 +1950,14 @@ class GroupLifecycleSimulator:
         
         # 步骤3&4：组级别计算被LC/CSM吸收的变化并分摊到各保单
         self.logger.log_text("### [第三部分-步骤3&4] 组级别计算被LC/CSM吸收的变化并分摊到各保单")
+        # 获取当前年度的精算假设（用于计算被LC吸收的变化_预期现金流）
+        current_assumptions = self.assumptions_history.get(val_month_str)
         group_result = run_group_absorption_allocation(
             contexts=policy_contexts_list,
             group_status=group_status,
             logger=self.logger,
-            is_reversal=is_reversal
+            is_reversal=is_reversal,
+            assumptions=current_assumptions
         )
         
         group_csm_absorbed_total = group_result.group_csm_absorbed_total
@@ -1842,7 +1971,8 @@ class GroupLifecycleSimulator:
         start_of_year = date(year, 1, 1)
         
         for policy_state in self.policy_states:
-            ctx = policy_contexts.get(policy_state.policy_no)
+            unitid = self._get_unit_id(policy_state.policy_no, getattr(policy_state, 'certi_no', None))
+            ctx = policy_contexts.get(unitid)
             if not ctx:
                 continue
             
@@ -1869,7 +1999,8 @@ class GroupLifecycleSimulator:
         # 步骤6：逐单计算LC计量的后续部分
         self.logger.log_text("### [第三部分-步骤6] 逐单计算LC计量的后续部分")
         for policy_state in self.policy_states:
-            ctx = policy_contexts.get(policy_state.policy_no)
+            unitid = self._get_unit_id(policy_state.policy_no, getattr(policy_state, 'certi_no', None))
+            ctx = policy_contexts.get(unitid)
             if not ctx:
                 continue
             
@@ -1882,7 +2013,8 @@ class GroupLifecycleSimulator:
         group_csm_amort_amount = Decimal('0')
         
         for policy_state in self.policy_states:
-            ctx = policy_contexts.get(policy_state.policy_no)
+            unitid = self._get_unit_id(policy_state.policy_no, getattr(policy_state, 'certi_no', None))
+            ctx = policy_contexts.get(unitid)
             if not ctx:
                 continue
             
@@ -1904,7 +2036,8 @@ class GroupLifecycleSimulator:
         # 6. 组级计量汇总输出
         per_policy_results: List[Dict] = []
         for policy_state in self.policy_states:
-            ctx = policy_contexts.get(policy_state.policy_no)
+            unitid = self._get_unit_id(policy_state.policy_no, getattr(policy_state, 'certi_no', None))
+            ctx = policy_contexts.get(unitid)
             if not ctx:
                 continue
             # 为了让报表中的期末值正确，我们需要把组级的期末CSM/LC分摊回单保单
@@ -1917,20 +2050,23 @@ class GroupLifecycleSimulator:
             per_policy_results.append(res)
             
             # 保存每张保单的年度结果（用于生成逐单报表）
-            if policy_state.policy_no not in self.policy_yearly_results:
-                self.policy_yearly_results[policy_state.policy_no] = []
-            self.policy_yearly_results[policy_state.policy_no].append(res)
+            if unitid not in self.policy_yearly_results:
+                self.policy_yearly_results[unitid] = []
+            self.policy_yearly_results[unitid].append(res)
             
             # 关键修正：更新保存context到policy_results，确保下一年的init_context能获取到正确的期末值
             # 包括eop_csm, eop_lc, eop_iacf_balance等期末余额
             # 注意：必须显式设置eop_lc和eop_csm，因为它们在后续年度会作为bop_lc和bop_csm使用
             ctx.eop_csm = getattr(ctx, 'end_csm_final', Decimal('0')) or Decimal('0')
             ctx.eop_lc = getattr(ctx, 'end_lc_final', Decimal('0')) or Decimal('0')
+            # 新增：保存 eop_lc_cf 和 eop_lc_ra（用于下一年作为 bop_lc_cf 和 bop_lc_ra）
+            ctx.eop_lc_cf = getattr(ctx, 'end_lc_cf', Decimal('0')) or Decimal('0')
+            ctx.eop_lc_ra = getattr(ctx, 'end_lc_ra', Decimal('0')) or Decimal('0')
             ctx.eop_iacf_balance = getattr(ctx, 'eop_iacf_balance', Decimal('0')) or Decimal('0')
             
-            if policy_state.policy_no not in self.policy_results:
-                self.policy_results[policy_state.policy_no] = {}
-            self.policy_results[policy_state.policy_no]['context'] = ctx
+            if unitid not in self.policy_results:
+                self.policy_results[unitid] = {}
+            self.policy_results[unitid]['context'] = ctx
         
         yearly_result: Dict[str, float] = {}
         for res in per_policy_results:
@@ -1949,89 +2085,8 @@ class GroupLifecycleSimulator:
                         numeric = 0.0
                     yearly_result[field_name] = prev + numeric
         
-        # 关键修正：用组级计算结果覆盖汇总值中的 CSM/LC 相关字段
-        # 这是为了确保报表（103/104）展示的是 Netting 后的结果
-        yearly_result["未到期_调整CSM的估计变更"] = float(group_csm_absorbed_total) # 复用此字段存放吸收额
-        yearly_result["保险合同收入_摊销的CSM"] = float(group_csm_amort_amount) # 注意符号，这里通常是负数
-        yearly_result["closing_csm"] = float(group_csm_final)
-        yearly_result["closing_lc"] = float(group_lc_status)
-        
-        # 另外，LC 的吸收变化需要反映在 "亏损合同损益_不调整CSM的预期现金流变动" 或类似字段中
-        # 或者我们增加特定的 key 供报表使用
-        yearly_result["group_lc_absorbed"] = float(group_lc_absorbed_total)
-        yearly_result["group_csm_absorbed"] = float(group_csm_absorbed_total)
-        
-        # 重要修正：以下字段应该只包含mock2（有新增CSM的保单）的值，而不是所有保单的汇总
-        # 1. "当期初始确认的保险合同影响-合同服务边际" = 新增合同CSM_盈利合同（只包含mock2）
-        # 2. "保险合同金融变动额(17)-合同服务边际" = IFIE_P&L_未到期_CSM（只包含mock2）
-        # 筛选mock2保单：有新增CSM的保单（nb_initial_csm > 0 且是新业务年度）
-        mock2_nb_csm_total = Decimal('0')
-        mock2_ifie_csm_total = Decimal('0')
-        
-        for policy_state in self.policy_states:
-            ctx = policy_contexts.get(policy_state.policy_no)
-            if not ctx:
-                continue
-            
-            # 判断是否为mock2保单（有新增CSM的保单）
-            is_new_business = self._is_new_business_year_for_context(ctx)
-            nb_initial_csm = self._to_decimal(getattr(ctx, 'nb_initial_csm', Decimal('0'))) or Decimal('0')
-            is_mock2 = is_new_business and nb_initial_csm > 0
-            
-            if is_mock2:
-                # 提取mock2保单的这两个字段值
-                res = self._extract_policy_yearly_result(year, ctx)
-                mock2_nb_csm = self._to_decimal(res.get("新增合同CSM_盈利合同", 0.0))
-                mock2_ifie_csm = self._to_decimal(res.get("IFIE_P&L_未到期_CSM", 0.0))
-                
-                mock2_nb_csm_total += mock2_nb_csm
-                mock2_ifie_csm_total += mock2_ifie_csm
-        
-        # 覆盖汇总值，确保报表只显示mock2的值
-        yearly_result["新增合同CSM_盈利合同"] = float(mock2_nb_csm_total)
-        yearly_result["IFIE_P&L_未到期_CSM"] = float(mock2_ifie_csm_total)
-        
-        self.logger.log_text(f"- Mock2保单筛选：有新增CSM的保单（nb_initial_csm > 0 且是新业务年度）")
-        self.logger.log_text(f"- Mock2新增合同CSM_盈利合同: {mock2_nb_csm_total:,.2f}")
-        self.logger.log_text(f"- Mock2 IFIE_P&L_未到期_CSM: {mock2_ifie_csm_total:,.2f}")
-        
-        # 重要修正：以下字段应该只包含mock2（有新增CSM的保单）的值，而不是所有保单的汇总
-        # 1. "当期初始确认的保险合同影响-合同服务边际" = 新增合同CSM_盈利合同（只包含mock2）
-        # 2. "保险合同金融变动额(17)-合同服务边际" = IFIE_P&L_未到期_CSM（只包含mock2）
-        # 筛选mock2保单：有新增CSM的保单（nb_initial_csm > 0 且是新业务年度）
-        mock2_nb_csm_total = Decimal('0')
-        mock2_ifie_csm_total = Decimal('0')
-        mock2_count = 0
-        
-        for policy_state in self.policy_states:
-            ctx = policy_contexts.get(policy_state.policy_no)
-            if not ctx:
-                continue
-            
-            # 判断是否为mock2保单（有新增CSM的保单）
-            is_new_business = self._is_new_business_year_for_context(ctx)
-            nb_initial_csm = self._to_decimal(getattr(ctx, 'nb_initial_csm', Decimal('0'))) or Decimal('0')
-            is_mock2 = is_new_business and nb_initial_csm > 0
-            
-            if is_mock2:
-                mock2_count += 1
-                # 提取mock2保单的这两个字段值
-                res = self._extract_policy_yearly_result(year, ctx)
-                mock2_nb_csm = self._to_decimal(res.get("新增合同CSM_盈利合同", 0.0))
-                mock2_ifie_csm = self._to_decimal(res.get("IFIE_P&L_未到期_CSM", 0.0))
-                
-                mock2_nb_csm_total += mock2_nb_csm
-                mock2_ifie_csm_total += mock2_ifie_csm
-        
-        # 覆盖汇总值，确保报表只显示mock2的值
-        yearly_result["新增合同CSM_盈利合同"] = float(mock2_nb_csm_total)
-        yearly_result["IFIE_P&L_未到期_CSM"] = float(mock2_ifie_csm_total)
-        
-        self.logger.log_text(f"- Mock2保单筛选：有新增CSM的保单（nb_initial_csm > 0 且是新业务年度）")
-        self.logger.log_text(f"- Mock2保单数量: {mock2_count}")
-        self.logger.log_text(f"- Mock2新增合同CSM_盈利合同: {mock2_nb_csm_total:,.2f}")
-        self.logger.log_text(f"- Mock2 IFIE_P&L_未到期_CSM: {mock2_ifie_csm_total:,.2f}")
-
+        # 所有字段都从逐单汇总得到，不再使用组级计算结果覆盖
+        # 这样未来跑全量数据时，可以从逐单明细直接汇总形成总表
         # 按照用户要求的顺序输出详细日志
         self._log_detailed_yearly_results(
             year=year,
@@ -2119,12 +2174,13 @@ class GroupLifecycleSimulator:
                     for policy_state in self.policy_states:
                         policy_no = policy_state.policy_no
                         certi_no = getattr(policy_state, 'certi_no', None)
+                        unitid = self._get_unit_id(policy_no, certi_no)
                         
-                        if policy_no not in self.policy_yearly_results:
-                            self.logger.log_text(f"⚠️  保单 {policy_no} 没有年度结果，跳过报表生成")
+                        if unitid not in self.policy_yearly_results:
+                            self.logger.log_text(f"⚠️  保单 {policy_no} (unitid: {unitid}) 没有年度结果，跳过报表生成")
                             continue
                         
-                        policy_yearly_results = self.policy_yearly_results[policy_no]
+                        policy_yearly_results = self.policy_yearly_results[unitid]
                         
                         try:
                             # 生成104报表
@@ -2135,7 +2191,7 @@ class GroupLifecycleSimulator:
                             )
                             html_report_path_104_policy = generate_report_104(
                                 yearly_results=policy_yearly_results,
-                                init_context=self.policy_results.get(policy_no, {}).get('context'),
+                                init_context=self.policy_results.get(unitid, {}).get('context'),
                                 output_html_path=html_report_path_104_policy,
                                 policy_no=policy_no,
                                 certi_no=certi_no
@@ -2151,7 +2207,7 @@ class GroupLifecycleSimulator:
                             )
                             html_report_path_103_policy = generate_report_103(
                                 yearly_results=policy_yearly_results,
-                                init_context=self.policy_results.get(policy_no, {}).get('context'),
+                                init_context=self.policy_results.get(unitid, {}).get('context'),
                                 output_html_path=html_report_path_103_policy,
                                 policy_no=policy_no,
                                 certi_no=certi_no
@@ -2161,7 +2217,7 @@ class GroupLifecycleSimulator:
                                 print(f"[SUCCESS] 保单 {policy_no} 103报表已生成: {html_report_path_103_policy}")
                                 
                         except Exception as policy_report_error:
-                            error_msg = f"  ⚠️  保单 {policy_no} 报表生成失败: {policy_report_error}"
+                            error_msg = f"  ⚠️  保单 {policy_no} (unitid: {unitid}) 报表生成失败: {policy_report_error}"
                             print(error_msg)
                             self.logger.log_text(error_msg)
                             import traceback

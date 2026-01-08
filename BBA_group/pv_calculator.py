@@ -541,13 +541,16 @@ def main():
         rad = (cla + mtn) * assump_obj.ra_ratio
         return {f"_Pre_Amt": pre, f"_Acq_Amt": acq, f"_Cla_Amt": cla, f"_Mtn_Amt": mtn, f"_Rad_Amt": rad}
 
+    # 评估月份列表：
+    # - 初始确认评估月：使用签单日期所在月份
+    # - 此后每个年度仅在年末（12月31日）进行评估，不再生成年初评估月
     val_months = [(uw_date, "初始确认评估月")]
     
     if uw_date.year <= 2024:
         val_months.append((date(uw_date.year, 12, 31), f"{uw_date.year}年年底"))
     
     for year in range(uw_date.year + 1, 2025):
-        val_months.append((date(year, 1, 1), f"{year}年年初"))
+        # 仅需年末评估月，不需要年初评估月
         val_months.append((date(year, 12, 31), f"{year}年年底"))
     
     if TARGET_VAL_MONTH_FILTER:

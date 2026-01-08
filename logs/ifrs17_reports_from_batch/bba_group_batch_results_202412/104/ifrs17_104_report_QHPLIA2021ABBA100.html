@@ -1,0 +1,1709 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IFRS 17 合同负债余额调节表 (详细版)</title>
+    <style>
+        :root {
+            --header-bg: #f8f9fa;
+            --border-color: #e9ecef;
+            --text-color: #212529;
+        }
+        
+        body {
+            font-family: "Microsoft YaHei", Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f4f4f4;
+            color: var(--text-color);
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            padding: 40px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+        }
+
+        h1 {
+            text-align: center;
+            font-size: 24px;
+            margin-bottom: 5px;
+        }
+
+        .subtitle {
+            text-align: center;
+            color: #6c757d;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+
+        /* Tabs */
+        .tabs {
+            display: flex;
+            border-bottom: 1px solid #dee2e6;
+            margin-bottom: 20px;
+        }
+
+        .tab-btn {
+            padding: 10px 20px;
+            background: none;
+            border: none;
+            border-bottom: 3px solid transparent;
+            font-size: 16px;
+            cursor: pointer;
+            color: #495057;
+            font-weight: 500;
+        }
+
+        .tab-btn.active {
+            color: #0d6efd;
+            border-bottom-color: #0d6efd;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        /* Table */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+
+        th, td {
+            padding: 8px 12px;
+            border-bottom: 1px solid var(--border-color);
+            text-align: right;
+        }
+
+        th {
+            background-color: var(--header-bg);
+            font-weight: bold;
+            color: #495057;
+            text-align: center;
+            vertical-align: middle;
+        }
+
+        td:first-child {
+            text-align: left;
+            width: 40%;
+            color: #212529;
+        }
+
+        .indent-1 { padding-left: 20px !important; }
+        
+        .border-top-heavy {
+            border-top: 2px solid #6c757d;
+        }
+        
+        .border-double-bottom {
+            border-bottom: 3px double #6c757d;
+        }
+
+        .num { font-family: Consolas, monospace; }
+        .zero { color: #adb5bd; } 
+        .negative { color: #d9534f; }
+
+        .col-csm {
+            background-color: #fffbeb;
+        }
+        .header-csm {
+            color: #d68b00;
+        }
+
+        /* Explanation Section */
+        .explanation-box {
+            margin-top: 30px;
+            border-top: 1px solid #eee;
+            padding-top: 20px;
+        }
+        
+        .explanation-box h3 {
+            font-size: 18px;
+            color: #333;
+            margin-bottom: 15px;
+            border-left: 4px solid #0d6efd;
+            padding-left: 10px;
+        }
+
+        .explanation-item {
+            margin-bottom: 15px;
+            background-color: #fafafa;
+            border: 1px solid #eee;
+            border-radius: 4px;
+            padding: 10px 15px;
+        }
+
+        .exp-title {
+            margin: 0 0 10px 0;
+            font-size: 14px;
+            color: #0d6efd;
+            font-weight: bold;
+        }
+
+        .exp-content ul {
+            margin: 0;
+            padding-left: 20px;
+            font-size: 13px;
+            color: #555;
+        }
+        
+        .exp-content li {
+            margin-bottom: 4px;
+        }
+        
+        .exp-content b {
+            color: #333;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>IFRS 17 合同负债余额调节表</h1>
+    <p class="subtitle">保单号: QHPLIA2021ABBA100 | 模拟区间: 2021-2024</p>
+
+    <div class="tabs">
+        <button class="tab-btn active" onclick="openTab(event, 'y2021')">2021 年度</button>
+<button class="tab-btn" onclick="openTab(event, 'y2022')">2022 年度</button>
+<button class="tab-btn" onclick="openTab(event, 'y2023')">2023 年度</button>
+<button class="tab-btn" onclick="openTab(event, 'y2024')">2024 年度</button>
+
+    </div>
+
+    
+        <div id="y2021" class="tab-content active">
+            <table>
+                <thead>
+                    <tr>
+                        <th rowspan="2" style="text-align: left;">项目</th>
+                        <th colspan="4">2021年度 (单位: 元)</th>
+                    </tr>
+                    <tr>
+                        <th>未来现金流量<br>的现值</th>
+                        <th>非金融风险<br>调整</th>
+                        <th class="header-csm">合同服务<br>边际(a)</th>
+                        <th>合计</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    
+                <tr class="border-top-heavy">
+                    <td class="">年初的保险合同负债(1)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class="">年初的保险合同资产(2)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class="">年初的保险合同净负债(3)=(1)+(2)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                </tr>
+            
+                <tr class="border-top-heavy">
+                    <td class=" indent-1">合同服务边际的摊销(4)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="negative">(146,644.99)</span></td>
+                    <td class="num"><span class="negative">(146,644.99)</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class=" indent-1">非金融风险调整的变动(5)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="negative">(21,593.88)</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="negative">(21,593.88)</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class=" indent-1">当期经验调整(6)</td>
+                    <td class="num"><span class="negative">(719,795.99)</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="negative">(719,795.99)</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class="">与当期服务相关的变动(7)=(4)+(5)+(6)</td>
+                    <td class="num"><span class="negative">(719,795.99)</span></td>
+                    <td class="num"><span class="negative">(21,593.88)</span></td>
+                    <td class="num col-csm"><span class="negative">(146,644.99)</span></td>
+                    <td class="num"><span class="negative">(888,034.86)</span></td>
+                </tr>
+            
+                <tr class="border-top-heavy">
+                    <td class=" indent-1">当期初始确认的保险合同影响(8)</td>
+                    <td class="num"><span class="negative">(8,347,058.57)</span></td>
+                    <td class="num">294,559.05</td>
+                    <td class="num col-csm">8,211,693.07</td>
+                    <td class="num">159,193.55</td>
+                </tr>
+            
+                <tr class="">
+                    <td class=" indent-1">调整合同服务边际的估计变更(9)</td>
+                    <td class="num">163,379.05</td>
+                    <td class="num">4,901.37</td>
+                    <td class="num col-csm"><span class="negative">(168,280.42)</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class=" indent-1">不调整合同服务边际的估计变更(10)</td>
+                    <td class="num"><span class="negative">(163,379.05)</span></td>
+                    <td class="num"><span class="negative">(4,901.37)</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="negative">(168,280.42)</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class=" indent-1">其他与未来服务相关变动(11)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class="">与未来服务相关的变动(12)=(8)+(9)+(10)+(11)</td>
+                    <td class="num"><span class="negative">(8,347,058.57)</span></td>
+                    <td class="num">294,559.05</td>
+                    <td class="num col-csm">8,043,412.64</td>
+                    <td class="num"><span class="negative">(9,086.88)</span></td>
+                </tr>
+            
+                <tr class="border-top-heavy">
+                    <td class=" indent-1">已发生赔款负债相关履约现金流量变动(13)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class=" indent-1">其他与过去服务相关的变动(14)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class="">与过去服务相关的变动(15)=(13)+(14)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                </tr>
+            
+                <tr class="border-top-heavy">
+                    <td class="">保险服务业绩(16)=(7)+(12)+(15)</td>
+                    <td class="num"><span class="negative">(9,066,854.56)</span></td>
+                    <td class="num">272,965.17</td>
+                    <td class="num col-csm">7,896,767.65</td>
+                    <td class="num"><span class="negative">(897,121.74)</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class="">保险合同金融变动额(17)</td>
+                    <td class="num">109,118.72</td>
+                    <td class="num">3,273.56</td>
+                    <td class="num col-csm">72,487.78</td>
+                    <td class="num">184,880.07</td>
+                </tr>
+            
+                <tr class="">
+                    <td class="">其他损益变动(18)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class="">其他综合收益其他变动(19)</td>
+                    <td class="num">307,223.29</td>
+                    <td class="num">9,216.70</td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num">316,439.99</td>
+                </tr>
+            
+                <tr class="">
+                    <td class="">相关综合收益变动合计(20)=(16)+(17)+(18)+(19)</td>
+                    <td class="num"><span class="negative">(8,650,512.55)</span></td>
+                    <td class="num">285,455.44</td>
+                    <td class="num col-csm">7,969,255.43</td>
+                    <td class="num"><span class="negative">(395,801.68)</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class=" indent-1">收到的保费(21)</td>
+                    <td class="num">21,686,946.33</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num">21,686,946.33</td>
+                </tr>
+            
+                <tr class="">
+                    <td class=" indent-1">支付的保险获取现金流量(22)</td>
+                    <td class="num"><span class="negative">(3,521,252.61)</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="negative">(3,521,252.61)</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class=" indent-1">支付的赔款及其他相关费用(含投资成分)(23)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class=" indent-1">其他现金流量(24)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                </tr>
+            
+                <tr class="border-top-heavy">
+                    <td class="">现金流量合计(25)=(21)+(22)+(23)+(24)</td>
+                    <td class="num">18,165,693.72</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num">18,165,693.72</td>
+                </tr>
+            
+                <tr class="">
+                    <td class="">其他变动(26)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                </tr>
+            
+                <tr class="border-top-heavy border-double-bottom">
+                    <td class="">年末的保险合同净负债(27)=(3)+(20)+(25)+(26)</td>
+                    <td class="num">9,515,181.17</td>
+                    <td class="num">285,455.44</td>
+                    <td class="num col-csm">7,969,255.43</td>
+                    <td class="num">17,769,892.04</td>
+                </tr>
+            
+                <tr class="">
+                    <td class="">年末的保险合同资产(28)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class="">年末的保险合同负债(29)</td>
+                    <td class="num">9,515,181.17</td>
+                    <td class="num">285,455.44</td>
+                    <td class="num col-csm">7,969,255.43</td>
+                    <td class="num">17,769,892.04</td>
+                </tr>
+            
+                </tbody>
+            </table>
+            
+            <div class="explanation-box"><h3>2021 年度计算明细与验算</h3>
+                <div class="explanation-item">
+                    <h4 class="exp-title">1. 年初余额</h4>
+                    <div class="exp-content">
+                        
+            <ul>
+                <li><b>BEL (未来现金流量现值)</b>: 0.00</li>
+                <li><b>RA (非金融风险调整)</b>: 0.00</li>
+                <li><b>CSM (合同服务边际)</b>: 0.00</li>
+                <li><b>合计</b>: 0.00</li>
+            </ul>
+            
+                    </div>
+                </div>
+                
+                <div class="explanation-item">
+                    <h4 class="exp-title">5. 非金融风险调整的变动 (RA)</h4>
+                    <div class="exp-content">
+                        
+            <ul>
+                <li><b>数值</b>: -21,593.88</li>
+                <li><b>公式</b>: -预期释放RA_含亏损</li>
+                <li><b>计算</b>: -21,593.88 = -21,593.88</li>
+                <li><b>说明</b>: RA随着服务提供而释放，导致负债减少。使用含亏损总额，不重复加亏损分摊。</li>
+            </ul>
+            
+                    </div>
+                </div>
+                
+                <div class="explanation-item">
+                    <h4 class="exp-title">6. 当期经验调整 (BEL)</h4>
+                    <div class="exp-content">
+                        
+            <ul>
+                <li><b>数值</b>: -719,795.99</li>
+                <li><b>公式</b>: 实际赔付与费用 - 预期赔付与费用 + 保费经验调整</li>
+                <li><b>计算</b>: 0.00 - 719,795.99 + 0.00</li>
+                <li><b>说明</b>: 反映了实际现金流与预期现金流的差异，以及预期现金流的释放。</li>
+            </ul>
+            
+                    </div>
+                </div>
+                
+                <div class="explanation-item">
+                    <h4 class="exp-title">8. 当期初始确认的保险合同影响</h4>
+                    <div class="exp-content">
+                        
+            <ul>
+                <li><b>BEL</b>: -8,347,058.57</li>
+                <li><b>RA</b>: 294,559.05</li>
+                <li><b>CSM</b>: 8,211,693.07</li>
+            </ul>
+            
+                    </div>
+                </div>
+                
+                <div class="explanation-item">
+                    <h4 class="exp-title">17. 保险合同金融变动额 (IFIE_P&L)</h4>
+                    <div class="exp-content">
+                        
+            <ul>
+                <li><b>BEL</b>: 109,118.72 = 112,458.89 (非亏损) + -3,340.16 (亏损)</li>
+                <li><b>RA</b>: 3,273.56 = 3,373.77 (非亏损) + -100.20 (亏损)</li>
+                <li><b>CSM</b>: 72,487.78</li>
+            </ul>
+            
+                    </div>
+                </div>
+                
+                <div class="explanation-item">
+                    <h4 class="exp-title">19. 其他综合收益 (OCI)</h4>
+                    <div class="exp-content">
+                        
+            <ul>
+                <li><b>BEL</b>: 307,223.29 = IFIE_OCI_预期现金流（包含亏损和非亏损）</li>
+                <li><b>RA</b>: 9,216.70 = IFIE_OCI_非金融风险调整（包含亏损和非亏损）</li>
+            </ul>
+            
+                    </div>
+                </div>
+                
+                <div class="explanation-item">
+                    <h4 class="exp-title">21 & 22. 现金流</h4>
+                    <div class="exp-content">
+                        
+            <ul>
+                <li><b>(21) 收到的保费</b>: 21,686,946.33</li>
+                <li><b>(22) 支付的获取费用</b>: -3,521,252.61 (流出为负)</li>
+                <li><b>(25) 现金流量合计</b>: 18,165,693.72</li>
+            </ul>
+            
+                    </div>
+                </div>
+                
+                <div class="explanation-item">
+                    <h4 class="exp-title">期末余额验算 (计算值 vs 日志值)</h4>
+                    <div class="exp-content">
+                        
+            <table style="width:100%; border-collapse: collapse; margin-top: 5px; border: 1px solid #eee;">
+                <tr style="background-color: #f8f9fa;">
+                    <th style="text-align: left; padding: 8px;">项目</th>
+                    <th style="text-align: right; padding: 8px;">计算期末</th>
+                    <th style="text-align: right; padding: 8px;">日志期末</th>
+                    <th style="text-align: right; padding: 8px;">差异</th>
+                </tr>
+                <tr>
+                    <td style="padding: 8px;">BEL</td>
+                    <td style="text-align: right; padding: 8px;">9,515,181.17</td>
+                    <td style="text-align: right; padding: 8px;">9,515,181.17</td>
+                    <td style="text-align: right; padding: 8px;"><span style='color:green'>无差异</span></td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px;">RA</td>
+                    <td style="text-align: right; padding: 8px;">285,455.44</td>
+                    <td style="text-align: right; padding: 8px;">285,455.44</td>
+                    <td style="text-align: right; padding: 8px;"><span style='color:green'>无差异</span></td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px;">CSM</td>
+                    <td style="text-align: right; padding: 8px;">7,969,255.43</td>
+                    <td style="text-align: right; padding: 8px;">7,969,255.43</td>
+                    <td style="text-align: right; padding: 8px;"><span style='color:green'>无差异</span></td>
+                </tr>
+            </table>
+            <p style="font-size: 0.9em; color: #666; margin-top: 5px;">注：计算期末 = 期初 + 综合收益变动 + 现金流 + 其他变动</p>
+            
+                    </div>
+                </div>
+                </div>
+        </div>
+        
+        <div id="y2022" class="tab-content">
+            <table>
+                <thead>
+                    <tr>
+                        <th rowspan="2" style="text-align: left;">项目</th>
+                        <th colspan="4">2022年度 (单位: 元)</th>
+                    </tr>
+                    <tr>
+                        <th>未来现金流量<br>的现值</th>
+                        <th>非金融风险<br>调整</th>
+                        <th class="header-csm">合同服务<br>边际(a)</th>
+                        <th>合计</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    
+                <tr class="border-top-heavy">
+                    <td class="">年初的保险合同负债(1)</td>
+                    <td class="num">9,515,181.17</td>
+                    <td class="num">285,455.44</td>
+                    <td class="num col-csm">7,969,255.43</td>
+                    <td class="num">17,769,892.04</td>
+                </tr>
+            
+                <tr class="">
+                    <td class="">年初的保险合同资产(2)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class="">年初的保险合同净负债(3)=(1)+(2)</td>
+                    <td class="num">9,515,181.17</td>
+                    <td class="num">285,455.44</td>
+                    <td class="num col-csm">7,969,255.43</td>
+                    <td class="num">17,769,892.04</td>
+                </tr>
+            
+                <tr class="border-top-heavy">
+                    <td class=" indent-1">合同服务边际的摊销(4)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="negative">(75,925.49)</span></td>
+                    <td class="num"><span class="negative">(75,925.49)</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class=" indent-1">非金融风险调整的变动(5)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="negative">(12,889.88)</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="negative">(12,889.88)</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class=" indent-1">当期经验调整(6)</td>
+                    <td class="num"><span class="negative">(429,662.63)</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="negative">(429,662.63)</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class="">与当期服务相关的变动(7)=(4)+(5)+(6)</td>
+                    <td class="num"><span class="negative">(429,662.63)</span></td>
+                    <td class="num"><span class="negative">(12,889.88)</span></td>
+                    <td class="num col-csm"><span class="negative">(75,925.49)</span></td>
+                    <td class="num"><span class="negative">(518,478.00)</span></td>
+                </tr>
+            
+                <tr class="border-top-heavy">
+                    <td class=" indent-1">当期初始确认的保险合同影响(8)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class=" indent-1">调整合同服务边际的估计变更(9)</td>
+                    <td class="num">3,034.25</td>
+                    <td class="num">91.03</td>
+                    <td class="num col-csm"><span class="negative">(3,125.28)</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class=" indent-1">不调整合同服务边际的估计变更(10)</td>
+                    <td class="num"><span class="negative">(3,034.25)</span></td>
+                    <td class="num"><span class="negative">(91.03)</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="negative">(3,125.28)</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class=" indent-1">其他与未来服务相关变动(11)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class="">与未来服务相关的变动(12)=(8)+(9)+(10)+(11)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="negative">(3,125.28)</span></td>
+                    <td class="num"><span class="negative">(3,125.28)</span></td>
+                </tr>
+            
+                <tr class="border-top-heavy">
+                    <td class=" indent-1">已发生赔款负债相关履约现金流量变动(13)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class=" indent-1">其他与过去服务相关的变动(14)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class="">与过去服务相关的变动(15)=(13)+(14)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                </tr>
+            
+                <tr class="border-top-heavy">
+                    <td class="">保险服务业绩(16)=(7)+(12)+(15)</td>
+                    <td class="num"><span class="negative">(429,662.63)</span></td>
+                    <td class="num"><span class="negative">(12,889.88)</span></td>
+                    <td class="num col-csm"><span class="negative">(79,050.77)</span></td>
+                    <td class="num"><span class="negative">(521,603.28)</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class="">保险合同金融变动额(17)</td>
+                    <td class="num">250,279.62</td>
+                    <td class="num">7,508.39</td>
+                    <td class="num col-csm">203,478.61</td>
+                    <td class="num">461,266.62</td>
+                </tr>
+            
+                <tr class="">
+                    <td class="">其他损益变动(18)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class="">其他综合收益其他变动(19)</td>
+                    <td class="num">57,484.47</td>
+                    <td class="num">1,724.53</td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num">59,209.01</td>
+                </tr>
+            
+                <tr class="">
+                    <td class="">相关综合收益变动合计(20)=(16)+(17)+(18)+(19)</td>
+                    <td class="num"><span class="negative">(121,898.53)</span></td>
+                    <td class="num"><span class="negative">(3,656.96)</span></td>
+                    <td class="num col-csm">124,427.84</td>
+                    <td class="num"><span class="negative">(1,127.65)</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class=" indent-1">收到的保费(21)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class=" indent-1">支付的保险获取现金流量(22)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class=" indent-1">支付的赔款及其他相关费用(含投资成分)(23)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class=" indent-1">其他现金流量(24)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                </tr>
+            
+                <tr class="border-top-heavy">
+                    <td class="">现金流量合计(25)=(21)+(22)+(23)+(24)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class="">其他变动(26)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                </tr>
+            
+                <tr class="border-top-heavy border-double-bottom">
+                    <td class="">年末的保险合同净负债(27)=(3)+(20)+(25)+(26)</td>
+                    <td class="num">9,393,282.64</td>
+                    <td class="num">281,798.48</td>
+                    <td class="num col-csm">8,093,683.27</td>
+                    <td class="num">17,768,764.39</td>
+                </tr>
+            
+                <tr class="">
+                    <td class="">年末的保险合同资产(28)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class="">年末的保险合同负债(29)</td>
+                    <td class="num">9,393,282.64</td>
+                    <td class="num">281,798.48</td>
+                    <td class="num col-csm">8,093,683.27</td>
+                    <td class="num">17,768,764.39</td>
+                </tr>
+            
+                </tbody>
+            </table>
+            
+            <div class="explanation-box"><h3>2022 年度计算明细与验算</h3>
+                <div class="explanation-item">
+                    <h4 class="exp-title">1. 年初余额</h4>
+                    <div class="exp-content">
+                        
+            <ul>
+                <li><b>BEL (未来现金流量现值)</b>: 9,515,181.17</li>
+                <li><b>RA (非金融风险调整)</b>: 285,455.44</li>
+                <li><b>CSM (合同服务边际)</b>: 7,969,255.43</li>
+                <li><b>合计</b>: 17,769,892.04</li>
+            </ul>
+            
+                    </div>
+                </div>
+                
+                <div class="explanation-item">
+                    <h4 class="exp-title">5. 非金融风险调整的变动 (RA)</h4>
+                    <div class="exp-content">
+                        
+            <ul>
+                <li><b>数值</b>: -12,889.88</li>
+                <li><b>公式</b>: -预期释放RA_含亏损</li>
+                <li><b>计算</b>: -12,889.88 = -12,889.88</li>
+                <li><b>说明</b>: RA随着服务提供而释放，导致负债减少。使用含亏损总额，不重复加亏损分摊。</li>
+            </ul>
+            
+                    </div>
+                </div>
+                
+                <div class="explanation-item">
+                    <h4 class="exp-title">6. 当期经验调整 (BEL)</h4>
+                    <div class="exp-content">
+                        
+            <ul>
+                <li><b>数值</b>: -429,662.63</li>
+                <li><b>公式</b>: 实际赔付与费用 - 预期赔付与费用 + 保费经验调整</li>
+                <li><b>计算</b>: 0.00 - 429,662.63 + 0.00</li>
+                <li><b>说明</b>: 反映了实际现金流与预期现金流的差异，以及预期现金流的释放。</li>
+            </ul>
+            
+                    </div>
+                </div>
+                
+                <div class="explanation-item">
+                    <h4 class="exp-title">8. 当期初始确认的保险合同影响</h4>
+                    <div class="exp-content">
+                        
+            <ul>
+                <li><b>BEL</b>: 0.00</li>
+                <li><b>RA</b>: 0.00</li>
+                <li><b>CSM</b>: 0.00</li>
+            </ul>
+            
+                    </div>
+                </div>
+                
+                <div class="explanation-item">
+                    <h4 class="exp-title">17. 保险合同金融变动额 (IFIE_P&L)</h4>
+                    <div class="exp-content">
+                        
+            <ul>
+                <li><b>BEL</b>: 250,279.62 = 252,651.17 (非亏损) + -2,371.54 (亏损)</li>
+                <li><b>RA</b>: 7,508.39 = 7,579.53 (非亏损) + -71.15 (亏损)</li>
+                <li><b>CSM</b>: 203,478.61</li>
+            </ul>
+            
+                    </div>
+                </div>
+                
+                <div class="explanation-item">
+                    <h4 class="exp-title">19. 其他综合收益 (OCI)</h4>
+                    <div class="exp-content">
+                        
+            <ul>
+                <li><b>BEL</b>: 57,484.47 = IFIE_OCI_预期现金流（包含亏损和非亏损）</li>
+                <li><b>RA</b>: 1,724.53 = IFIE_OCI_非金融风险调整（包含亏损和非亏损）</li>
+            </ul>
+            
+                    </div>
+                </div>
+                
+                <div class="explanation-item">
+                    <h4 class="exp-title">21 & 22. 现金流</h4>
+                    <div class="exp-content">
+                        
+            <ul>
+                <li><b>(21) 收到的保费</b>: 0.00</li>
+                <li><b>(22) 支付的获取费用</b>: 0.00 (流出为负)</li>
+                <li><b>(25) 现金流量合计</b>: 0.00</li>
+            </ul>
+            
+                    </div>
+                </div>
+                
+                <div class="explanation-item">
+                    <h4 class="exp-title">期末余额验算 (计算值 vs 日志值)</h4>
+                    <div class="exp-content">
+                        
+            <table style="width:100%; border-collapse: collapse; margin-top: 5px; border: 1px solid #eee;">
+                <tr style="background-color: #f8f9fa;">
+                    <th style="text-align: left; padding: 8px;">项目</th>
+                    <th style="text-align: right; padding: 8px;">计算期末</th>
+                    <th style="text-align: right; padding: 8px;">日志期末</th>
+                    <th style="text-align: right; padding: 8px;">差异</th>
+                </tr>
+                <tr>
+                    <td style="padding: 8px;">BEL</td>
+                    <td style="text-align: right; padding: 8px;">9,393,282.64</td>
+                    <td style="text-align: right; padding: 8px;">9,393,282.64</td>
+                    <td style="text-align: right; padding: 8px;"><span style='color:green'>无差异</span></td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px;">RA</td>
+                    <td style="text-align: right; padding: 8px;">281,798.48</td>
+                    <td style="text-align: right; padding: 8px;">281,798.48</td>
+                    <td style="text-align: right; padding: 8px;"><span style='color:green'>无差异</span></td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px;">CSM</td>
+                    <td style="text-align: right; padding: 8px;">8,093,683.27</td>
+                    <td style="text-align: right; padding: 8px;">8,093,683.27</td>
+                    <td style="text-align: right; padding: 8px;"><span style='color:green'>无差异</span></td>
+                </tr>
+            </table>
+            <p style="font-size: 0.9em; color: #666; margin-top: 5px;">注：计算期末 = 期初 + 综合收益变动 + 现金流 + 其他变动</p>
+            
+                    </div>
+                </div>
+                </div>
+        </div>
+        
+        <div id="y2023" class="tab-content">
+            <table>
+                <thead>
+                    <tr>
+                        <th rowspan="2" style="text-align: left;">项目</th>
+                        <th colspan="4">2023年度 (单位: 元)</th>
+                    </tr>
+                    <tr>
+                        <th>未来现金流量<br>的现值</th>
+                        <th>非金融风险<br>调整</th>
+                        <th class="header-csm">合同服务<br>边际(a)</th>
+                        <th>合计</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    
+                <tr class="border-top-heavy">
+                    <td class="">年初的保险合同负债(1)</td>
+                    <td class="num">9,393,282.64</td>
+                    <td class="num">281,798.48</td>
+                    <td class="num col-csm">8,093,683.27</td>
+                    <td class="num">17,768,764.39</td>
+                </tr>
+            
+                <tr class="">
+                    <td class="">年初的保险合同资产(2)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class="">年初的保险合同净负债(3)=(1)+(2)</td>
+                    <td class="num">9,393,282.64</td>
+                    <td class="num">281,798.48</td>
+                    <td class="num col-csm">8,093,683.27</td>
+                    <td class="num">17,768,764.39</td>
+                </tr>
+            
+                <tr class="border-top-heavy">
+                    <td class=" indent-1">合同服务边际的摊销(4)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="negative">(77,859.83)</span></td>
+                    <td class="num"><span class="negative">(77,859.83)</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class=" indent-1">非金融风险调整的变动(5)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="negative">(12,889.88)</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="negative">(12,889.88)</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class=" indent-1">当期经验调整(6)</td>
+                    <td class="num"><span class="negative">(429,662.63)</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="negative">(429,662.63)</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class="">与当期服务相关的变动(7)=(4)+(5)+(6)</td>
+                    <td class="num"><span class="negative">(429,662.63)</span></td>
+                    <td class="num"><span class="negative">(12,889.88)</span></td>
+                    <td class="num col-csm"><span class="negative">(77,859.83)</span></td>
+                    <td class="num"><span class="negative">(520,412.33)</span></td>
+                </tr>
+            
+                <tr class="border-top-heavy">
+                    <td class=" indent-1">当期初始确认的保险合同影响(8)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class=" indent-1">调整合同服务边际的估计变更(9)</td>
+                    <td class="num">5,997.45</td>
+                    <td class="num">179.92</td>
+                    <td class="num col-csm"><span class="negative">(6,177.38)</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class=" indent-1">不调整合同服务边际的估计变更(10)</td>
+                    <td class="num"><span class="negative">(5,997.45)</span></td>
+                    <td class="num"><span class="negative">(179.92)</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="negative">(6,177.38)</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class=" indent-1">其他与未来服务相关变动(11)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class="">与未来服务相关的变动(12)=(8)+(9)+(10)+(11)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="negative">(6,177.38)</span></td>
+                    <td class="num"><span class="negative">(6,177.38)</span></td>
+                </tr>
+            
+                <tr class="border-top-heavy">
+                    <td class=" indent-1">已发生赔款负债相关履约现金流量变动(13)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class=" indent-1">其他与过去服务相关的变动(14)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class="">与过去服务相关的变动(15)=(13)+(14)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                </tr>
+            
+                <tr class="border-top-heavy">
+                    <td class="">保险服务业绩(16)=(7)+(12)+(15)</td>
+                    <td class="num"><span class="negative">(429,662.63)</span></td>
+                    <td class="num"><span class="negative">(12,889.88)</span></td>
+                    <td class="num col-csm"><span class="negative">(84,037.20)</span></td>
+                    <td class="num"><span class="negative">(526,589.71)</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class="">保险合同金融变动额(17)</td>
+                    <td class="num">245,371.02</td>
+                    <td class="num">7,361.13</td>
+                    <td class="num col-csm">207,886.02</td>
+                    <td class="num">460,618.17</td>
+                </tr>
+            
+                <tr class="">
+                    <td class="">其他损益变动(18)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class="">其他综合收益其他变动(19)</td>
+                    <td class="num">322,643.19</td>
+                    <td class="num">9,679.30</td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num">332,322.49</td>
+                </tr>
+            
+                <tr class="">
+                    <td class="">相关综合收益变动合计(20)=(16)+(17)+(18)+(19)</td>
+                    <td class="num">138,351.59</td>
+                    <td class="num">4,150.55</td>
+                    <td class="num col-csm">123,848.81</td>
+                    <td class="num">266,350.94</td>
+                </tr>
+            
+                <tr class="">
+                    <td class=" indent-1">收到的保费(21)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class=" indent-1">支付的保险获取现金流量(22)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class=" indent-1">支付的赔款及其他相关费用(含投资成分)(23)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class=" indent-1">其他现金流量(24)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                </tr>
+            
+                <tr class="border-top-heavy">
+                    <td class="">现金流量合计(25)=(21)+(22)+(23)+(24)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class="">其他变动(26)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                </tr>
+            
+                <tr class="border-top-heavy border-double-bottom">
+                    <td class="">年末的保险合同净负债(27)=(3)+(20)+(25)+(26)</td>
+                    <td class="num">9,531,634.23</td>
+                    <td class="num">285,949.03</td>
+                    <td class="num col-csm">8,217,532.08</td>
+                    <td class="num">18,035,115.34</td>
+                </tr>
+            
+                <tr class="">
+                    <td class="">年末的保险合同资产(28)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class="">年末的保险合同负债(29)</td>
+                    <td class="num">9,531,634.23</td>
+                    <td class="num">285,949.03</td>
+                    <td class="num col-csm">8,217,532.08</td>
+                    <td class="num">18,035,115.34</td>
+                </tr>
+            
+                </tbody>
+            </table>
+            
+            <div class="explanation-box"><h3>2023 年度计算明细与验算</h3>
+                <div class="explanation-item">
+                    <h4 class="exp-title">1. 年初余额</h4>
+                    <div class="exp-content">
+                        
+            <ul>
+                <li><b>BEL (未来现金流量现值)</b>: 9,393,282.64</li>
+                <li><b>RA (非金融风险调整)</b>: 281,798.48</li>
+                <li><b>CSM (合同服务边际)</b>: 8,093,683.27</li>
+                <li><b>合计</b>: 17,768,764.39</li>
+            </ul>
+            
+                    </div>
+                </div>
+                
+                <div class="explanation-item">
+                    <h4 class="exp-title">5. 非金融风险调整的变动 (RA)</h4>
+                    <div class="exp-content">
+                        
+            <ul>
+                <li><b>数值</b>: -12,889.88</li>
+                <li><b>公式</b>: -预期释放RA_含亏损</li>
+                <li><b>计算</b>: -12,889.88 = -12,889.88</li>
+                <li><b>说明</b>: RA随着服务提供而释放，导致负债减少。使用含亏损总额，不重复加亏损分摊。</li>
+            </ul>
+            
+                    </div>
+                </div>
+                
+                <div class="explanation-item">
+                    <h4 class="exp-title">6. 当期经验调整 (BEL)</h4>
+                    <div class="exp-content">
+                        
+            <ul>
+                <li><b>数值</b>: -429,662.63</li>
+                <li><b>公式</b>: 实际赔付与费用 - 预期赔付与费用 + 保费经验调整</li>
+                <li><b>计算</b>: 0.00 - 429,662.63 + 0.00</li>
+                <li><b>说明</b>: 反映了实际现金流与预期现金流的差异，以及预期现金流的释放。</li>
+            </ul>
+            
+                    </div>
+                </div>
+                
+                <div class="explanation-item">
+                    <h4 class="exp-title">17. 保险合同金融变动额 (IFIE_P&L)</h4>
+                    <div class="exp-content">
+                        
+            <ul>
+                <li><b>BEL</b>: 245,371.02 = 247,645.15 (非亏损) + -2,274.13 (亏损)</li>
+                <li><b>RA</b>: 7,361.13 = 7,429.35 (非亏损) + -68.22 (亏损)</li>
+                <li><b>CSM</b>: 207,886.02</li>
+            </ul>
+            
+                    </div>
+                </div>
+                
+                <div class="explanation-item">
+                    <h4 class="exp-title">19. 其他综合收益 (OCI)</h4>
+                    <div class="exp-content">
+                        
+            <ul>
+                <li><b>BEL</b>: 322,643.19 = IFIE_OCI_预期现金流（包含亏损和非亏损）</li>
+                <li><b>RA</b>: 9,679.30 = IFIE_OCI_非金融风险调整（包含亏损和非亏损）</li>
+            </ul>
+            
+                    </div>
+                </div>
+                
+                <div class="explanation-item">
+                    <h4 class="exp-title">21 & 22. 现金流</h4>
+                    <div class="exp-content">
+                        
+            <ul>
+                <li><b>(21) 收到的保费</b>: 0.00</li>
+                <li><b>(22) 支付的获取费用</b>: 0.00 (流出为负)</li>
+                <li><b>(25) 现金流量合计</b>: 0.00</li>
+            </ul>
+            
+                    </div>
+                </div>
+                
+                <div class="explanation-item">
+                    <h4 class="exp-title">期末余额验算 (计算值 vs 日志值)</h4>
+                    <div class="exp-content">
+                        
+            <table style="width:100%; border-collapse: collapse; margin-top: 5px; border: 1px solid #eee;">
+                <tr style="background-color: #f8f9fa;">
+                    <th style="text-align: left; padding: 8px;">项目</th>
+                    <th style="text-align: right; padding: 8px;">计算期末</th>
+                    <th style="text-align: right; padding: 8px;">日志期末</th>
+                    <th style="text-align: right; padding: 8px;">差异</th>
+                </tr>
+                <tr>
+                    <td style="padding: 8px;">BEL</td>
+                    <td style="text-align: right; padding: 8px;">9,531,634.23</td>
+                    <td style="text-align: right; padding: 8px;">9,531,634.23</td>
+                    <td style="text-align: right; padding: 8px;"><span style='color:green'>无差异</span></td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px;">RA</td>
+                    <td style="text-align: right; padding: 8px;">285,949.03</td>
+                    <td style="text-align: right; padding: 8px;">285,949.03</td>
+                    <td style="text-align: right; padding: 8px;"><span style='color:green'>无差异</span></td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px;">CSM</td>
+                    <td style="text-align: right; padding: 8px;">8,217,532.08</td>
+                    <td style="text-align: right; padding: 8px;">8,217,532.08</td>
+                    <td style="text-align: right; padding: 8px;"><span style='color:green'>无差异</span></td>
+                </tr>
+            </table>
+            <p style="font-size: 0.9em; color: #666; margin-top: 5px;">注：计算期末 = 期初 + 综合收益变动 + 现金流 + 其他变动</p>
+            
+                    </div>
+                </div>
+                </div>
+        </div>
+        
+        <div id="y2024" class="tab-content">
+            <table>
+                <thead>
+                    <tr>
+                        <th rowspan="2" style="text-align: left;">项目</th>
+                        <th colspan="4">2024年度 (单位: 元)</th>
+                    </tr>
+                    <tr>
+                        <th>未来现金流量<br>的现值</th>
+                        <th>非金融风险<br>调整</th>
+                        <th class="header-csm">合同服务<br>边际(a)</th>
+                        <th>合计</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    
+                <tr class="border-top-heavy">
+                    <td class="">年初的保险合同负债(1)</td>
+                    <td class="num">9,531,634.23</td>
+                    <td class="num">285,949.03</td>
+                    <td class="num col-csm">8,217,532.08</td>
+                    <td class="num">18,035,115.34</td>
+                </tr>
+            
+                <tr class="">
+                    <td class="">年初的保险合同资产(2)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class="">年初的保险合同净负债(3)=(1)+(2)</td>
+                    <td class="num">9,531,634.23</td>
+                    <td class="num">285,949.03</td>
+                    <td class="num col-csm">8,217,532.08</td>
+                    <td class="num">18,035,115.34</td>
+                </tr>
+            
+                <tr class="border-top-heavy">
+                    <td class=" indent-1">合同服务边际的摊销(4)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="negative">(80,168.30)</span></td>
+                    <td class="num"><span class="negative">(80,168.30)</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class=" indent-1">非金融风险调整的变动(5)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="negative">(12,889.88)</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="negative">(12,889.88)</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class=" indent-1">当期经验调整(6)</td>
+                    <td class="num"><span class="negative">(429,662.63)</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="negative">(429,662.63)</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class="">与当期服务相关的变动(7)=(4)+(5)+(6)</td>
+                    <td class="num"><span class="negative">(429,662.63)</span></td>
+                    <td class="num"><span class="negative">(12,889.88)</span></td>
+                    <td class="num col-csm"><span class="negative">(80,168.30)</span></td>
+                    <td class="num"><span class="negative">(522,720.80)</span></td>
+                </tr>
+            
+                <tr class="border-top-heavy">
+                    <td class=" indent-1">当期初始确认的保险合同影响(8)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class=" indent-1">调整合同服务边际的估计变更(9)</td>
+                    <td class="num">11,794.00</td>
+                    <td class="num">353.82</td>
+                    <td class="num col-csm"><span class="negative">(12,147.82)</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class=" indent-1">不调整合同服务边际的估计变更(10)</td>
+                    <td class="num"><span class="negative">(11,794.00)</span></td>
+                    <td class="num"><span class="negative">(353.82)</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="negative">(12,147.82)</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class=" indent-1">其他与未来服务相关变动(11)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class="">与未来服务相关的变动(12)=(8)+(9)+(10)+(11)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="negative">(12,147.82)</span></td>
+                    <td class="num"><span class="negative">(12,147.82)</span></td>
+                </tr>
+            
+                <tr class="border-top-heavy">
+                    <td class=" indent-1">已发生赔款负债相关履约现金流量变动(13)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class=" indent-1">其他与过去服务相关的变动(14)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class="">与过去服务相关的变动(15)=(13)+(14)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                </tr>
+            
+                <tr class="border-top-heavy">
+                    <td class="">保险服务业绩(16)=(7)+(12)+(15)</td>
+                    <td class="num"><span class="negative">(429,662.63)</span></td>
+                    <td class="num"><span class="negative">(12,889.88)</span></td>
+                    <td class="num col-csm"><span class="negative">(92,316.12)</span></td>
+                    <td class="num"><span class="negative">(534,868.62)</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class="">保险合同金融变动额(17)</td>
+                    <td class="num">256,869.62</td>
+                    <td class="num">7,706.09</td>
+                    <td class="num col-csm">224,912.63</td>
+                    <td class="num">489,488.35</td>
+                </tr>
+            
+                <tr class="">
+                    <td class="">其他损益变动(18)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class="">其他综合收益其他变动(19)</td>
+                    <td class="num">883,834.18</td>
+                    <td class="num">26,515.03</td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num">910,349.20</td>
+                </tr>
+            
+                <tr class="">
+                    <td class="">相关综合收益变动合计(20)=(16)+(17)+(18)+(19)</td>
+                    <td class="num">711,041.17</td>
+                    <td class="num">21,331.24</td>
+                    <td class="num col-csm">132,596.52</td>
+                    <td class="num">864,968.93</td>
+                </tr>
+            
+                <tr class="">
+                    <td class=" indent-1">收到的保费(21)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class=" indent-1">支付的保险获取现金流量(22)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class=" indent-1">支付的赔款及其他相关费用(含投资成分)(23)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class=" indent-1">其他现金流量(24)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                </tr>
+            
+                <tr class="border-top-heavy">
+                    <td class="">现金流量合计(25)=(21)+(22)+(23)+(24)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class="">其他变动(26)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                </tr>
+            
+                <tr class="border-top-heavy border-double-bottom">
+                    <td class="">年末的保险合同净负债(27)=(3)+(20)+(25)+(26)</td>
+                    <td class="num">10,242,675.40</td>
+                    <td class="num">307,280.26</td>
+                    <td class="num col-csm">8,350,128.60</td>
+                    <td class="num">18,900,084.26</td>
+                </tr>
+            
+                <tr class="">
+                    <td class="">年末的保险合同资产(28)</td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                    <td class="num col-csm"><span class="zero">0.00</span></td>
+                    <td class="num"><span class="zero">0.00</span></td>
+                </tr>
+            
+                <tr class="">
+                    <td class="">年末的保险合同负债(29)</td>
+                    <td class="num">10,242,675.40</td>
+                    <td class="num">307,280.26</td>
+                    <td class="num col-csm">8,350,128.60</td>
+                    <td class="num">18,900,084.26</td>
+                </tr>
+            
+                </tbody>
+            </table>
+            
+            <div class="explanation-box"><h3>2024 年度计算明细与验算</h3>
+                <div class="explanation-item">
+                    <h4 class="exp-title">1. 年初余额</h4>
+                    <div class="exp-content">
+                        
+            <ul>
+                <li><b>BEL (未来现金流量现值)</b>: 9,531,634.23</li>
+                <li><b>RA (非金融风险调整)</b>: 285,949.03</li>
+                <li><b>CSM (合同服务边际)</b>: 8,217,532.08</li>
+                <li><b>合计</b>: 18,035,115.34</li>
+            </ul>
+            
+                    </div>
+                </div>
+                
+                <div class="explanation-item">
+                    <h4 class="exp-title">5. 非金融风险调整的变动 (RA)</h4>
+                    <div class="exp-content">
+                        
+            <ul>
+                <li><b>数值</b>: -12,889.88</li>
+                <li><b>公式</b>: -预期释放RA_含亏损</li>
+                <li><b>计算</b>: -12,889.88 = -12,889.88</li>
+                <li><b>说明</b>: RA随着服务提供而释放，导致负债减少。使用含亏损总额，不重复加亏损分摊。</li>
+            </ul>
+            
+                    </div>
+                </div>
+                
+                <div class="explanation-item">
+                    <h4 class="exp-title">6. 当期经验调整 (BEL)</h4>
+                    <div class="exp-content">
+                        
+            <ul>
+                <li><b>数值</b>: -429,662.63</li>
+                <li><b>公式</b>: 实际赔付与费用 - 预期赔付与费用 + 保费经验调整</li>
+                <li><b>计算</b>: 0.00 - 429,662.63 + 0.00</li>
+                <li><b>说明</b>: 反映了实际现金流与预期现金流的差异，以及预期现金流的释放。</li>
+            </ul>
+            
+                    </div>
+                </div>
+                
+                <div class="explanation-item">
+                    <h4 class="exp-title">17. 保险合同金融变动额 (IFIE_P&L)</h4>
+                    <div class="exp-content">
+                        
+            <ul>
+                <li><b>BEL</b>: 256,869.62 = 259,247.61 (非亏损) + -2,377.98 (亏损)</li>
+                <li><b>RA</b>: 7,706.09 = 7,777.43 (非亏损) + -71.34 (亏损)</li>
+                <li><b>CSM</b>: 224,912.63</li>
+            </ul>
+            
+                    </div>
+                </div>
+                
+                <div class="explanation-item">
+                    <h4 class="exp-title">19. 其他综合收益 (OCI)</h4>
+                    <div class="exp-content">
+                        
+            <ul>
+                <li><b>BEL</b>: 883,834.18 = IFIE_OCI_预期现金流（包含亏损和非亏损）</li>
+                <li><b>RA</b>: 26,515.03 = IFIE_OCI_非金融风险调整（包含亏损和非亏损）</li>
+            </ul>
+            
+                    </div>
+                </div>
+                
+                <div class="explanation-item">
+                    <h4 class="exp-title">21 & 22. 现金流</h4>
+                    <div class="exp-content">
+                        
+            <ul>
+                <li><b>(21) 收到的保费</b>: 0.00</li>
+                <li><b>(22) 支付的获取费用</b>: 0.00 (流出为负)</li>
+                <li><b>(25) 现金流量合计</b>: 0.00</li>
+            </ul>
+            
+                    </div>
+                </div>
+                
+                <div class="explanation-item">
+                    <h4 class="exp-title">期末余额验算 (计算值 vs 日志值)</h4>
+                    <div class="exp-content">
+                        
+            <table style="width:100%; border-collapse: collapse; margin-top: 5px; border: 1px solid #eee;">
+                <tr style="background-color: #f8f9fa;">
+                    <th style="text-align: left; padding: 8px;">项目</th>
+                    <th style="text-align: right; padding: 8px;">计算期末</th>
+                    <th style="text-align: right; padding: 8px;">日志期末</th>
+                    <th style="text-align: right; padding: 8px;">差异</th>
+                </tr>
+                <tr>
+                    <td style="padding: 8px;">BEL</td>
+                    <td style="text-align: right; padding: 8px;">10,242,675.40</td>
+                    <td style="text-align: right; padding: 8px;">10,242,675.40</td>
+                    <td style="text-align: right; padding: 8px;"><span style='color:green'>无差异</span></td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px;">RA</td>
+                    <td style="text-align: right; padding: 8px;">307,280.26</td>
+                    <td style="text-align: right; padding: 8px;">307,280.26</td>
+                    <td style="text-align: right; padding: 8px;"><span style='color:green'>无差异</span></td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px;">CSM</td>
+                    <td style="text-align: right; padding: 8px;">8,350,128.60</td>
+                    <td style="text-align: right; padding: 8px;">8,350,128.60</td>
+                    <td style="text-align: right; padding: 8px;"><span style='color:green'>无差异</span></td>
+                </tr>
+            </table>
+            <p style="font-size: 0.9em; color: #666; margin-top: 5px;">注：计算期末 = 期初 + 综合收益变动 + 现金流 + 其他变动</p>
+            
+                    </div>
+                </div>
+                </div>
+        </div>
+        
+
+</div>
+
+<script>
+    function openTab(evt, yearName) {
+        var i, tabcontent, tablinks;
+        tabcontent = document.getElementsByClassName("tab-content");
+        for (i = 0; i < tabcontent.length; i++) {
+            tabcontent[i].style.display = "none";
+            tabcontent[i].classList.remove("active");
+        }
+        tablinks = document.getElementsByClassName("tab-btn");
+        for (i = 0; i < tablinks.length; i++) {
+            tablinks[i].className = tablinks[i].className.replace(" active", "");
+        }
+        document.getElementById(yearName).style.display = "block";
+        document.getElementById(yearName).classList.add("active");
+        evt.currentTarget.className += " active";
+    }
+</script>
+
+</body>
+</html>
+    
